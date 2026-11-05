@@ -1,12 +1,14 @@
 #include "simulation.h"
+#include "endgame.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <math.h>
 #include <time.h>
 
 void engine_config_default(EngineConfig *config) {
-    config->max_deliberation_steps = 40;
+    config->max_deliberation_steps = 45;
     config->confidence_bar = 0.98f;
     config->use_palimpsest = true;
     config->use_endgame_solver = true;
@@ -73,6 +75,8 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
     if (config) cfg = *config;
     else engine_config_default(&cfg);
 
+    int bag_remaining = bag ? bag->count : 50;
+
     /* 1. Initialize lattice components */
     Lattice *lat = lattice_create(16384);
     DirtyQueue dq;
@@ -87,14 +91,14 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
     uint32_t root_idx = lattice_find_or_insert(lat, board, 0, &created);
     lat->root_index = root_idx;
 
-    lattice_expand_node(lat, root_idx, dawg, rack, cfg.use_palimpsest ? &palimpsest : NULL);
+    lattice_expand_node(lat, root_idx, dawg, rack, cfg.use_palimpsest ? &palimpsest : NULL, bag_remaining);
     LatticeNode *root = &lat->nodes[root_idx];
 
     /* Handle pass or exchange if no moves */
     if (root->num_edges == 0) {
         lattice_free(lat);
         Move ex_move;
-        if (eval_should_exchange(board, rack, bag ? bag->count : 0, 0.0f, &ex_move)) {
+        if (eval_should_exchange(board, rack, bag_remaining, 0.0f, &ex_move)) {
             return ex_move;
         }
         Move pass_move;
@@ -105,7 +109,7 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
 
     /* Check if exchange is superior to best initial play */
     Move ex_move;
-    if (eval_should_exchange(board, rack, bag ? bag->count : 0,
+    if (eval_should_exchange(board, rack, bag_remaining,
                             root->edges[0].q_value, &ex_move)) {
         lattice_free(lat);
         return ex_move;
@@ -115,46 +119,81 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
     char unseen[100];
     int unseen_count = sim_get_unseen_tiles(board, rack, unseen);
 
+    /* --- EXACT ENDGAME SOLVER (Bag is Empty) --- */
+    if (bag && bag->count == 0 && cfg.use_endgame_solver) {
+        Rack opp_exact_rack;
+        rack_init(&opp_exact_rack);
+        int draw_cnt = unseen_count < RACK_CAPACITY ? unseen_count : RACK_CAPACITY;
+        for (int i = 0; i < draw_cnt; i++) {
+            rack_add_tile(&opp_exact_rack, unseen[i]);
+        }
+
+        EndgameResult eg = endgame_solve(board, dawg, rack, &opp_exact_rack, 5);
+        if (eg.is_proven && eg.best_move.type == MOVE_PLAY) {
+            if (all_moves) {
+                all_moves->count = root->num_edges;
+                for (int i = 0; i < root->num_edges; i++) {
+                    all_moves->moves[i] = root->edges[i].move;
+                    all_moves->moves[i].sim_equity = (float)root->edges[i].move.score;
+                }
+            }
+            if (metrics) {
+                metrics->nodes_in_lattice = eg.nodes_searched;
+                metrics->transpositions_merged = 0;
+                metrics->dirty_passes_settled = 0;
+                metrics->frontier_leaves_bought = 0;
+                metrics->court_confidence = 1.0f;
+                metrics->palimpsest_max_bias = 0.0f;
+                metrics->deliberation_ms = ((double)(clock() - start_time) / CLOCKS_PER_SEC) * 1000.0;
+            }
+            lattice_free(lat);
+            return eg.best_move;
+        }
+    }
+
     uint32_t total_dirty_passes = 0;
     CourtVerdict verdict = court_deliberate(lat, root_idx);
 
     /* --- LATTICE SETTLING DELIBERATION LOOP --- */
     for (int step = 0; step < cfg.max_deliberation_steps && !verdict.should_adjourn; step++) {
-        /* A. The Broker decides which frontier leaf to buy */
+        /* A. The Broker decides whether to expand an unvisited frontier leaf or refine top child */
         uint32_t leaf_idx = broker_select_frontier_leaf(&broker, lat, root_idx);
-        if (leaf_idx == 0) break;
+        bool is_new_expansion = (leaf_idx != 0);
+
+        if (!is_new_expansion) {
+            leaf_idx = broker_select_top_child(&broker, lat, root_idx);
+            if (leaf_idx == 0) break;
+        }
 
         /* B. Sample opponent rack from unseen pool */
         Rack sim_opp_rack;
         rack_init(&sim_opp_rack);
 
-        if (bag && bag->count == 0 && cfg.use_endgame_solver) {
-            /* Endgame: opponent rack is deterministic and fully known! */
-            for (int i = 0; i < unseen_count && i < RACK_CAPACITY; i++) {
-                rack_add_tile(&sim_opp_rack, unseen[i]);
-            }
-        } else {
-            /* Midgame: random sample */
-            shuffle_tiles(unseen, unseen_count);
-            int draw_cnt = unseen_count < RACK_CAPACITY ? unseen_count : RACK_CAPACITY;
-            for (int i = 0; i < draw_cnt; i++) {
-                rack_add_tile(&sim_opp_rack, unseen[i]);
-            }
+        shuffle_tiles(unseen, unseen_count);
+        int draw_cnt = unseen_count < RACK_CAPACITY ? unseen_count : RACK_CAPACITY;
+        for (int i = 0; i < draw_cnt; i++) {
+            rack_add_tile(&sim_opp_rack, unseen[i]);
         }
 
-        /* C. Expand frontier leaf in the lattice */
-        lattice_expand_node(lat, leaf_idx, dawg, &sim_opp_rack,
-                            cfg.use_palimpsest ? &palimpsest : NULL);
+        if (is_new_expansion) {
+            /* Expand frontier leaf in the lattice */
+            lattice_expand_node(lat, leaf_idx, dawg, &sim_opp_rack,
+                                cfg.use_palimpsest ? &palimpsest : NULL, bag_remaining);
+            dirty_queue_push(&dq, leaf_idx, 20.0f);
+        } else {
+            /* Adversarial Monte Carlo rollout sample against top candidate */
+            float delta = lattice_sample_adversarial_counter(lat, leaf_idx, dawg, &sim_opp_rack,
+                                                             cfg.use_palimpsest ? &palimpsest : NULL,
+                                                             bag_remaining);
+            dirty_queue_push(&dq, leaf_idx, fmaxf(5.0f, delta * 2.0f));
+        }
 
-        /* D. Enqueue into dirty queue */
-        dirty_queue_push(&dq, leaf_idx, 20.0f);
-
-        /* E. Relax the lattice by prioritized backward induction */
+        /* Relax the lattice by prioritized backward induction */
         total_dirty_passes += settle_lattice(lat, &dq,
                                             cfg.use_palimpsest ? &palimpsest : NULL,
                                             128);
 
-        /* F. The Root Court deliberates: P(argmax is best) */
+        /* The Root Court deliberates: P(argmax is best) */
         verdict = court_deliberate(lat, root_idx);
     }
 

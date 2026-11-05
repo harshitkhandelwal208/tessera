@@ -151,6 +151,40 @@ function renderState(state) {
 
     renderRack();
     renderTileTracker();
+
+    // Update Phase Bucket & Openness Telemetry
+    const elPhase = document.getElementById("telemetry-phase-bucket");
+    const elOpen = document.getElementById("telemetry-openness");
+    if (elPhase) {
+        const bc = state.bag_count;
+        if (bc >= 80) elPhase.textContent = `Opening (80-100)`;
+        else if (bc >= 60) elPhase.textContent = `Early Game (60-79)`;
+        else if (bc >= 40) elPhase.textContent = `Midgame (40-59)`;
+        else if (bc >= 20) elPhase.textContent = `Late Midgame (20-39)`;
+        else if (bc >= 10) elPhase.textContent = `Pre-Endgame (10-19)`;
+        else if (bc >= 1)  elPhase.textContent = `Bag Exhaustion (1-9)`;
+        else elPhase.textContent = `Exact Endgame Solver (0 tiles)`;
+    }
+    if (elOpen) {
+        let occupied = 0;
+        let twExposed = 0;
+        for (let r = 0; r < BOARD_SIZE; r++) {
+            for (let c = 0; c < BOARD_SIZE; c++) {
+                if (state.board[r][c].tile) occupied++;
+                else if (state.board[r][c].mult === 4) { // MULT_TW
+                    const hasAdj = (r > 0 && state.board[r-1][c].tile) ||
+                                   (r < 14 && state.board[r+1][c].tile) ||
+                                   (c > 0 && state.board[r][c-1].tile) ||
+                                   (c < 14 && state.board[r][c+1].tile);
+                    if (hasAdj) twExposed++;
+                }
+            }
+        }
+        if (occupied < 8) elOpen.textContent = "Closed Center";
+        else if (twExposed >= 3) elOpen.textContent = "Wide-Open Perimeter";
+        else if (twExposed >= 1) elOpen.textContent = "Hotspots Exposed";
+        else elOpen.textContent = "Standard Openness";
+    }
 }
 
 function renderRack() {
@@ -412,6 +446,18 @@ async function submitPlayMove() {
             if (elPalimp) elPalimp.textContent = (res.metrics.palimpsest_bias || 0).toFixed(2) + " pts";
         }
 
+        if (res.phase) {
+            const elPhase = document.getElementById("telemetry-phase-bucket");
+            if (elPhase) elPhase.textContent = res.phase;
+        }
+        if (res.openness) {
+            const elOpen = document.getElementById("telemetry-openness");
+            if (elOpen) elOpen.textContent = res.openness;
+        }
+        if (res.endgame) {
+            statusMsgEl.innerHTML = `<span style="color:#2ecc71;font-weight:bold;">👑 EXACT ENDGAME MINIMAX ACTIVE</span>: AI played ${res.move.word} (Proven Spread: ${res.move.equity >= 0 ? '+' : ''}${res.move.equity.toFixed(0)} pts). Your turn!`;
+        }
+
         const freshState = await apiGetState();
         renderState(freshState);
 
@@ -451,6 +497,18 @@ async function triggerAiTurn() {
             if (elPasses) elPasses.textContent = res.metrics.settle_passes || 0;
             if (elConf) elConf.textContent = ((res.metrics.confidence || 0) * 100).toFixed(1) + "%";
             if (elPalimp) elPalimp.textContent = (res.metrics.palimpsest_bias || 0).toFixed(2) + " pts";
+        }
+
+        if (res.phase) {
+            const elPhase = document.getElementById("telemetry-phase-bucket");
+            if (elPhase) elPhase.textContent = res.phase;
+        }
+        if (res.openness) {
+            const elOpen = document.getElementById("telemetry-openness");
+            if (elOpen) elOpen.textContent = res.openness;
+        }
+        if (res.endgame) {
+            statusMsgEl.innerHTML = `<span style="color:#2ecc71;font-weight:bold;">👑 EXACT ENDGAME MINIMAX ACTIVE</span>: AI played ${res.move.word} (Proven Spread: ${res.move.equity >= 0 ? '+' : ''}${res.move.equity.toFixed(0)} pts). Your turn!`;
         }
 
         const freshState = await apiGetState();
@@ -576,6 +634,14 @@ function setupEvents() {
         loading.classList.add("hidden");
 
         if (res.status === "ok" && res.hints) {
+            if (res.phase) {
+                const elPhase = document.getElementById("telemetry-phase-bucket");
+                if (elPhase) elPhase.textContent = res.phase;
+            }
+            if (res.openness) {
+                const elOpen = document.getElementById("telemetry-openness");
+                if (elOpen) elOpen.textContent = res.openness;
+            }
             hintsTbodyEl.innerHTML = "";
             res.hints.forEach((h, idx) => {
                 const tr = document.createElement("tr");

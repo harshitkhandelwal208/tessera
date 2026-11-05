@@ -125,7 +125,7 @@ void lattice_add_parent(Lattice *lat, uint32_t child_idx, uint32_t parent_idx) {
 }
 
 void lattice_expand_node(Lattice *lat, uint32_t node_idx, const Dawg *dawg,
-                         const Rack *rack, const Palimpsest *palimpsest) {
+                         const Rack *rack, const Palimpsest *palimpsest, int bag_count) {
     if (node_idx == 0 || node_idx >= lat->num_nodes) return;
     LatticeNode *node = &lat->nodes[node_idx];
     if (node->is_expanded) return;
@@ -149,7 +149,7 @@ void lattice_expand_node(Lattice *lat, uint32_t node_idx, const Dawg *dawg,
 
     /* Compute static equity for candidate moves */
     for (int i = 0; i < all_moves.count; i++) {
-        float base_eq = eval_move_static(&node->board, &all_moves.moves[i]);
+        float base_eq = eval_move_static_bucketed(&node->board, &all_moves.moves[i], bag_count);
         all_moves.moves[i].leave_equity = base_eq + palimpsest_bias;
     }
     eval_sort_moves(&all_moves);
@@ -201,4 +201,45 @@ void lattice_expand_node(Lattice *lat, uint32_t node_idx, const Dawg *dawg,
     node->belief.variance = 20.0f;
     node->belief.samples = 1;
     node->is_expanded = true;
+}
+
+/*
+ * Sample an adversarial opponent counter on a child node using Welford's algorithm.
+ * Returns the change in node belief mean for dirty queue prioritization.
+ */
+float lattice_sample_adversarial_counter(Lattice *lat, uint32_t node_idx, const Dawg *dawg,
+                                        const Rack *opp_rack, const Palimpsest *palimpsest,
+                                        int bag_count) {
+    if (node_idx == 0 || node_idx >= lat->num_nodes) return 0.0f;
+    LatticeNode *node = &lat->nodes[node_idx];
+
+    /* Generate opponent responses on this board */
+    MoveList opp_moves;
+    movegen_generate_all(&node->board, dawg, opp_rack, &opp_moves);
+
+    float best_opp_equity = 0.0f;
+    if (opp_moves.count > 0) {
+        float max_eq = -10000.0f;
+        for (int i = 0; i < opp_moves.count; i++) {
+            float eq = eval_move_static_bucketed(&node->board, &opp_moves.moves[i], bag_count);
+            if (eq > max_eq) max_eq = eq;
+        }
+        best_opp_equity = max_eq;
+    }
+
+    if (palimpsest) {
+        int ctx = palimpsest_classify(opp_rack, &node->board);
+        best_opp_equity += palimpsest_get_correction(palimpsest, ctx);
+    }
+
+    float old_mean = node->belief.mean;
+
+    /* Welford's algorithm for online mean and variance update */
+    node->belief.samples++;
+    float delta = best_opp_equity - node->belief.mean;
+    node->belief.mean += delta / (float)node->belief.samples;
+    float delta2 = best_opp_equity - node->belief.mean;
+    node->belief.variance += (delta * delta2 - node->belief.variance) / (float)node->belief.samples;
+
+    return fabsf(node->belief.mean - old_mean);
 }

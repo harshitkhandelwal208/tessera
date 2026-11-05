@@ -1,4 +1,5 @@
 #include "settle.h"
+#include "eval.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -97,10 +98,12 @@ float settle_node_backup(Lattice *lat, uint32_t node_idx, Palimpsest *palimpsest
         }
 
         /*
-         * Distributional Bellman operator:
-         * Q(e) = Move.Score + Leave.Equity - gamma * Child.Mean
+         * Distributional Bellman Operator:
+         * Q(e) = Move.Score + Leave.Equity + BoardRisk - gamma * Child.Mean
          */
-        float move_static = (float)edge->move.score + edge->move.leave_equity;
+        DualAccumulator acc = eval_move_accumulate(&n->board, &edge->move, 50);
+        float move_static = acc.net_equity;
+
         edge->q_value = move_static - (SETTLE_GAMMA * child_mean);
         edge->variance = (SETTLE_GAMMA * SETTLE_GAMMA * child_var) + 2.0f;
 

@@ -5,31 +5,65 @@
 #include "board.h"
 #include "dict.h"
 
+/* 8 Game-Phase Buckets (inspired by Reckless bucketing) */
+typedef enum {
+    PHASE_BUCKET_OPENING      = 7, /* 80-100 bag tiles */
+    PHASE_BUCKET_EARLY        = 6, /* 60-79 bag tiles */
+    PHASE_BUCKET_MIDGAME      = 5, /* 40-59 bag tiles */
+    PHASE_BUCKET_LATE_MID     = 4, /* 20-39 bag tiles */
+    PHASE_BUCKET_PRE_ENDGAME  = 3, /* 10-19 bag tiles */
+    PHASE_BUCKET_EXHAUSTION   = 2, /* 1-9 bag tiles */
+    PHASE_BUCKET_ENDGAME      = 1, /* 0 bag tiles */
+    PHASE_BUCKET_PLAYOUT      = 0  /* 1-ply outplay */
+} PhaseBucket;
+
+/* 4 Board-Openness Output Buckets */
+typedef enum {
+    OPENNESS_CLOSED   = 0,
+    OPENNESS_STANDARD = 1,
+    OPENNESS_EXPOSED  = 2,
+    OPENNESS_WIDE     = 3
+} OpennessBucket;
+
+/* Dual-Accumulator Evaluator State */
+typedef struct {
+    float board_acc;  /* Board accumulator: word score + premium capture + defensive threat */
+    float rack_acc;   /* Rack leave accumulator: single tile + pairwise synergy + VC + stems */
+    float net_equity; /* board_acc + rack_acc */
+} DualAccumulator;
+
+/* Bucket classifier helpers */
+PhaseBucket    eval_classify_phase(int bag_count);
+OpennessBucket eval_classify_openness(const Board *board);
+const char*    eval_phase_name(PhaseBucket phase);
+const char*    eval_openness_name(OpennessBucket openness);
+
 /*
- * Evaluates the static equity of a rack leave.
- * Accounts for:
- * 1. Single-letter equity (blanks, S, high consonants, heavy tile penalties).
- * 2. Vowel/consonant balance (severe penalties for all-vowel or all-consonant racks).
- * 3. Duplicate tile penalties (II, UU, OO, VV, WW, etc.).
- * 4. High-value synergies and bingo suffixes (QU, ING, ER, ED, ST, RE).
+ * Dual-Accumulator Rack Leave Evaluation:
+ * Evaluates the rack leave equity with 8 phase buckets, pairwise synergy kernels,
+ * higher-order super-leave stem tables, and duplicate/toxic tile penalties.
  */
+float eval_rack_leave_bucketed(const char *leave, PhaseBucket phase);
 float eval_rack_leave(const char *leave);
 
 /*
- * Evaluates board openness and defensive risk of a move.
- * Penalizes exposing Triple Word / Triple Letter squares to the opponent.
+ * Board Accumulator:
+ * Evaluates premium capture, defensive risk, and floating vowel vulnerability.
  */
+float eval_board_risk_bucketed(const Board *board, const Move *move, OpennessBucket openness);
 float eval_board_risk(const Board *board, const Move *move);
 
 /*
- * Computes the total static evaluation of a candidate move:
- * Total Equity = Move Score + Leave Equity + Board Risk
+ * Dual-Accumulator Move Evaluation:
+ * Computes the total static evaluation of a candidate move.
  */
+DualAccumulator eval_move_accumulate(const Board *board, const Move *move, int bag_count);
+float eval_move_static_bucketed(const Board *board, const Move *move, int bag_count);
 float eval_move_static(const Board *board, const Move *move);
 
 /*
- * Evaluates whether an exchange move is superior to any played move.
- * If so, generates the optimal exchange move.
+ * Exact Sub-rack Exchange Optimizer:
+ * Evaluates all 2^k subsets of the rack to find the optimal keep/discard split.
  */
 bool eval_should_exchange(const Board *board, const Rack *rack, int bag_count,
                          float best_play_equity, Move *out_exchange_move);

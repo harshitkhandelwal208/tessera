@@ -74,6 +74,11 @@ void     lattice_add_parent(Lattice *lat, uint32_t child_idx, uint32_t parent_id
 
 /* Expand a frontier node: generates candidate plays and creates child edges */
 void     lattice_expand_node(Lattice *lat, uint32_t node_idx, const Dawg *dawg,
-                             const Rack *rack, const Palimpsest *palimpsest);
+                             const Rack *rack, const Palimpsest *palimpsest, int bag_count);
+
+/* Sample an adversarial opponent counter on a child node using Welford's algorithm */
+float    lattice_sample_adversarial_counter(Lattice *lat, uint32_t node_idx, const Dawg *dawg,
+                                            const Rack *opp_rack, const Palimpsest *palimpsest,
+                                            int bag_count);
 
 #endif /* LATTICE_H */

@@ -4,11 +4,9 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "lattice.h"
-#include "settle.h"
-#include "palimpsest.h"
 
-#define BROKER_C_PUCT 2.5f
-#define BROKER_C_VAR  0.6f
+#define BROKER_C_PUCT 1.414f
+#define BROKER_C_VAR  0.75f
 
 typedef struct {
     float c_puct;
@@ -19,11 +17,10 @@ typedef struct {
 
 void     broker_init(Broker *b);
 
-/*
- * Selects the next frontier leaf to buy:
- * Descends from root along highest acquisition score (Q + PUCT + Uncertainty).
- * Returns node index of the selected unexpanded frontier leaf (or 0 if exhausted).
- */
+/* Selects the highest priority frontier leaf in the lattice for expansion */
 uint32_t broker_select_frontier_leaf(Broker *b, const Lattice *lat, uint32_t root_idx);
+
+/* Selects top competing child for adversarial Monte Carlo sample refinement */
+uint32_t broker_select_top_child(Broker *b, const Lattice *lat, uint32_t root_idx);
 
 #endif /* BROKER_H */

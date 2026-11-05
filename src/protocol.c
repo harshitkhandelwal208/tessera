@@ -94,12 +94,16 @@ void protocol_run_server_loop(const Dawg *dawg) {
             MoveList moves;
             movegen_generate_all(&current_board, dawg, &game.player_rack, &moves);
             for (int i = 0; i < moves.count; i++) {
-                moves.moves[i].leave_equity = eval_move_static(&current_board, &moves.moves[i]);
+                moves.moves[i].leave_equity = eval_move_static_bucketed(&current_board, &moves.moves[i], game.bag.count);
             }
             eval_sort_moves(&moves);
 
+            PhaseBucket pb = eval_classify_phase(game.bag.count);
+            OpennessBucket ob = eval_classify_openness(&current_board);
+
             int count = moves.count < 5 ? moves.count : 5;
-            printf("{\"status\":\"ok\",\"hints\":[");
+            printf("{\"status\":\"ok\",\"phase\":\"%s\",\"openness\":\"%s\",\"hints\":[",
+                   eval_phase_name(pb), eval_openness_name(ob));
             for (int i = 0; i < count; i++) {
                 Move *m = &moves.moves[i];
                 printf("{\"word\":\"%s\",\"row\":%d,\"col\":%d,\"dir\":\"%s\",\"score\":%d,\"leave\":\"%s\",\"equity\":%.2f}%s",
@@ -115,6 +119,10 @@ void protocol_run_server_loop(const Dawg *dawg) {
                 fflush(stdout);
                 continue;
             }
+
+            PhaseBucket pb = eval_classify_phase(game.bag.count);
+            OpennessBucket ob = eval_classify_openness(&current_board);
+            bool is_endgame = (game.bag.count == 0);
 
             EngineConfig cfg;
             engine_config_default(&cfg);
@@ -152,8 +160,10 @@ void protocol_run_server_loop(const Dawg *dawg) {
             }
             game.turn = 0;
 
-            printf("{\"status\":\"ok\",\"time_ms\":%.2f,\"move\":{\"type\":%d,\"word\":\"%s\",\"row\":%d,\"col\":%d,\"dir\":\"%s\",\"score\":%d,\"leave\":\"%s\",\"equity\":%.2f},",
-                   metrics.deliberation_ms, best.type, best.word, best.row, best.col,
+            printf("{\"status\":\"ok\",\"time_ms\":%.2f,\"phase\":\"%s\",\"openness\":\"%s\",\"endgame\":%s,\"move\":{\"type\":%d,\"word\":\"%s\",\"row\":%d,\"col\":%d,\"dir\":\"%s\",\"score\":%d,\"leave\":\"%s\",\"equity\":%.2f},",
+                   metrics.deliberation_ms, eval_phase_name(pb), eval_openness_name(ob),
+                   is_endgame ? "true" : "false",
+                   best.type, best.word, best.row, best.col,
                    best.dir == DIR_HORIZONTAL ? "H" : "V",
                    best.score, best.leave, best.sim_equity);
 
