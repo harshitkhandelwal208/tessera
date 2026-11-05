@@ -236,7 +236,7 @@ float lattice_sample_adversarial_counter(Lattice *lat, uint32_t node_idx, const 
         float max_eq = -10000.0f;
         int best_i = 0;
         for (int i = 0; i < opp_moves.count; i++) {
-            float eq = eval_move_static_bucketed(&node->board, &opp_moves.moves[i], bag_count);
+            float eq = eval_move_heuristic_fast(&node->board, &opp_moves.moves[i], bag_count);
             if (eq > max_eq) {
                 max_eq = eq;
                 best_i = i;

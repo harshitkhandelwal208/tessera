@@ -6,3 +6,5 @@ test_dict
 test_eval
 test_movegen
 __pycache__/
+data/train_data.bin
+data/test_data.bin

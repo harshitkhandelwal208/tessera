@@ -45,6 +45,7 @@ const char*    eval_openness_name(OpennessBucket openness);
  */
 float eval_rack_leave_bucketed(const char *leave, PhaseBucket phase);
 float eval_rack_leave(const char *leave);
+float eval_move_heuristic_fast(const Board *board, const Move *move, int bag_count);
 
 /*
  * Board Accumulator:

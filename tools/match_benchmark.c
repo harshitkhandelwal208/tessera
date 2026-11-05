@@ -3,6 +3,7 @@
 #include "movegen.h"
 #include "eval.h"
 #include "simulation.h"
+#include "nnue.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -212,6 +213,12 @@ int main(int argc, char *argv[]) {
     if (!dawg) {
         fprintf(stderr, "Error loading data/dawg.bin\n");
         return 1;
+    }
+
+    if (nnue_load(&g_nnue, "data/nnue.bin")) {
+        printf("[INFO] Deep NNUE Evaluator loaded successfully (448->128->32->1, 246 KB)\n\n");
+    } else {
+        printf("[INFO] NNUE model data/nnue.bin not found. Using hand-tuned Grandmaster Evaluator.\n\n");
     }
 
     /* --- MATCHUP 1: TESSERA vs GREEDY 1-PLY BASELINE --- */

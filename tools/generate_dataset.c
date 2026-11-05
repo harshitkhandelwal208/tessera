@@ -1,0 +1,223 @@
+#include "dict.h"
+#include "board.h"
+#include "movegen.h"
+#include "eval.h"
+#include "nnue.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <math.h>
+#include <omp.h>
+
+#define MAX_GAME_TURNS 60
+#define GAMMA 0.92f
+
+typedef struct {
+    float features[NNUE_INPUT_DIM];
+    float target; /* Normalized residual equity in [-1.0, +1.0] */
+} TrainingSample;
+
+typedef struct {
+    Board board_before;
+    Move move;
+    Rack rack;
+    int bag_count;
+    int player; /* 0 = Player A, 1 = Player B */
+    int score;
+} TurnRecord;
+
+static Move pick_selfplay_move(const Board *board, const Dawg *dawg, const Rack *rack,
+                               int bag_count, unsigned int *seed) {
+    MoveList moves;
+    movegen_generate_all(board, dawg, rack, &moves);
+
+    if (moves.count == 0) {
+        Move pass;
+        memset(&pass, 0, sizeof(Move));
+        pass.type = MOVE_PASS;
+        return pass;
+    }
+
+    /* Evaluate candidate moves */
+    for (int i = 0; i < moves.count; i++) {
+        moves.moves[i].leave_equity = eval_move_static_bucketed(board, &moves.moves[i], bag_count);
+    }
+    eval_sort_moves(&moves);
+
+    /* Epsilon-softmax exploration over top 6 candidate moves */
+    int num_cands = moves.count < 6 ? moves.count : 6;
+    if (num_cands == 1) return moves.moves[0];
+
+    float r = (float)rand_r(seed) / (float)RAND_MAX;
+    if (r < 0.70f) {
+        return moves.moves[0]; /* 70% greedy GM play */
+    }
+
+    /* 30% temperature exploration over top candidates */
+    float best_eq = moves.moves[0].leave_equity;
+    float probs[6];
+    float sum_p = 0.0f;
+    for (int i = 0; i < num_cands; i++) {
+        probs[i] = expf((moves.moves[i].leave_equity - best_eq) / 3.0f);
+        sum_p += probs[i];
+    }
+
+    float pick_val = ((float)rand_r(seed) / (float)RAND_MAX) * sum_p;
+    float accum = 0.0f;
+    for (int i = 0; i < num_cands; i++) {
+        accum += probs[i];
+        if (accum >= pick_val) return moves.moves[i];
+    }
+
+    return moves.moves[0];
+}
+
+int main(int argc, char *argv[]) {
+    int num_games = 10000;
+    const char *out_path = "data/train_data.bin";
+
+    if (argc >= 2) num_games = atoi(argv[1]);
+    if (argc >= 3) out_path = argv[2];
+
+    printf("======================================================================\n");
+    printf("   TESSERA HIGH-THROUGHPUT SELF-PLAY DATASET GENERATOR (OPENMP)       \n");
+    printf("======================================================================\n");
+    printf("Lexicon: SOWPODS | Target Games: %d | Output: %s\n", num_games, out_path);
+    printf("Simulating self-play matches across %d CPU threads...\n\n", omp_get_max_threads());
+
+    Dawg *dawg = dawg_load_binary("data/dawg.bin");
+    if (!dawg) {
+        fprintf(stderr, "Error loading data/dawg.bin\n");
+        return 1;
+    }
+
+    FILE *fout = fopen(out_path, "wb");
+    if (!fout) {
+        fprintf(stderr, "Error opening output file %s\n", out_path);
+        dawg_free(dawg);
+        return 1;
+    }
+
+    clock_t start_time = clock();
+    long total_samples = 0;
+
+    #pragma omp parallel
+    {
+        int tid = omp_get_thread_num();
+        unsigned int seed = (unsigned int)(1337 + tid * 10007 + time(NULL));
+
+        #pragma omp for schedule(dynamic, 64) reduction(+:total_samples)
+        for (int g = 0; g < num_games; g++) {
+            Board board;
+            board_init(&board);
+
+            TileBag bag;
+            bag_init(&bag);
+            bag_shuffle(&bag);
+
+            Rack racks[2];
+            rack_init(&racks[0]);
+            rack_init(&racks[1]);
+
+            bag_draw_tiles(&bag, &racks[0], RACK_CAPACITY);
+            bag_draw_tiles(&bag, &racks[1], RACK_CAPACITY);
+
+            TurnRecord turns[MAX_GAME_TURNS];
+            int turn_count = 0;
+            int current_player = g % 2;
+            int consecutive_passes = 0;
+
+            while (consecutive_passes < 2 && turn_count < MAX_GAME_TURNS) {
+                Rack *active_rack = &racks[current_player];
+                TurnRecord *rec = &turns[turn_count];
+                rec->board_before = board;
+                rec->rack = *active_rack;
+                rec->bag_count = bag.count;
+                rec->player = current_player;
+
+                Move m = pick_selfplay_move(&board, dawg, active_rack, bag.count, &seed);
+                rec->move = m;
+                rec->score = m.score;
+
+                if (m.type == MOVE_PLAY) {
+                    consecutive_passes = 0;
+                    board_apply_move(&board, &m);
+
+                    for (int p = 0; p < m.num_placed; p++) {
+                        char t = m.placed[p].is_blank ? '?' : m.placed[p].letter;
+                        rack_remove_tile(active_rack, t);
+                    }
+                    bag_draw_tiles(&bag, active_rack, m.num_placed);
+
+                    turn_count++;
+                    if (active_rack->count == 0 && bag.count == 0) break;
+                } else {
+                    consecutive_passes++;
+                    turn_count++;
+                }
+
+                current_player = 1 - current_player;
+            }
+
+            /* Extract training samples based on empirical next-turn equity */
+            TrainingSample local_samples[MAX_GAME_TURNS];
+            int num_local = 0;
+
+            for (int t = 0; t < turn_count; t++) {
+                if (turns[t].move.type != MOVE_PLAY) continue;
+
+                float active_next_score = 26.0f;
+                float opp_next_score = 26.0f;
+
+                /* Turn t+1 is the opponent's counterplay */
+                if (t + 1 < turn_count && turns[t + 1].move.type == MOVE_PLAY) {
+                    opp_next_score = (float)turns[t + 1].score;
+                }
+                /* Turn t+2 is the active player's realization of the leave */
+                if (t + 2 < turn_count && turns[t + 2].move.type == MOVE_PLAY) {
+                    active_next_score = (float)turns[t + 2].score;
+                } else {
+                    PhaseBucket pb = eval_classify_phase(turns[t].bag_count);
+                    active_next_score = 26.0f + eval_rack_leave_bucketed(turns[t].move.leave, pb);
+                }
+
+                /*
+                 * Residual Equity:
+                 * (ActivePlayerNextTurnSurplus) - 0.4 * (OpponentCounterplaySurplus)
+                 */
+                float residual_equity = (active_next_score - 26.0f) - 0.40f * (opp_next_score - 26.0f);
+
+                /* Normalized target equity in [-1.0, +1.0] */
+                float norm_target = fminf(1.0f, fmaxf(-1.0f, residual_equity / 50.0f));
+
+                nnue_extract_features(&turns[t].board_before, &turns[t].move,
+                                      &turns[t].rack, turns[t].bag_count,
+                                      local_samples[num_local].features);
+                local_samples[num_local].target = norm_target;
+                num_local++;
+            }
+
+            #pragma omp critical
+            {
+                if (num_local > 0) {
+                    fwrite(local_samples, sizeof(TrainingSample), num_local, fout);
+                }
+            }
+
+            total_samples += num_local;
+        }
+    }
+
+    fclose(fout);
+    dawg_free(dawg);
+
+    double elapsed_s = (double)(clock() - start_time) / (double)CLOCKS_PER_SEC;
+    printf("\n>>> Self-play data generation complete!\n");
+    printf("  Total Samples Generated: %ld\n", total_samples);
+    printf("  Dataset File Size:        %.2f MB\n", (double)(total_samples * sizeof(TrainingSample)) / (1024.0 * 1024.0));
+    printf("  Total Wall Time:          %.2f s (%.0f samples/sec)\n", elapsed_s, (double)total_samples / elapsed_s);
+    printf("======================================================================\n");
+
+    return 0;
+}

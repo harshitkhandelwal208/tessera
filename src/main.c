@@ -8,6 +8,7 @@
 #include "eval.h"
 #include "simulation.h"
 #include "protocol.h"
+#include "nnue.h"
 
 #define DEFAULT_DAWG_BIN "data/dawg.bin"
 #define DEFAULT_DICT_TXT "data/dictionary.txt"
@@ -46,6 +47,12 @@ int main(int argc, char *argv[]) {
     }
 
     Dawg *dawg = get_or_load_dawg();
+
+    if (nnue_load(&g_nnue, "data/nnue.bin")) {
+        printf("[INFO] Deep NNUE Evaluator loaded successfully (448->128->32->1, 246 KB)\n");
+    } else {
+        printf("[INFO] NNUE model data/nnue.bin not found. Using hand-tuned Grandmaster Evaluator.\n");
+    }
 
     if (argc >= 2 && (strcmp(argv[1], "server") == 0 || strcmp(argv[1], "protocol") == 0)) {
         protocol_run_server_loop(dawg);

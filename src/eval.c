@@ -1,4 +1,5 @@
 #include "eval.h"
+#include "nnue.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -461,6 +462,15 @@ DualAccumulator eval_move_accumulate(const Board *board, const Move *move, int b
 
     if (move->type != MOVE_PLAY) return acc;
 
+    /* If NNUE is loaded, neural evaluation supersedes hand-tuned heuristic */
+    if (g_nnue.is_loaded) {
+        float nnue_val = nnue_evaluate_move(&g_nnue, board, move, NULL, bag_count);
+        acc.board_acc = (float)move->score;
+        acc.rack_acc = nnue_val - (float)move->score;
+        acc.net_equity = nnue_val;
+        return acc;
+    }
+
     PhaseBucket phase = eval_classify_phase(bag_count);
     OpennessBucket openness = eval_classify_openness(board);
 
@@ -481,6 +491,15 @@ float eval_move_static_bucketed(const Board *board, const Move *move, int bag_co
 
 float eval_move_static(const Board *board, const Move *move) {
     return eval_move_static_bucketed(board, move, 50);
+}
+
+float eval_move_heuristic_fast(const Board *board, const Move *move, int bag_count) {
+    if (move->type != MOVE_PLAY) return 0.0f;
+    PhaseBucket phase = eval_classify_phase(bag_count);
+    OpennessBucket openness = eval_classify_openness(board);
+    float board_acc = (float)move->score + eval_board_risk_bucketed(board, move, openness);
+    float rack_acc = eval_rack_leave_bucketed(move->leave, phase);
+    return board_acc + (0.85f * rack_acc);
 }
 
 static int compare_moves_descending(const void *a, const void *b) {
