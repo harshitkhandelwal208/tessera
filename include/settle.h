@@ -8,6 +8,7 @@
 
 #define SETTLE_EPS 0.05f     /* Minimum belief change to enqueue parents */
 #define SETTLE_GAMMA 0.95f   /* Per-ply discount factor */
+#define BASELINE_OPP_SCORE 26.0f /* Expected average opponent counterplay equity */
 #define DIRTY_QUEUE_CAPACITY 8192
 
 typedef struct {

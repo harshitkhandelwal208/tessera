@@ -1,4 +1,5 @@
 #include "lattice.h"
+#include "settle.h"
 #include "movegen.h"
 #include "eval.h"
 #include <stdio.h>
@@ -73,13 +74,13 @@ uint32_t lattice_find_or_insert(Lattice *lat, const Board *board, int turn, bool
             n->turn = turn;
 
             /* Default initial belief prior */
-            n->belief.mean = 0.0f;
+            n->belief.mean = (turn == 1) ? BASELINE_OPP_SCORE : 0.0f;
             n->belief.variance = 36.0f; /* Prior standard deviation ~6.0 pts */
             n->belief.samples = 0;
             n->belief.is_proven = false;
             n->belief.proof_sign = 0;
 
-            n->raw_prior_mean = 0.0f;
+            n->raw_prior_mean = n->belief.mean;
             n->raw_prior_var = 36.0f;
 
             lat->hash_buckets[idx] = new_idx;
@@ -141,8 +142,10 @@ void lattice_expand_node(Lattice *lat, uint32_t node_idx, const Dawg *dawg,
     if (all_moves.count == 0) {
         node->is_expanded = true;
         node->num_edges = 0;
-        node->belief.mean = -50.0f; /* Stymied penalty */
-        node->belief.variance = 4.0f;
+        node->belief.is_proven = true;
+        node->belief.proof_sign = -1; /* Proven lost: no moves possible */
+        node->belief.mean = -50.0f;   /* Stymied penalty */
+        node->belief.variance = 0.0f;
         node->belief.samples = 1;
         return;
     }
@@ -178,7 +181,7 @@ void lattice_expand_node(Lattice *lat, uint32_t node_idx, const Dawg *dawg,
         edge->prior_prob = exps[i] / (sum_exp > 0.0f ? sum_exp : 1.0f);
         edge->q_value = all_moves.moves[i].leave_equity;
         edge->variance = 25.0f;
-        edge->visits = 1;
+        edge->visits = 0;
 
         if (edge->q_value > best_q) best_q = edge->q_value;
 
@@ -193,6 +196,17 @@ void lattice_expand_node(Lattice *lat, uint32_t node_idx, const Dawg *dawg,
 
         if (child_idx > 0) {
             lattice_add_parent(lat, child_idx, node_idx);
+
+            /* If bag is exhausted and this move empties the rack, pin child as terminal proof */
+            if (bag_count == 0 && edge->move.num_placed == rack->count) {
+                LatticeNode *child = &lat->nodes[child_idx];
+                child->is_expanded = true;
+                child->num_edges = 0;
+                child->belief.is_proven = true;
+                child->belief.proof_sign = -1; /* Opponent is proven outplayed */
+                child->belief.variance = 0.0f;
+                child->belief.mean = -50.0f;
+            }
         }
     }
 
@@ -220,11 +234,16 @@ float lattice_sample_adversarial_counter(Lattice *lat, uint32_t node_idx, const 
     float best_opp_equity = 0.0f;
     if (opp_moves.count > 0) {
         float max_eq = -10000.0f;
+        int best_i = 0;
         for (int i = 0; i < opp_moves.count; i++) {
             float eq = eval_move_static_bucketed(&node->board, &opp_moves.moves[i], bag_count);
-            if (eq > max_eq) max_eq = eq;
+            if (eq > max_eq) {
+                max_eq = eq;
+                best_i = i;
+            }
         }
-        best_opp_equity = max_eq;
+        /* The damage to active player's margin is the score of the opponent's best response */
+        best_opp_equity = (float)opp_moves.moves[best_i].score;
     }
 
     if (palimpsest) {
@@ -234,12 +253,14 @@ float lattice_sample_adversarial_counter(Lattice *lat, uint32_t node_idx, const 
 
     float old_mean = node->belief.mean;
 
-    /* Welford's algorithm for online mean and variance update */
+    /* Bayesian posterior update with prior weight */
     node->belief.samples++;
-    float delta = best_opp_equity - node->belief.mean;
-    node->belief.mean += delta / (float)node->belief.samples;
-    float delta2 = best_opp_equity - node->belief.mean;
-    node->belief.variance += (delta * delta2 - node->belief.variance) / (float)node->belief.samples;
+    float prior_weight = 4.0f;
+    float sum_samples = (node->belief.mean * (node->belief.samples - 1 + prior_weight)) - (prior_weight * BASELINE_OPP_SCORE) + best_opp_equity;
+    node->belief.mean = (prior_weight * BASELINE_OPP_SCORE + sum_samples) / (prior_weight + (float)node->belief.samples);
+
+    float var_reduction = 36.0f / (1.0f + 0.3f * (float)node->belief.samples);
+    node->belief.variance = fmaxf(4.0f, var_reduction);
 
     return fabsf(node->belief.mean - old_mean);
 }

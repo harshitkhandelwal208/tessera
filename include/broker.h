@@ -21,6 +21,6 @@ void     broker_init(Broker *b);
 uint32_t broker_select_frontier_leaf(Broker *b, const Lattice *lat, uint32_t root_idx);
 
 /* Selects top competing child for adversarial Monte Carlo sample refinement */
-uint32_t broker_select_top_child(Broker *b, const Lattice *lat, uint32_t root_idx);
+uint32_t broker_select_top_child(Broker *b, Lattice *lat, uint32_t root_idx);
 
 #endif /* BROKER_H */

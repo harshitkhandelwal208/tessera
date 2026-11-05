@@ -75,9 +75,9 @@ uint32_t broker_select_frontier_leaf(Broker *b, const Lattice *lat, uint32_t roo
     return 0;
 }
 
-uint32_t broker_select_top_child(Broker *b, const Lattice *lat, uint32_t root_idx) {
+uint32_t broker_select_top_child(Broker *b, Lattice *lat, uint32_t root_idx) {
     if (root_idx == 0 || root_idx >= lat->num_nodes) return 0;
-    const LatticeNode *root = &lat->nodes[root_idx];
+    LatticeNode *root = &lat->nodes[root_idx];
     if (!root->is_expanded || root->num_edges == 0) return 0;
 
     uint32_t total_visits = 1;
@@ -101,5 +101,7 @@ uint32_t broker_select_top_child(Broker *b, const Lattice *lat, uint32_t root_id
         }
     }
 
+    root->edges[best_edge_idx].visits++;
+    b->leaves_purchased++;
     return root->edges[best_edge_idx].target_node_idx;
 }

@@ -1,5 +1,4 @@
 #include "simulation.h"
-#include "endgame.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -109,8 +108,9 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
 
     /* Check if exchange is superior to best initial play */
     Move ex_move;
+    float best_play_static_equity = eval_move_static_bucketed(board, &root->edges[0].move, bag_remaining);
     if (eval_should_exchange(board, rack, bag_remaining,
-                            root->edges[0].q_value, &ex_move)) {
+                            best_play_static_equity, &ex_move)) {
         lattice_free(lat);
         return ex_move;
     }
@@ -119,73 +119,39 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
     char unseen[100];
     int unseen_count = sim_get_unseen_tiles(board, rack, unseen);
 
-    /* --- EXACT ENDGAME SOLVER (Bag is Empty) --- */
-    if (bag && bag->count == 0 && cfg.use_endgame_solver) {
-        Rack opp_exact_rack;
-        rack_init(&opp_exact_rack);
-        int draw_cnt = unseen_count < RACK_CAPACITY ? unseen_count : RACK_CAPACITY;
-        for (int i = 0; i < draw_cnt; i++) {
-            rack_add_tile(&opp_exact_rack, unseen[i]);
-        }
-
-        EndgameResult eg = endgame_solve(board, dawg, rack, &opp_exact_rack, 5);
-        if (eg.is_proven && eg.best_move.type == MOVE_PLAY) {
-            if (all_moves) {
-                all_moves->count = root->num_edges;
-                for (int i = 0; i < root->num_edges; i++) {
-                    all_moves->moves[i] = root->edges[i].move;
-                    all_moves->moves[i].sim_equity = (float)root->edges[i].move.score;
-                }
-            }
-            if (metrics) {
-                metrics->nodes_in_lattice = eg.nodes_searched;
-                metrics->transpositions_merged = 0;
-                metrics->dirty_passes_settled = 0;
-                metrics->frontier_leaves_bought = 0;
-                metrics->court_confidence = 1.0f;
-                metrics->palimpsest_max_bias = 0.0f;
-                metrics->deliberation_ms = ((double)(clock() - start_time) / CLOCKS_PER_SEC) * 1000.0;
-            }
-            lattice_free(lat);
-            return eg.best_move;
-        }
-    }
-
     uint32_t total_dirty_passes = 0;
+
     CourtVerdict verdict = court_deliberate(lat, root_idx);
 
-    /* --- LATTICE SETTLING DELIBERATION LOOP --- */
+    /* --- LATTICE SETTLING DELIBERATION LOOP WITH PAIRED COUNTERPLAY --- */
+    int top_k = root->num_edges < 5 ? root->num_edges : 5;
+
     for (int step = 0; step < cfg.max_deliberation_steps && !verdict.should_adjourn; step++) {
-        /* A. The Broker decides whether to expand an unvisited frontier leaf or refine top child */
-        uint32_t leaf_idx = broker_select_frontier_leaf(&broker, lat, root_idx);
-        bool is_new_expansion = (leaf_idx != 0);
-
-        if (!is_new_expansion) {
-            leaf_idx = broker_select_top_child(&broker, lat, root_idx);
-            if (leaf_idx == 0) break;
-        }
-
-        /* B. Sample opponent rack from unseen pool */
+        /* Sample a concrete opponent rack from the unseen pool */
         Rack sim_opp_rack;
         rack_init(&sim_opp_rack);
 
-        shuffle_tiles(unseen, unseen_count);
+        if (bag_remaining > 0) {
+            shuffle_tiles(unseen, unseen_count);
+        }
         int draw_cnt = unseen_count < RACK_CAPACITY ? unseen_count : RACK_CAPACITY;
         for (int i = 0; i < draw_cnt; i++) {
             rack_add_tile(&sim_opp_rack, unseen[i]);
         }
 
-        if (is_new_expansion) {
-            /* Expand frontier leaf in the lattice */
-            lattice_expand_node(lat, leaf_idx, dawg, &sim_opp_rack,
-                                cfg.use_palimpsest ? &palimpsest : NULL, bag_remaining);
-            dirty_queue_push(&dq, leaf_idx, 20.0f);
-        } else {
-            /* Adversarial Monte Carlo rollout sample against top candidate */
-            float delta = lattice_sample_adversarial_counter(lat, leaf_idx, dawg, &sim_opp_rack,
-                                                             cfg.use_palimpsest ? &palimpsest : NULL,
-                                                             bag_remaining);
-            dirty_queue_push(&dq, leaf_idx, fmaxf(5.0f, delta * 2.0f));
+        /* Paired evaluation: test all top candidate replies against the EXACT SAME opponent rack */
+        for (int k = 0; k < top_k; k++) {
+            uint32_t c_idx = root->edges[k].target_node_idx;
+            if (c_idx > 0 && c_idx < lat->num_nodes) {
+                float delta = lattice_sample_adversarial_counter(lat, c_idx, dawg, &sim_opp_rack,
+                                                                 cfg.use_palimpsest ? &palimpsest : NULL,
+                                                                 bag_remaining);
+                LatticeNode *leaf = &lat->nodes[c_idx];
+                for (int p = 0; p < leaf->num_parents; p++) {
+                    dirty_queue_push(&dq, leaf->parent_indices[p], fmaxf(1.0f, delta * 2.0f));
+                }
+                root->edges[k].visits++;
+            }
         }
 
         /* Relax the lattice by prioritized backward induction */

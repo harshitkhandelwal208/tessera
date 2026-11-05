@@ -85,6 +85,7 @@ float settle_node_backup(Lattice *lat, uint32_t node_idx, Palimpsest *palimpsest
         LatticeEdge *edge = &n->edges[i];
         float child_mean = 0.0f;
         float child_var = 25.0f;
+        bool child_is_loss = false;
 
         if (edge->target_node_idx > 0 && edge->target_node_idx < lat->num_nodes) {
             LatticeNode *child = &lat->nodes[edge->target_node_idx];
@@ -94,18 +95,26 @@ float settle_node_backup(Lattice *lat, uint32_t node_idx, Palimpsest *palimpsest
             if (child->belief.is_proven && child->belief.proof_sign < 0) {
                 /* Opponent is proven lost -> this move proves parent won! */
                 has_proven_win = true;
+                child_is_loss = true;
+                edge->variance = 0.0f;
             }
         }
 
         /*
-         * Distributional Bellman Operator:
-         * Q(e) = Move.Score + Leave.Equity + BoardRisk - gamma * Child.Mean
+         * Calibrated Bellman Operator on Relative Spread:
+         * Q(e) = MoveStatic - gamma * (ChildOpponentMean - BaselineOpponentScore)
          */
         DualAccumulator acc = eval_move_accumulate(&n->board, &edge->move, 50);
         float move_static = acc.net_equity;
 
-        edge->q_value = move_static - (SETTLE_GAMMA * child_mean);
-        edge->variance = (SETTLE_GAMMA * SETTLE_GAMMA * child_var) + 2.0f;
+        if (child_is_loss) {
+            edge->q_value = move_static + 50.0f;
+            edge->variance = 0.0f;
+        } else {
+            float opp_excess = child_mean - BASELINE_OPP_SCORE;
+            edge->q_value = move_static - (SETTLE_GAMMA * opp_excess);
+            edge->variance = (SETTLE_GAMMA * SETTLE_GAMMA * child_var) + 2.0f;
+        }
 
         if (edge->q_value > best_q) {
             best_q = edge->q_value;
@@ -118,7 +127,22 @@ float settle_node_backup(Lattice *lat, uint32_t node_idx, Palimpsest *palimpsest
         n->belief.proof_sign = +1;
         n->belief.variance = 0.0f;
     } else {
-        n->belief.variance = best_var * 0.8f;
+        /* Check if all children are proven winning replies for the opponent */
+        bool all_children_losses = true;
+        for (int i = 0; i < n->num_edges; i++) {
+            uint32_t tid = n->edges[i].target_node_idx;
+            if (tid == 0 || !lat->nodes[tid].belief.is_proven || lat->nodes[tid].belief.proof_sign <= 0) {
+                all_children_losses = false;
+                break;
+            }
+        }
+        if (all_children_losses && n->num_edges > 0) {
+            n->belief.is_proven = true;
+            n->belief.proof_sign = -1;
+            n->belief.variance = 0.0f;
+        } else {
+            n->belief.variance = best_var * 0.8f;
+        }
     }
 
     n->belief.mean = best_q;

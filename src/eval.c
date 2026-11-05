@@ -420,9 +420,7 @@ float eval_board_risk_bucketed(const Board *board, const Move *move, OpennessBuc
     if (move->type != MOVE_PLAY) return 0.0f;
 
     float risk = 0.0f;
-    float penalty_scale = 1.0f;
-    if (openness == OPENNESS_EXPOSED) penalty_scale = 1.25f;
-    else if (openness == OPENNESS_WIDE) penalty_scale = 1.5f;
+    float penalty_scale = (openness == OPENNESS_WIDE) ? 1.25f : 1.0f;
 
     for (int p = 0; p < move->num_placed; p++) {
         int r = move->placed[p].row;
@@ -430,19 +428,6 @@ float eval_board_risk_bucketed(const Board *board, const Move *move, OpennessBuc
         char let = move->placed[p].letter;
         bool is_v = is_vowel_c(let);
 
-        /* 1. Multiplier Capture Reward: Taking a premium denies it to opponent */
-        MultiplierType original_mult = board_get_multiplier(r, c);
-        if (original_mult == MULT_TW) {
-            risk += 6.0f;
-        } else if (original_mult == MULT_TL) {
-            risk += 3.0f;
-        } else if (original_mult == MULT_DW) {
-            risk += 2.0f;
-        } else if (original_mult == MULT_DL) {
-            risk += 0.8f;
-        }
-
-        /* 2. Defensive Risk: Opening adjacent premium squares */
         int dr[4] = {-1, 1, 0, 0};
         int dc[4] = {0, 0, -1, 1};
 
@@ -451,14 +436,9 @@ float eval_board_risk_bucketed(const Board *board, const Move *move, OpennessBuc
             int nc = c + dc[d];
             if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
                 if (board->cells[nr][nc].tile == 0) {
-                    MultiplierType m = board->cells[nr][nc].mult;
-                    if (m == MULT_TW) {
-                        /* Exposing a TW with an adjacent vowel is exceptionally hazardous */
-                        risk -= (is_v ? 10.5f : 6.0f) * penalty_scale;
-                    } else if (m == MULT_TL) {
-                        risk -= (is_v ? 5.0f : 3.0f) * penalty_scale;
-                    } else if (m == MULT_DW) {
-                        risk -= (is_v ? 3.5f : 2.0f) * penalty_scale;
+                    /* Only penalize if opening an unanchored Triple Word square to the opponent */
+                    if (board_get_multiplier(nr, nc) == MULT_TW && !board_is_anchor(board, nr, nc)) {
+                        risk -= (is_v ? 4.5f : 2.5f) * penalty_scale;
                     }
                 }
             }
@@ -487,10 +467,10 @@ DualAccumulator eval_move_accumulate(const Board *board, const Move *move, int b
     /* Board Accumulator: Move score + premium square dynamics */
     acc.board_acc = (float)move->score + eval_board_risk_bucketed(board, move, openness);
 
-    /* Rack Accumulator: 8-Phase leave equity + stem synergies */
+    /* Rack Accumulator: 8-Phase leave equity + stem synergies (calibrated weighting) */
     acc.rack_acc = eval_rack_leave_bucketed(move->leave, phase);
 
-    acc.net_equity = acc.board_acc + acc.rack_acc;
+    acc.net_equity = acc.board_acc + (0.85f * acc.rack_acc);
     return acc;
 }
 
