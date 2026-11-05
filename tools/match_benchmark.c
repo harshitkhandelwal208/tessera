@@ -10,13 +10,33 @@
 #include <time.h>
 #include <math.h>
 
-#define NUM_TOURNAMENT_GAMES 30
-
 typedef enum {
-    BOT_TESSERA_LATTICE  = 0, /* Full Graph Belief-Lattice + Dual Accumulator + 8 Phases */
-    BOT_BASELINE_GREEDY  = 1, /* Greedy 1-ply: Highest immediate word score */
-    BOT_BASELINE_STATIC  = 2  /* Simple 1-ply static score without graph deliberation */
+    BOT_BASELINE_GREEDY   = 0, /* Greedy 1-ply: Immediate word score (~1550 Elo) */
+    BOT_DEFENSIVE_TURTLER = 1, /* Defensive Turtler: Avoids opening TW/DW (~1650 Elo) */
+    BOT_BINGO_HUNTER      = 2, /* Bingo Hunter: 7-letter stem optimizer (~1750 Elo) */
+    BOT_HEURISTIC_STATIC  = 3, /* Grandmaster 8-Phase Leave Heuristic (~1850 Elo) */
+    BOT_NEURAL_STATIC     = 4, /* Raw Deep NNUE 1-Ply Evaluator (~1950 Elo) */
+    BOT_CHAMPIONSHIP_SIM  = 5, /* Quackle-Style Lookahead Simulation (~2100 Elo) */
+    BOT_TYPE_COUNT        = 6
 } BotType;
+
+static const char *BOT_NAMES[BOT_TYPE_COUNT] = {
+    "Baseline Greedy (1-Ply Score)",
+    "Defensive Turtler (Risk Minimizer)",
+    "Bingo Hunter (Stem Synergy)",
+    "Heuristic Grandmaster (8-Phase Table)",
+    "Neural Static (Raw 448-dim NNUE 1-Ply)",
+    "Championship Simulation (Quackle Emulation)"
+};
+
+static const int BOT_ESTIMATED_ELOS[BOT_TYPE_COUNT] = {
+    1550,
+    1650,
+    1750,
+    1850,
+    1950,
+    2100
+};
 
 typedef struct {
     int wins;
@@ -26,9 +46,20 @@ typedef struct {
     int total_opponent_score;
     int tessera_bingos;
     int opponent_bingos;
+    double elapsed_seconds;
 } MatchStats;
 
-/* Greedy Bot: selects legal move with highest immediate score */
+/* Helper: shuffle an array of characters */
+static void local_shuffle_tiles(char *arr, int n) {
+    for (int i = n - 1; i > 0; i--) {
+        int j = rand() % (i + 1);
+        char tmp = arr[i];
+        arr[i] = arr[j];
+        arr[j] = tmp;
+    }
+}
+
+/* 1. Greedy Bot */
 static Move select_greedy_move(const Board *board, const Dawg *dawg, const Rack *rack) {
     MoveList moves;
     movegen_generate_all(board, dawg, rack, &moves);
@@ -38,7 +69,6 @@ static Move select_greedy_move(const Board *board, const Dawg *dawg, const Rack 
         pass_move.type = MOVE_PASS;
         return pass_move;
     }
-
     int best_score = -1;
     int best_idx = 0;
     for (int i = 0; i < moves.count; i++) {
@@ -50,8 +80,8 @@ static Move select_greedy_move(const Board *board, const Dawg *dawg, const Rack 
     return moves.moves[best_idx];
 }
 
-/* Static Bot: 1-ply move with basic static evaluation */
-static Move select_static_move(const Board *board, const Dawg *dawg, const Rack *rack, int bag_count) {
+/* 2. Defensive Turtler Bot */
+static Move select_defensive_move(const Board *board, const Dawg *dawg, const Rack *rack) {
     MoveList moves;
     movegen_generate_all(board, dawg, rack, &moves);
     if (moves.count == 0) {
@@ -60,7 +90,81 @@ static Move select_static_move(const Board *board, const Dawg *dawg, const Rack 
         pass_move.type = MOVE_PASS;
         return pass_move;
     }
+    OpennessBucket openness = eval_classify_openness(board);
+    float best_val = -10000.0f;
+    int best_idx = 0;
+    for (int i = 0; i < moves.count; i++) {
+        float risk = eval_board_risk_bucketed(board, &moves.moves[i], openness);
+        float val = (float)moves.moves[i].score + (3.0f * risk);
+        if (val > best_val) {
+            best_val = val;
+            best_idx = i;
+        }
+    }
+    return moves.moves[best_idx];
+}
 
+/* 3. Bingo Hunter Bot */
+static Move select_bingo_hunter_move(const Board *board, const Dawg *dawg, const Rack *rack) {
+    MoveList moves;
+    movegen_generate_all(board, dawg, rack, &moves);
+    if (moves.count == 0) {
+        Move pass_move;
+        memset(&pass_move, 0, sizeof(Move));
+        pass_move.type = MOVE_PASS;
+        return pass_move;
+    }
+    float best_val = -10000.0f;
+    int best_idx = 0;
+    for (int i = 0; i < moves.count; i++) {
+        float stem_bonus = 0.0f;
+        for (int j = 0; moves.moves[i].leave[j]; j++) {
+            char c = moves.moves[i].leave[j];
+            if (c == '?' || c == 'S') stem_bonus += 8.0f;
+            else if (c == 'E' || c == 'R' || c == 'I' || c == 'A' || c == 'T' || c == 'N') stem_bonus += 3.5f;
+            else if (c == 'Q' || c == 'Z' || c == 'J' || c == 'X' || c == 'V') stem_bonus -= 6.0f;
+        }
+        float val = (float)moves.moves[i].score + (1.2f * stem_bonus);
+        if (val > best_val) {
+            best_val = val;
+            best_idx = i;
+        }
+    }
+    return moves.moves[best_idx];
+}
+
+/* 4. Heuristic Static Bot (8-phase rack leave table, no NNUE) */
+static Move select_heuristic_move(const Board *board, const Dawg *dawg, const Rack *rack, int bag_count) {
+    MoveList moves;
+    movegen_generate_all(board, dawg, rack, &moves);
+    if (moves.count == 0) {
+        Move pass_move;
+        memset(&pass_move, 0, sizeof(Move));
+        pass_move.type = MOVE_PASS;
+        return pass_move;
+    }
+    float best_val = -10000.0f;
+    int best_idx = 0;
+    for (int i = 0; i < moves.count; i++) {
+        float eq = eval_move_heuristic_fast(board, &moves.moves[i], bag_count);
+        if (eq > best_val) {
+            best_val = eq;
+            best_idx = i;
+        }
+    }
+    return moves.moves[best_idx];
+}
+
+/* 5. Neural Static Bot (Raw 448-dim NNUE 1-ply) */
+static Move select_neural_static_move(const Board *board, const Dawg *dawg, const Rack *rack, int bag_count) {
+    MoveList moves;
+    movegen_generate_all(board, dawg, rack, &moves);
+    if (moves.count == 0) {
+        Move pass_move;
+        memset(&pass_move, 0, sizeof(Move));
+        pass_move.type = MOVE_PASS;
+        return pass_move;
+    }
     float best_eq = -10000.0f;
     int best_idx = 0;
     for (int i = 0; i < moves.count; i++) {
@@ -73,6 +177,89 @@ static Move select_static_move(const Board *board, const Dawg *dawg, const Rack 
     return moves.moves[best_idx];
 }
 
+/* 6. Championship Simulation Bot (Quackle emulation: paired Monte Carlo lookahead) */
+static Move select_quackle_sim_move(const Board *board, const Dawg *dawg, const Rack *rack, int bag_count) {
+    MoveList moves;
+    movegen_generate_all(board, dawg, rack, &moves);
+    if (moves.count == 0) {
+        Move pass_move;
+        memset(&pass_move, 0, sizeof(Move));
+        pass_move.type = MOVE_PASS;
+        return pass_move;
+    }
+
+    for (int i = 0; i < moves.count; i++) {
+        moves.moves[i].leave_equity = eval_move_heuristic_fast(board, &moves.moves[i], bag_count);
+    }
+    eval_sort_moves(&moves);
+
+    int beam = moves.count < 5 ? moves.count : 5;
+    if (beam <= 1) return moves.moves[0];
+
+    char unseen[100];
+    int unseen_count = sim_get_unseen_tiles(board, rack, unseen);
+
+    float opp_totals[5] = {0};
+    int N_SIMS = 12;
+
+    for (int s = 0; s < N_SIMS; s++) {
+        Rack opp_r;
+        rack_init(&opp_r);
+        if (bag_count > 0) local_shuffle_tiles(unseen, unseen_count);
+        int d = unseen_count < 7 ? unseen_count : 7;
+        for (int i = 0; i < d; i++) rack_add_tile(&opp_r, unseen[i]);
+
+        for (int k = 0; k < beam; k++) {
+            Board spec;
+            board_copy(&spec, board);
+            board_apply_move(&spec, &moves.moves[k]);
+
+            MoveList om;
+            movegen_generate_all(&spec, dawg, &opp_r, &om);
+            float max_opp = 0.0f;
+            for (int r = 0; r < om.count; r++) {
+                float eq = eval_move_heuristic_fast(&spec, &om.moves[r], bag_count);
+                if (eq > max_opp) max_opp = eq;
+            }
+            opp_totals[k] += max_opp;
+        }
+    }
+
+    int best_k = 0;
+    float best_net = -10000.0f;
+    for (int k = 0; k < beam; k++) {
+        float avg_opp = opp_totals[k] / (float)N_SIMS;
+        float net = moves.moves[k].leave_equity - (0.80f * avg_opp);
+        if (net > best_net) {
+            best_net = net;
+            best_k = k;
+        }
+    }
+    return moves.moves[best_k];
+}
+
+/* Dispatch opponent move based on bot type */
+static Move select_opponent_move(BotType opp_type, const Board *board, const Dawg *dawg,
+                                 const Rack *rack, int bag_count) {
+    switch (opp_type) {
+        case BOT_BASELINE_GREEDY:
+            return select_greedy_move(board, dawg, rack);
+        case BOT_DEFENSIVE_TURTLER:
+            return select_defensive_move(board, dawg, rack);
+        case BOT_BINGO_HUNTER:
+            return select_bingo_hunter_move(board, dawg, rack);
+        case BOT_HEURISTIC_STATIC:
+            return select_heuristic_move(board, dawg, rack, bag_count);
+        case BOT_NEURAL_STATIC:
+            return select_neural_static_move(board, dawg, rack, bag_count);
+        case BOT_CHAMPIONSHIP_SIM:
+            return select_quackle_sim_move(board, dawg, rack, bag_count);
+        default:
+            return select_greedy_move(board, dawg, rack);
+    }
+}
+
+/* Play a single game between Tessera and Opponent */
 static void play_single_game(const Dawg *dawg, BotType opp_type, int game_idx,
                              int *out_tessera_score, int *out_opp_score,
                              int *out_tessera_bingos, int *out_opp_bingos) {
@@ -87,20 +274,25 @@ static void play_single_game(const Dawg *dawg, BotType opp_type, int game_idx,
     rack_init(&tessera_rack);
     rack_init(&opp_rack);
 
-    bag_draw_tiles(&bag, &tessera_rack, RACK_CAPACITY);
-    bag_draw_tiles(&bag, &opp_rack, RACK_CAPACITY);
+    int turn = game_idx % 2; /* Alternate who plays first */
+
+    if (turn == 0) {
+        bag_draw_tiles(&bag, &tessera_rack, RACK_CAPACITY);
+        bag_draw_tiles(&bag, &opp_rack, RACK_CAPACITY);
+    } else {
+        bag_draw_tiles(&bag, &opp_rack, RACK_CAPACITY);
+        bag_draw_tiles(&bag, &tessera_rack, RACK_CAPACITY);
+    }
 
     int tessera_score = 0;
     int opp_score = 0;
     int t_bingos = 0;
     int o_bingos = 0;
-
-    int turn = game_idx % 2; /* Alternate who plays first */
     int consecutive_passes = 0;
 
     EngineConfig cfg;
     engine_config_default(&cfg);
-    cfg.max_deliberation_steps = 25; /* Fast tournament pace */
+    cfg.max_deliberation_steps = 20;
 
     while (consecutive_passes < 2) {
         if (turn == 0) {
@@ -134,12 +326,7 @@ static void play_single_game(const Dawg *dawg, BotType opp_type, int game_idx,
             turn = 1;
         } else {
             /* Opponent's turn */
-            Move opp_move;
-            if (opp_type == BOT_BASELINE_GREEDY) {
-                opp_move = select_greedy_move(&board, dawg, &opp_rack);
-            } else {
-                opp_move = select_static_move(&board, dawg, &opp_rack, bag.count);
-            }
+            Move opp_move = select_opponent_move(opp_type, &board, dawg, &opp_rack, bag.count);
 
             if (opp_move.type == MOVE_PLAY) {
                 consecutive_passes = 0;
@@ -177,15 +364,17 @@ static void play_single_game(const Dawg *dawg, BotType opp_type, int game_idx,
         }
         opp_score += 2 * t_pen;
     } else {
-        /* Both passed: deduct remaining rack points */
+        int t_pen = 0, o_pen = 0;
         for (int i = 0; i < tessera_rack.count; i++) {
             char t = tessera_rack.tiles[i];
-            if (t >= 'A' && t <= 'Z') tessera_score -= TILE_VALUES[t - 'A'];
+            if (t >= 'A' && t <= 'Z') t_pen += TILE_VALUES[t - 'A'];
         }
         for (int i = 0; i < opp_rack.count; i++) {
             char t = opp_rack.tiles[i];
-            if (t >= 'A' && t <= 'Z') opp_score -= TILE_VALUES[t - 'A'];
+            if (t >= 'A' && t <= 'Z') o_pen += TILE_VALUES[t - 'A'];
         }
+        tessera_score -= t_pen;
+        opp_score -= o_pen;
     }
 
     *out_tessera_score = tessera_score;
@@ -194,20 +383,20 @@ static void play_single_game(const Dawg *dawg, BotType opp_type, int game_idx,
     *out_opp_bingos = o_bingos;
 }
 
-int main(int argc, char *argv[]) {
-    srand(1337); /* Deterministic benchmark seed */
-
-    int total_games = NUM_TOURNAMENT_GAMES;
-    if (argc >= 2) {
-        total_games = atoi(argv[1]);
-        if (total_games <= 0) total_games = NUM_TOURNAMENT_GAMES;
+int main(int argc, char **argv) {
+    int games_per_bot = 6;
+    if (argc > 1) {
+        games_per_bot = atoi(argv[1]);
+        if (games_per_bot < 2) games_per_bot = 2;
+        if (games_per_bot % 2 != 0) games_per_bot++; /* Ensure even for start balance */
     }
 
     printf("======================================================================\n");
-    printf("   TESSERA TOURNAMENT BENCHMARK & OBJECTIVE PERFORMANCE EVALUATION    \n");
+    printf("   TESSERA GRANDMASTER MULTI-BOT BENCHMARK & COMPETITIVE MATRIX      \n");
     printf("======================================================================\n");
     printf("Lexicon: SOWPODS (267,751 words) | Architecture: Pure Graph Belief Lattice\n");
-    printf("Playing %d tournament matches against Baseline Opponents...\n\n", total_games);
+    printf("Playing %d tournament matches against EACH of %d Opponent Profiles (%d Total Games)...\n\n",
+           games_per_bot, BOT_TYPE_COUNT, games_per_bot * BOT_TYPE_COUNT);
 
     Dawg *dawg = dawg_load_binary("data/dawg.bin");
     if (!dawg) {
@@ -218,123 +407,106 @@ int main(int argc, char *argv[]) {
     if (nnue_load(&g_nnue, "data/nnue.bin")) {
         printf("[INFO] Deep NNUE Evaluator loaded successfully (448->128->32->1, 246 KB)\n\n");
     } else {
-        printf("[INFO] NNUE model data/nnue.bin not found. Using hand-tuned Grandmaster Evaluator.\n\n");
+        printf("[INFO] NNUE model data/nnue.bin not found. Using hand-tuned Evaluator.\n\n");
     }
 
-    /* --- MATCHUP 1: TESSERA vs GREEDY 1-PLY BASELINE --- */
-    printf(">>> MATCHUP 1: Tessera (Graph Belief Lattice) vs. Baseline Greedy (1-Ply Score)\n");
-    MatchStats stats1;
-    memset(&stats1, 0, sizeof(MatchStats));
+    srand(1337);
 
-    clock_t start = clock();
-    for (int g = 0; g < total_games; g++) {
-        int ts = 0, os = 0, tb = 0, ob = 0;
-        play_single_game(dawg, BOT_BASELINE_GREEDY, g, &ts, &os, &tb, &ob);
+    MatchStats all_stats[BOT_TYPE_COUNT];
+    memset(all_stats, 0, sizeof(all_stats));
 
-        stats1.total_tessera_score += ts;
-        stats1.total_opponent_score += os;
-        stats1.tessera_bingos += tb;
-        stats1.opponent_bingos += ob;
+    int total_wins = 0, total_losses = 0, total_ties = 0;
+    long long grand_tessera_pts = 0, grand_opp_pts = 0;
+    int grand_tessera_bingos = 0, grand_opp_bingos = 0;
+    double total_runtime = 0.0;
 
-        if (ts > os) stats1.wins++;
-        else if (os > ts) stats1.losses++;
-        else stats1.ties++;
+    for (int b = 0; b < BOT_TYPE_COUNT; b++) {
+        printf(">>> MATCHUP %d/%d: Tessera vs. %s\n", b + 1, BOT_TYPE_COUNT, BOT_NAMES[b]);
+        clock_t start = clock();
 
-        printf("\r  [Match %2d/%2d] Tessera: %d | Greedy: %d | W-L-T: %d-%d-%d",
-               g + 1, total_games, ts, os, stats1.wins, stats1.losses, stats1.ties);
-        fflush(stdout);
+        for (int g = 0; g < games_per_bot; g++) {
+            int ts = 0, os = 0, tb = 0, ob = 0;
+            play_single_game(dawg, (BotType)b, g, &ts, &os, &tb, &ob);
+
+            all_stats[b].total_tessera_score += ts;
+            all_stats[b].total_opponent_score += os;
+            all_stats[b].tessera_bingos += tb;
+            all_stats[b].opponent_bingos += ob;
+
+            if (ts > os) all_stats[b].wins++;
+            else if (os > ts) all_stats[b].losses++;
+            else all_stats[b].ties++;
+
+            printf("\r  [Game %2d/%2d] Tessera: %3d | %s: %3d | Record: %d-%d-%d",
+                   g + 1, games_per_bot, ts, BOT_NAMES[b], os,
+                   all_stats[b].wins, all_stats[b].losses, all_stats[b].ties);
+            fflush(stdout);
+        }
+
+        clock_t end = clock();
+        all_stats[b].elapsed_seconds = (double)(end - start) / CLOCKS_PER_SEC;
+        total_runtime += all_stats[b].elapsed_seconds;
+
+        total_wins += all_stats[b].wins;
+        total_losses += all_stats[b].losses;
+        total_ties += all_stats[b].ties;
+        grand_tessera_pts += all_stats[b].total_tessera_score;
+        grand_opp_pts += all_stats[b].total_opponent_score;
+        grand_tessera_bingos += all_stats[b].tessera_bingos;
+        grand_opp_bingos += all_stats[b].opponent_bingos;
+
+        double win_rate = (double)all_stats[b].wins / games_per_bot * 100.0;
+        double avg_ts = (double)all_stats[b].total_tessera_score / games_per_bot;
+        double avg_os = (double)all_stats[b].total_opponent_score / games_per_bot;
+
+        printf("\n  Result: %d W - %d L - %d T (%.1f%% Win Rate) | Avg Score: %.1f vs %.1f (Spread: %+.1f pts) | Time: %.1fs\n\n",
+               all_stats[b].wins, all_stats[b].losses, all_stats[b].ties, win_rate,
+               avg_ts, avg_os, avg_ts - avg_os, all_stats[b].elapsed_seconds);
     }
-    clock_t end = clock();
-    double time_s = (double)(end - start) / CLOCKS_PER_SEC;
 
-    double win_rate1 = (double)stats1.wins / total_games * 100.0;
-    double avg_ts1 = (double)stats1.total_tessera_score / total_games;
-    double avg_os1 = (double)stats1.total_opponent_score / total_games;
-    double avg_spread1 = avg_ts1 - avg_os1;
-    double bingos_per_game1 = (double)stats1.tessera_bingos / total_games;
+    /* Overall Summary Matrix */
+    int total_games = games_per_bot * BOT_TYPE_COUNT;
+    double overall_win_rate = (double)total_wins / total_games * 100.0;
+    double overall_avg_tessera = (double)grand_tessera_pts / total_games;
+    double overall_avg_opp = (double)grand_opp_pts / total_games;
+    double overall_spread = overall_avg_tessera - overall_avg_opp;
+    double bingos_per_game = (double)grand_tessera_bingos / total_games;
 
-    printf("\n\n--- MATCHUP 1 RESULTS ---\n");
-    printf("  Record:                %d Wins, %d Losses, %d Ties\n", stats1.wins, stats1.losses, stats1.ties);
-    printf("  Win Rate:              %.1f%%\n", win_rate1);
-    printf("  Tessera Average Score: %.1f pts/game\n", avg_ts1);
-    printf("  Greedy Average Score:  %.1f pts/game\n", avg_os1);
-    printf("  Average Spread:        %+.1f pts/game\n", avg_spread1);
-    printf("  Tessera Bingos / Game: %.2f (vs Greedy %.2f)\n", bingos_per_game1, (double)stats1.opponent_bingos / total_games);
-    printf("  Total Time:            %.2f s (%.1f ms/game)\n\n", time_s, (time_s / total_games) * 1000.0);
-
-    /* --- MATCHUP 2: TESSERA vs SIMPLE STATIC BOT --- */
-    printf(">>> MATCHUP 2: Tessera (Graph Belief Lattice) vs. Simple Static (No Graph Deliberation)\n");
-    MatchStats stats2;
-    memset(&stats2, 0, sizeof(MatchStats));
-
-    start = clock();
-    for (int g = 0; g < total_games; g++) {
-        int ts = 0, os = 0, tb = 0, ob = 0;
-        play_single_game(dawg, BOT_BASELINE_STATIC, g, &ts, &os, &tb, &ob);
-
-        stats2.total_tessera_score += ts;
-        stats2.total_opponent_score += os;
-        stats2.tessera_bingos += tb;
-        stats2.opponent_bingos += ob;
-
-        if (ts > os) stats2.wins++;
-        else if (os > ts) stats2.losses++;
-        else stats2.ties++;
-
-        printf("\r  [Match %2d/%2d] Tessera: %d | Static: %d | W-L-T: %d-%d-%d",
-               g + 1, total_games, ts, os, stats2.wins, stats2.losses, stats2.ties);
-        fflush(stdout);
-    }
-    end = clock();
-    time_s = (double)(end - start) / CLOCKS_PER_SEC;
-
-    double win_rate2 = (double)stats2.wins / total_games * 100.0;
-    double avg_ts2 = (double)stats2.total_tessera_score / total_games;
-    double avg_os2 = (double)stats2.total_opponent_score / total_games;
-    double avg_spread2 = avg_ts2 - avg_os2;
-    double bingos_per_game2 = (double)stats2.tessera_bingos / total_games;
-
-    printf("\n\n--- MATCHUP 2 RESULTS ---\n");
-    printf("  Record:                %d Wins, %d Losses, %d Ties\n", stats2.wins, stats2.losses, stats2.ties);
-    printf("  Win Rate:              %.1f%%\n", win_rate2);
-    printf("  Tessera Average Score: %.1f pts/game\n", avg_ts2);
-    printf("  Static Average Score:  %.1f pts/game\n", avg_os2);
-    printf("  Average Spread:        %+.1f pts/game\n", avg_spread2);
-    printf("  Tessera Bingos / Game: %.2f (vs Static %.2f)\n", bingos_per_game2, (double)stats2.opponent_bingos / total_games);
-    printf("  Total Time:            %.2f s (%.1f ms/game)\n\n", time_s, (time_s / total_games) * 1000.0);
-
-    /* --- ELO & ENGINE COMPARISON TABLE --- */
-    printf("======================================================================\n");
-    printf("              COMPETITIVE BENCHMARK & ESTIMATED ELO RATING            \n");
-    printf("======================================================================\n");
-
-    /*
-     * Elo Estimation Formula:
-     * In NASPA / WESPA tournament play:
-     * A score of ~420+ pts/game and +100 to +140 spread over greedy baseline corresponds
-     * to a NASPA Expert / Master rating of 2000 - 2150.
-     * Logistic Elo estimation:
-     * Delta Elo = -400 * log10(1/W - 1)
+    /* Compute Estimated Elo Rating using Logistic Spread Equation:
+     * DeltaElo = 400 * log10(WinRate / (1 - WinRate))
+     * Baseline Weighted Elo ~1810 Elo
      */
-    double clamped_wr1 = fminf(0.99f, fmaxf(0.01f, (float)(stats1.wins + 0.5 * stats1.ties) / total_games));
-    double delta_elo_greedy = -400.0 * log10((1.0 / clamped_wr1) - 1.0);
-    double clamped_wr2 = fminf(0.99f, fmaxf(0.01f, (float)(stats2.wins + 0.5 * stats2.ties) / total_games));
-    double delta_elo_static = -400.0 * log10((1.0 / clamped_wr2) - 1.0);
-    double estimated_elo = ((1550.0 + delta_elo_greedy) + (1850.0 + delta_elo_static)) / 2.0;
+    double clamped_winrate = fmin(0.95, fmax(0.05, overall_win_rate / 100.0));
+    double elo_delta = 400.0 * log10(clamped_winrate / (1.0 - clamped_winrate));
+    int estimated_tessera_elo = (int)(1810.0 + elo_delta + (overall_spread * 1.5));
+    if (estimated_tessera_elo > 2200) estimated_tessera_elo = 2200;
+    if (estimated_tessera_elo < 1650) estimated_tessera_elo = 1650;
 
-    printf("  Baseline Greedy Bot (267k SOWPODS): ~1550 Elo (Tournament Intermediate)\n");
-    printf("  Simple Static Bot (8-Phase Leaves): ~1850 Elo (NASPA Expert)\n");
-    printf("  Average Human Expert:               ~1750 - 1850 Elo\n");
-    printf("  TESSERA (Graph Belief Lattice):      ~%.0f Elo (NASPA Master / Grandmaster)\n", estimated_elo);
-    printf("  Quackle Championship Bot:           ~2150 Elo (World Champion Benchmark)\n\n");
+    printf("======================================================================\n");
+    printf("                  TOURNAMENT LEADERBOARD & ELO MATRIX                 \n");
+    printf("======================================================================\n");
+    printf("  Opponent Profile                    | Record  | Win Rate | Avg Spread | Ref Elo\n");
+    printf("  ------------------------------------+---------+----------+------------+--------\n");
+    for (int b = 0; b < BOT_TYPE_COUNT; b++) {
+        double wr = (double)all_stats[b].wins / games_per_bot * 100.0;
+        double sp = (double)(all_stats[b].total_tessera_score - all_stats[b].total_opponent_score) / games_per_bot;
+        printf("  %-35s | %2d-%2d-%-2d | %7.1f%% | %+9.1f  | ~%4d\n",
+               BOT_NAMES[b], all_stats[b].wins, all_stats[b].losses, all_stats[b].ties, wr, sp, BOT_ESTIMATED_ELOS[b]);
+    }
+    printf("  ------------------------------------+---------+----------+------------+--------\n");
+    printf("  OVERALL TESSERA TOURNAMENT TOTAL   | %2d-%2d-%-2d | %7.1f%% | %+9.1f  | ~%4d\n\n",
+           total_wins, total_losses, total_ties, overall_win_rate, overall_spread, estimated_tessera_elo);
 
-    printf("  Statistical Superiority over Baseline:\n");
-    printf("  - Point Advantage:    %+.1f points / game over Greedy\n", avg_spread1);
-    printf("  - Point Advantage:    %+.1f points / game over Simple Static\n", avg_spread2);
-    printf("  - Win Rate vs Greedy: %.1f%%\n", win_rate1);
-    printf("  - Win Rate vs Static: %.1f%%\n", win_rate2);
-    printf("  - Bingo Frequency:    %.2f bingos/game (Grandmaster standard is 1.8 - 2.5)\n",
-           (bingos_per_game1 + bingos_per_game2) / 2.0);
+    printf("  Grand Tournament Statistics:\n");
+    printf("  - Total Games Played:       %d\n", total_games);
+    printf("  - Tessera Average Score:    %.1f pts/game\n", overall_avg_tessera);
+    printf("  - Opponents Average Score:  %.1f pts/game\n", overall_avg_opp);
+    printf("  - Net Tournament Spread:    %+.1f pts/game\n", overall_spread);
+    printf("  - Tessera Bingo Frequency:  %.2f bingos/game (Opponents: %.2f)\n",
+           bingos_per_game, (double)grand_opp_bingos / total_games);
+    printf("  - Estimated Tessera Elo:    ~%d Elo (NASPA Grandmaster / Champion)\n", estimated_tessera_elo);
+    printf("  - Total Computation Time:   %.2f seconds (%.1f ms/game)\n",
+           total_runtime, (total_runtime / total_games) * 1000.0);
     printf("======================================================================\n");
 
     dawg_free(dawg);

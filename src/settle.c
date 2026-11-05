@@ -101,18 +101,24 @@ float settle_node_backup(Lattice *lat, uint32_t node_idx, Palimpsest *palimpsest
         }
 
         /*
-         * Calibrated Bellman Operator on Relative Spread:
-         * Q(e) = MoveStatic - gamma * (ChildOpponentMean - BaselineOpponentScore)
+         * Calibrated Bellman Operator on Paired Relative Counterplay:
+         * Q(e) = MoveStatic + gamma * DefensiveDelta
+         * Where DefensiveDelta = (MeanOpponentScoreAcrossBeam - OpponentScoreOnThisBoard)
          */
-        DualAccumulator acc = eval_move_accumulate(&n->board, &edge->move, 50);
+        DualAccumulator acc = eval_move_accumulate(&n->board, &edge->move, n->bag_count);
         float move_static = acc.net_equity;
 
         if (child_is_loss) {
-            edge->q_value = move_static + 50.0f;
+            edge->q_value = (float)edge->move.score + child_mean;
             edge->variance = 0.0f;
         } else {
-            float opp_excess = child_mean - BASELINE_OPP_SCORE;
-            edge->q_value = move_static - (SETTLE_GAMMA * opp_excess);
+            float def_delta = 0.0f;
+            if (edge->target_node_idx > 0 && edge->target_node_idx < lat->num_nodes) {
+                def_delta = lat->nodes[edge->target_node_idx].defensive_delta;
+            }
+            /* Bounded defensive delta prevents simulation noise from overriding board points */
+            def_delta = fmaxf(-12.0f, fminf(12.0f, def_delta));
+            edge->q_value = move_static + (SETTLE_GAMMA * def_delta);
             edge->variance = (SETTLE_GAMMA * SETTLE_GAMMA * child_var) + 2.0f;
         }
 

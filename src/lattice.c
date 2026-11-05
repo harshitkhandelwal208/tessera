@@ -2,6 +2,7 @@
 #include "settle.h"
 #include "movegen.h"
 #include "eval.h"
+#include "simulation.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -132,6 +133,7 @@ void lattice_expand_node(Lattice *lat, uint32_t node_idx, const Dawg *dawg,
     if (node->is_expanded) return;
 
     /* Classify Palimpsest context */
+    node->bag_count = bag_count;
     node->context_id = palimpsest_classify(rack, &node->board);
     float palimpsest_bias = palimpsest ? palimpsest_get_correction(palimpsest, node->context_id) : 0.0f;
 
@@ -150,10 +152,27 @@ void lattice_expand_node(Lattice *lat, uint32_t node_idx, const Dawg *dawg,
         return;
     }
 
+    /* In endgame (bag is exhausted), compute exact opponent unplayed tile value */
+    int opp_rack_val = 0;
+    if (bag_count == 0) {
+        char unseen[100];
+        int unseen_count = sim_get_unseen_tiles(&node->board, rack, unseen);
+        for (int i = 0; i < unseen_count; i++) {
+            if (unseen[i] >= 'A' && unseen[i] <= 'Z') {
+                opp_rack_val += TILE_VALUES[unseen[i] - 'A'];
+            }
+        }
+    }
+
     /* Compute static equity for candidate moves */
     for (int i = 0; i < all_moves.count; i++) {
-        float base_eq = eval_move_static_bucketed(&node->board, &all_moves.moves[i], bag_count);
-        all_moves.moves[i].leave_equity = base_eq + palimpsest_bias;
+        if (bag_count == 0 && all_moves.moves[i].num_placed == rack->count) {
+            /* Outplay game-out: banked score + 2 * opponent rack value */
+            all_moves.moves[i].leave_equity = (float)all_moves.moves[i].score + 2.0f * (float)opp_rack_val;
+        } else {
+            float base_eq = eval_move_static_bucketed(&node->board, &all_moves.moves[i], bag_count);
+            all_moves.moves[i].leave_equity = base_eq + palimpsest_bias;
+        }
     }
     eval_sort_moves(&all_moves);
 
@@ -196,6 +215,7 @@ void lattice_expand_node(Lattice *lat, uint32_t node_idx, const Dawg *dawg,
 
         if (child_idx > 0) {
             lattice_add_parent(lat, child_idx, node_idx);
+            lat->nodes[child_idx].bag_count = (bag_count >= edge->move.num_placed) ? bag_count - edge->move.num_placed : 0;
 
             /* If bag is exhausted and this move empties the rack, pin child as terminal proof */
             if (bag_count == 0 && edge->move.num_placed == rack->count) {
@@ -205,7 +225,7 @@ void lattice_expand_node(Lattice *lat, uint32_t node_idx, const Dawg *dawg,
                 child->belief.is_proven = true;
                 child->belief.proof_sign = -1; /* Opponent is proven outplayed */
                 child->belief.variance = 0.0f;
-                child->belief.mean = -50.0f;
+                child->belief.mean = 2.0f * (float)opp_rack_val; /* Exact terminal bonus */
             }
         }
     }

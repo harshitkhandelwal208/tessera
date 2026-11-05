@@ -124,9 +124,9 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
     CourtVerdict verdict = court_deliberate(lat, root_idx);
 
     /* --- LATTICE SETTLING DELIBERATION LOOP WITH PAIRED COUNTERPLAY --- */
-    int top_k = root->num_edges < 5 ? root->num_edges : 5;
+    int top_k = root->num_edges < 10 ? root->num_edges : 10;
 
-    for (int step = 0; step < cfg.max_deliberation_steps && !verdict.should_adjourn; step++) {
+    for (int step = 0; step < cfg.max_deliberation_steps && (step < 8 || !verdict.should_adjourn); step++) {
         /* Sample a concrete opponent rack from the unseen pool */
         Rack sim_opp_rack;
         rack_init(&sim_opp_rack);
@@ -140,15 +140,52 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
         }
 
         /* Paired evaluation: test all top candidate replies against the EXACT SAME opponent rack */
+        float opp_scores[MAX_LATTICE_EDGES] = {0};
+        float sum_opp = 0.0f;
+
         for (int k = 0; k < top_k; k++) {
             uint32_t c_idx = root->edges[k].target_node_idx;
             if (c_idx > 0 && c_idx < lat->num_nodes) {
-                float delta = lattice_sample_adversarial_counter(lat, c_idx, dawg, &sim_opp_rack,
-                                                                 cfg.use_palimpsest ? &palimpsest : NULL,
-                                                                 bag_remaining);
                 LatticeNode *leaf = &lat->nodes[c_idx];
+                MoveList opp_moves;
+                movegen_generate_all(&leaf->board, dawg, &sim_opp_rack, &opp_moves);
+                float best_opp = 0.0f;
+                if (opp_moves.count > 0) {
+                    float max_eq = -10000.0f;
+                    int best_i = 0;
+                    for (int r = 0; r < opp_moves.count; r++) {
+                        float eq = eval_move_heuristic_fast(&leaf->board, &opp_moves.moves[r], bag_remaining);
+                        if (eq > max_eq) {
+                            max_eq = eq;
+                            best_i = r;
+                        }
+                    }
+                    best_opp = (float)opp_moves.moves[best_i].score;
+                }
+                if (cfg.use_palimpsest) {
+                    int ctx = palimpsest_classify(&sim_opp_rack, &leaf->board);
+                    best_opp += palimpsest_get_correction(&palimpsest, ctx);
+                }
+                opp_scores[k] = best_opp;
+                sum_opp += best_opp;
+            }
+        }
+
+        float mean_opp = sum_opp / (float)top_k;
+
+        for (int k = 0; k < top_k; k++) {
+            uint32_t c_idx = root->edges[k].target_node_idx;
+            if (c_idx > 0 && c_idx < lat->num_nodes) {
+                LatticeNode *leaf = &lat->nodes[c_idx];
+                float delta = mean_opp - opp_scores[k]; /* Positive = defensive advantage */
+                leaf->belief.samples++;
+                leaf->defensive_delta = (leaf->defensive_delta * (float)(leaf->belief.samples - 1) + delta) / (float)leaf->belief.samples;
+
+                float var_reduction = 36.0f / (1.0f + 0.3f * (float)leaf->belief.samples);
+                leaf->belief.variance = fmaxf(4.0f, var_reduction);
+
                 for (int p = 0; p < leaf->num_parents; p++) {
-                    dirty_queue_push(&dq, leaf->parent_indices[p], fmaxf(1.0f, delta * 2.0f));
+                    dirty_queue_push(&dq, leaf->parent_indices[p], fmaxf(1.0f, fabsf(delta)));
                 }
                 root->edges[k].visits++;
             }

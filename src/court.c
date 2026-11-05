@@ -36,7 +36,15 @@ CourtVerdict court_deliberate(const Lattice *lat, uint32_t root_idx) {
         return v;
     }
 
-    /* 1. Identify current empirical argmax: Edge 0 is default unless proven or significantly better */
+    /* If no deliberation visits have occurred yet, deliberation must proceed */
+    if (root->edges[0].visits == 0) {
+        v.confidence = 0.5f;
+        v.best_edge_idx = 0;
+        v.should_adjourn = false;
+        return v;
+    }
+
+    /* 1. Identify current empirical argmax: Edge 0 is default unless proven or deliberated better */
     int argmax_idx = 0;
     float max_q = root->edges[0].q_value;
     for (int i = 1; i < root->num_edges; i++) {
@@ -47,7 +55,7 @@ CourtVerdict court_deliberate(const Lattice *lat, uint32_t root_idx) {
             max_q = root->edges[i].q_value;
             argmax_idx = i;
             break;
-        } else if (root->edges[i].q_value > root->edges[0].q_value + 3.5f) {
+        } else if (root->edges[i].visits > 0 && root->edges[i].q_value > root->edges[0].q_value + 1.5f) {
             if (root->edges[i].q_value > max_q) {
                 max_q = root->edges[i].q_value;
                 argmax_idx = i;
@@ -81,6 +89,7 @@ CourtVerdict court_deliberate(const Lattice *lat, uint32_t root_idx) {
         float best_sample_val = -100000.0f;
 
         for (int i = 0; i < n_edges; i++) {
+            if (i > 0 && root->edges[i].visits == 0) continue;
             float sample = root->edges[i].q_value + (std_devs[i] * sample_standard_normal());
             if (sample > best_sample_val) {
                 best_sample_val = sample;

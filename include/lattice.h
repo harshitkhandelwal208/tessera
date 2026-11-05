@@ -35,9 +35,11 @@ typedef struct {
     uint64_t zobrist_key;
     Board board;
     int turn;                 /* 0 = AI, 1 = Opponent */
+    int bag_count;            /* Remaining tiles in bag */
     Belief belief;
     float raw_prior_mean;
     float raw_prior_var;
+    float defensive_delta;    /* Paired relative counterplay advantage (points) */
     int context_id;           /* Palimpsest structural context */
 
     LatticeEdge *edges;
