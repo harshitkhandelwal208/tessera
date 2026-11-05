@@ -55,11 +55,9 @@ CourtVerdict court_deliberate(const Lattice *lat, uint32_t root_idx) {
             max_q = root->edges[i].q_value;
             argmax_idx = i;
             break;
-        } else if (root->edges[i].visits > 0 && root->edges[i].q_value > root->edges[0].q_value + 1.5f) {
-            if (root->edges[i].q_value > max_q) {
-                max_q = root->edges[i].q_value;
-                argmax_idx = i;
-            }
+        } else if (root->edges[i].visits > 0 && root->edges[i].q_value > max_q) {
+            max_q = root->edges[i].q_value;
+            argmax_idx = i;
         }
     }
     v.best_edge_idx = argmax_idx;

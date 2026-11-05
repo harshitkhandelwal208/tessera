@@ -117,7 +117,7 @@ float settle_node_backup(Lattice *lat, uint32_t node_idx, Palimpsest *palimpsest
                 def_delta = lat->nodes[edge->target_node_idx].defensive_delta;
             }
             /* Bounded defensive delta prevents simulation noise from overriding board points */
-            def_delta = fmaxf(-12.0f, fminf(12.0f, def_delta));
+            def_delta = fmaxf(-25.0f, fminf(25.0f, def_delta));
             edge->q_value = move_static + (SETTLE_GAMMA * def_delta);
             edge->variance = (SETTLE_GAMMA * SETTLE_GAMMA * child_var) + 2.0f;
         }

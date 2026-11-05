@@ -1,4 +1,12 @@
 #include "simulation.h"
+#include "eval.h"
+#include "movegen.h"
+#include "dict.h"
+#include "board.h"
+#include "court.h"
+#include "settle.h"
+#include "endgame.h"
+#include "bayes_rack.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -56,14 +64,6 @@ int sim_get_unseen_tiles(const Board *board, const Rack *player_rack, char unsee
     return unseen_count;
 }
 
-static void shuffle_tiles(char *tiles, int count) {
-    for (int i = count - 1; i > 0; i--) {
-        int j = rand() % (i + 1);
-        char tmp = tiles[i];
-        tiles[i] = tiles[j];
-        tiles[j] = tmp;
-    }
-}
 
 Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
                     const TileBag *bag, const EngineConfig *config,
@@ -119,24 +119,65 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
     char unseen[100];
     int unseen_count = sim_get_unseen_tiles(board, rack, unseen);
 
-    uint32_t total_dirty_passes = 0;
+    /* 4. Exact Deterministic Graph Endgame Solver (Bag exhausted, <= 7 unplayed tiles) */
+    if (cfg.use_endgame_solver && bag_remaining == 0 && unseen_count <= 7) {
+        Rack exact_opp_rack;
+        rack_init(&exact_opp_rack);
+        for (int i = 0; i < unseen_count; i++) rack_add_tile(&exact_opp_rack, unseen[i]);
 
+        Move endgame_move;
+        int net_margin = 0;
+        if (endgame_solve_exact(board, dawg, rack, &exact_opp_rack, &endgame_move, &net_margin)) {
+            if (endgame_move.type == MOVE_PLAY || endgame_move.type == MOVE_PASS) {
+                lattice_free(lat);
+                endgame_move.leave_equity = (float)net_margin;
+                endgame_move.sim_equity = (float)net_margin;
+                if (all_moves) {
+                    all_moves->count = 1;
+                    all_moves->moves[0] = endgame_move;
+                }
+                if (metrics) {
+                    metrics->court_confidence = 1.0f;
+                    metrics->deliberation_ms = ((double)(clock() - start_time) / CLOCKS_PER_SEC) * 1000.0;
+                }
+                return endgame_move;
+            }
+        }
+    }
+
+    /* 5. Initialize Bayesian Imperfect-Information Opponent Tracker */
+    BayesRackTracker bayes_tracker;
+    bayes_rack_init(&bayes_tracker);
+    bayes_rack_update_unseen(&bayes_tracker, board, rack);
+
+    uint32_t total_dirty_passes = 0;
     CourtVerdict verdict = court_deliberate(lat, root_idx);
 
-    /* --- LATTICE SETTLING DELIBERATION LOOP WITH PAIRED COUNTERPLAY --- */
+    /* --- LATTICE SETTLING DELIBERATION LOOP WITH ADAPTIVE BANDIT COUNTERPLAY --- */
     int top_k = root->num_edges < 10 ? root->num_edges : 10;
 
-    for (int step = 0; step < cfg.max_deliberation_steps && (step < 8 || !verdict.should_adjourn); step++) {
-        /* Sample a concrete opponent rack from the unseen pool */
+    for (int step = 0; step < cfg.max_deliberation_steps && (step < 6 || !verdict.should_adjourn); step++) {
+        /* Sample a concrete opponent rack conditionally from Bayesian posterior */
         Rack sim_opp_rack;
         rack_init(&sim_opp_rack);
-
-        if (bag_remaining > 0) {
-            shuffle_tiles(unseen, unseen_count);
-        }
         int draw_cnt = unseen_count < RACK_CAPACITY ? unseen_count : RACK_CAPACITY;
-        for (int i = 0; i < draw_cnt; i++) {
-            rack_add_tile(&sim_opp_rack, unseen[i]);
+        bayes_rack_sample_rack(&bayes_tracker, &sim_opp_rack, draw_cnt);
+
+        /* Adaptive bandit candidate active tracking */
+        bool active[MAX_LATTICE_EDGES];
+        int num_active = 0;
+        for (int k = 0; k < top_k; k++) {
+            if (step < 4 || root->edges[k].q_value >= root->edges[0].q_value - 12.0f) {
+                active[k] = true;
+                num_active++;
+            } else {
+                active[k] = false;
+            }
+        }
+
+        /* If candidate 0 has decisively broken away from all rivals after step 8, snap adjourn */
+        if (num_active <= 1 && step >= 8) {
+            break;
         }
 
         /* Paired evaluation: test all top candidate replies against the EXACT SAME opponent rack */
@@ -144,24 +185,12 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
         float sum_opp = 0.0f;
 
         for (int k = 0; k < top_k; k++) {
+            if (!active[k]) continue;
+
             uint32_t c_idx = root->edges[k].target_node_idx;
             if (c_idx > 0 && c_idx < lat->num_nodes) {
                 LatticeNode *leaf = &lat->nodes[c_idx];
-                MoveList opp_moves;
-                movegen_generate_all(&leaf->board, dawg, &sim_opp_rack, &opp_moves);
-                float best_opp = 0.0f;
-                if (opp_moves.count > 0) {
-                    float max_eq = -10000.0f;
-                    int best_i = 0;
-                    for (int r = 0; r < opp_moves.count; r++) {
-                        float eq = eval_move_heuristic_fast(&leaf->board, &opp_moves.moves[r], bag_remaining);
-                        if (eq > max_eq) {
-                            max_eq = eq;
-                            best_i = r;
-                        }
-                    }
-                    best_opp = (float)opp_moves.moves[best_i].score;
-                }
+                float best_opp = movegen_find_best_response_equity(&leaf->board, dawg, &sim_opp_rack, bag_remaining);
                 if (cfg.use_palimpsest) {
                     int ctx = palimpsest_classify(&sim_opp_rack, &leaf->board);
                     best_opp += palimpsest_get_correction(&palimpsest, ctx);
@@ -171,9 +200,11 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
             }
         }
 
-        float mean_opp = sum_opp / (float)top_k;
+        float mean_opp = num_active > 0 ? (sum_opp / (float)num_active) : 26.0f;
 
         for (int k = 0; k < top_k; k++) {
+            if (!active[k]) continue;
+
             uint32_t c_idx = root->edges[k].target_node_idx;
             if (c_idx > 0 && c_idx < lat->num_nodes) {
                 LatticeNode *leaf = &lat->nodes[c_idx];
@@ -188,6 +219,15 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
                     dirty_queue_push(&dq, leaf->parent_indices[p], fmaxf(1.0f, fabsf(delta)));
                 }
                 root->edges[k].visits++;
+            }
+        }
+
+        /* Multi-ply graph expansion: expand top promising frontier leaf */
+        if (step == 4 || step == 8) {
+            uint32_t leaf_idx = broker_select_frontier_leaf(&broker, lat, root_idx);
+            if (leaf_idx > 0 && leaf_idx < lat->num_nodes && !lat->nodes[leaf_idx].is_expanded) {
+                lattice_expand_node(lat, leaf_idx, dawg, &sim_opp_rack,
+                                   cfg.use_palimpsest ? &palimpsest : NULL, bag_remaining);
             }
         }
 

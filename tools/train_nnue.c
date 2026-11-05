@@ -111,9 +111,14 @@ int main(int argc, char *argv[]) {
     size_t val_size = total_samples - train_size;
     printf("Dataset Split: %zu Training Samples | %zu Validation Samples\n\n", train_size, val_size);
 
-    /* Initialize NNUE model */
+    /* Initialize NNUE model (Warm-start from existing weights if present) */
     NNUEModel model;
-    nnue_init_random(&model);
+    if (nnue_load(&model, model_path)) {
+        printf("[INFO] Warm-starting from existing model %s for fine-tuning...\n", model_path);
+    } else {
+        printf("[INFO] No existing model found. Initializing random weights...\n");
+        nnue_init_random(&model);
+    }
 
     AdamState adam;
     memset(&adam, 0, sizeof(AdamState));

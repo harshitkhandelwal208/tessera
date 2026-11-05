@@ -23,10 +23,17 @@ typedef struct {
     float b1[NNUE_L1_DIM];                  /* 128 */
     float w2[NNUE_L2_DIM * NNUE_L1_DIM];    /* 32 x 128 */
     float b2[NNUE_L2_DIM];                  /* 32 */
-    float w3[NNUE_L2_DIM];                  /* 1 x 32 */
+    float w3[NNUE_L2_DIM];                  /* 1 x 32 (Score head) */
     float b3;                               /* 1 */
+    float w_win[NNUE_L2_DIM];               /* 1 x 32 (Win probability head) */
+    float b_win;                            /* 1 */
     bool is_loaded;
 } NNUEModel;
+
+typedef struct {
+    float net_spread;       /* Expected net score margin in points */
+    float win_probability;  /* P(Win) in [0.0, 1.0] */
+} NNUEResult;
 
 /* Global NNUE instance */
 extern NNUEModel g_nnue;
@@ -52,6 +59,12 @@ void nnue_extract_features(const Board *board, const Move *move, const Rack *rac
  * Computes the expected equity of the given feature vector.
  */
 float nnue_forward(const NNUEModel *model, const float *features);
+
+/*
+ * Dual-Head Forward Inference:
+ * Simultaneously computes expected net point margin and win probability.
+ */
+NNUEResult nnue_forward_dual(const NNUEModel *model, const float *features);
 
 /*
  * Convenience function: extract features and evaluate in one fast call.

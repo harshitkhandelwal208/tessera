@@ -2,6 +2,8 @@
 tests/test_dict
 tests/test_eval
 tests/test_movegen
+tests/test_lattice_proof
+tests/test_endgame
 test_dict
 test_eval
 test_movegen

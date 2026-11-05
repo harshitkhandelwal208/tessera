@@ -39,7 +39,7 @@ uint32_t broker_select_frontier_leaf(Broker *b, const Lattice *lat, uint32_t roo
         for (int i = 0; i < n->num_edges; i++) {
             const LatticeEdge *edge = &n->edges[i];
 
-            /* Proven subtrees price at zero uncertainty bonus */
+            /* Proven subgraphs price at zero uncertainty bonus */
             float var_bonus = 0.0f;
             if (edge->target_node_idx > 0 && edge->target_node_idx < lat->num_nodes) {
                 if (lat->nodes[edge->target_node_idx].belief.is_proven) {

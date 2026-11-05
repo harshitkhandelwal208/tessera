@@ -15,6 +15,20 @@ void move_list_init(MoveList *list);
  */
 int movegen_generate_all(const Board *board, const Dawg *dawg, const Rack *rack, MoveList *list);
 
+/*
+ * High-performance on-the-fly opponent response evaluator.
+ * Evaluates legal moves directly in registers without allocating MoveList or computing leaves.
+ * Returns the highest immediate score the given rack can achieve on this board.
+ */
+int movegen_find_best_response_score(const Board *board, const Dawg *dawg, const Rack *rack);
+
+/*
+ * High-performance on-the-fly opponent response equity evaluator.
+ * Evaluates legal moves directly in registers, incorporating score and rack leave equity.
+ * Returns the highest total equity (score + 0.85 * leave) the given rack can achieve.
+ */
+float movegen_find_best_response_equity(const Board *board, const Dawg *dawg, const Rack *rack, int bag_count);
+
 /* Transpose helper */
 void board_transpose(Board *dst, const Board *src);
 

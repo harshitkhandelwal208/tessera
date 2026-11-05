@@ -38,8 +38,10 @@ void nnue_init_random(NNUEModel *model) {
     float limit3 = sqrtf(6.0f / (float)(NNUE_L2_DIM + 1));
     for (int i = 0; i < NNUE_L2_DIM; i++) {
         model->w3[i] = rand_uniform(limit3);
+        model->w_win[i] = rand_uniform(limit3);
     }
     model->b3 = 0.0f;
+    model->b_win = 0.0f;
     model->is_loaded = true;
 }
 
@@ -66,6 +68,8 @@ bool nnue_save(const NNUEModel *model, const char *filepath) {
     fwrite(model->b2, sizeof(float), NNUE_L2_DIM, f);
     fwrite(model->w3, sizeof(float), NNUE_L2_DIM, f);
     fwrite(&model->b3, sizeof(float), 1, f);
+    fwrite(model->w_win, sizeof(float), NNUE_L2_DIM, f);
+    fwrite(&model->b_win, sizeof(float), 1, f);
 
     fclose(f);
     return true;
@@ -94,12 +98,23 @@ bool nnue_load(NNUEModel *model, const char *filepath) {
     size_t r5 = fread(model->w3, sizeof(float), NNUE_L2_DIM, f);
     size_t r6 = fread(&model->b3, sizeof(float), 1, f);
 
+    size_t r7 = fread(model->w_win, sizeof(float), NNUE_L2_DIM, f);
+    size_t r8 = fread(&model->b_win, sizeof(float), 1, f);
+
     fclose(f);
 
     if (r1 != NNUE_L1_DIM * NNUE_INPUT_DIM || r2 != NNUE_L1_DIM ||
         r3 != NNUE_L2_DIM * NNUE_L1_DIM || r4 != NNUE_L2_DIM ||
         r5 != NNUE_L2_DIM || r6 != 1) {
         return false;
+    }
+
+    /* Fallback if file doesn't have dual head */
+    if (r7 != NNUE_L2_DIM || r8 != 1) {
+        for (int i = 0; i < NNUE_L2_DIM; i++) {
+            model->w_win[i] = model->w3[i] * 1.5f;
+        }
+        model->b_win = model->b3;
     }
 
     model->is_loaded = true;
@@ -325,6 +340,51 @@ float nnue_forward(const NNUEModel *model, const float *features) {
 
     /* Scaled output to represent expected points margin (+/- 50 pts) */
     return raw_equity * 50.0f;
+}
+
+NNUEResult nnue_forward_dual(const NNUEModel *model, const float *features) {
+    NNUEResult res;
+    res.net_spread = 0.0f;
+    res.win_probability = 0.5f;
+    if (!model || !model->is_loaded) return res;
+
+    /* Layer 1: 448 -> 128 */
+    alignas(32) float l1_out[NNUE_L1_DIM];
+    avx2_linear_crelu(model->w1, model->b1, features, l1_out, NNUE_L1_DIM, NNUE_INPUT_DIM);
+
+    /* Layer 2: 128 -> 32 */
+    alignas(32) float l2_out[NNUE_L2_DIM];
+    avx2_linear_crelu(model->w2, model->b2, l1_out, l2_out, NNUE_L2_DIM, NNUE_L1_DIM);
+
+    /* Layer 3 Dual Head: Score Head & Win-Probability Head */
+    __m256 v_acc1 = _mm256_setzero_ps();
+    __m256 v_acc2 = _mm256_setzero_ps();
+
+    for (int i = 0; i < NNUE_L2_DIM; i += 8) {
+        __m256 v_x = _mm256_loadu_ps(&l2_out[i]);
+        __m256 v_w1 = _mm256_loadu_ps(&model->w3[i]);
+        __m256 v_w2 = _mm256_loadu_ps(&model->w_win[i]);
+        v_acc1 = _mm256_fmadd_ps(v_w1, v_x, v_acc1);
+        v_acc2 = _mm256_fmadd_ps(v_w2, v_x, v_acc2);
+    }
+
+    __m128 v_hi1 = _mm256_extractf128_ps(v_acc1, 1);
+    __m128 v_lo1 = _mm256_castps256_ps128(v_acc1);
+    __m128 v_sum1 = _mm_add_ps(v_lo1, v_hi1);
+    v_sum1 = _mm_hadd_ps(v_sum1, v_sum1);
+    v_sum1 = _mm_hadd_ps(v_sum1, v_sum1);
+    float raw_equity = _mm_cvtss_f32(v_sum1) + model->b3;
+    res.net_spread = raw_equity * 50.0f;
+
+    __m128 v_hi2 = _mm256_extractf128_ps(v_acc2, 1);
+    __m128 v_lo2 = _mm256_castps256_ps128(v_acc2);
+    __m128 v_sum2 = _mm_add_ps(v_lo2, v_hi2);
+    v_sum2 = _mm_hadd_ps(v_sum2, v_sum2);
+    v_sum2 = _mm_hadd_ps(v_sum2, v_sum2);
+    float raw_win = _mm_cvtss_f32(v_sum2) + model->b_win;
+    res.win_probability = 1.0f / (1.0f + expf(-raw_win * 3.0f));
+
+    return res;
 }
 
 float nnue_evaluate_move(const NNUEModel *model, const Board *board, const Move *move,

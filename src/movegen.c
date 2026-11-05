@@ -1,4 +1,5 @@
 #include "movegen.h"
+#include "eval.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,6 +27,10 @@ typedef struct {
     MoveList *list;
     bool is_transposed;
     CrossCheck cross_checks[BOARD_SIZE][BOARD_SIZE];
+    int best_score;
+    float best_equity;
+    int bag_count;
+    bool track_equity;
 } GenContext;
 
 static void compute_leave(const Rack *orig_rack, const PlacedTile *placed, int num_placed, char *leave) {
@@ -60,8 +65,46 @@ static void compute_leave(const Rack *orig_rack, const PlacedTile *placed, int n
     leave[count] = '\0';
 }
 
-static void record_move(GenContext *ctx, int row, int start_col, const char *word,
-                        const PlacedTile *placed, int num_placed) {
+static inline void record_move(GenContext *ctx, int row, int start_col, const char *word,
+                               const PlacedTile *placed, int num_placed) {
+    if (ctx->list == NULL) {
+        /* Fast mode: directly compute score in registers without allocating Move or computing leaves */
+        Move m;
+        m.type = MOVE_PLAY;
+        m.num_placed = num_placed;
+        strcpy(m.word, word);
+        if (!ctx->is_transposed) {
+            m.dir = DIR_HORIZONTAL;
+            m.row = row;
+            m.col = start_col;
+            for (int i = 0; i < num_placed; i++) m.placed[i] = placed[i];
+        } else {
+            m.dir = DIR_VERTICAL;
+            m.row = start_col;
+            m.col = row;
+            for (int i = 0; i < num_placed; i++) {
+                m.placed[i].row = placed[i].col;
+                m.placed[i].col = placed[i].row;
+                m.placed[i].letter = placed[i].letter;
+                m.placed[i].is_blank = placed[i].is_blank;
+            }
+        }
+        int score = board_score_move(ctx->orig_board, ctx->dawg, &m);
+        if (score > ctx->best_score) ctx->best_score = score;
+        if (ctx->track_equity) {
+            char leave[RACK_CAPACITY + 1];
+            int lcnt = ctx->cur_rack.count;
+            if (lcnt > RACK_CAPACITY) lcnt = RACK_CAPACITY;
+            memcpy(leave, ctx->cur_rack.tiles, lcnt);
+            leave[lcnt] = '\0';
+            PhaseBucket phase = eval_classify_phase(ctx->bag_count);
+            float leave_eq = eval_rack_leave_bucketed(leave, phase);
+            float total_eq = (float)score + (0.85f * leave_eq);
+            if (total_eq > ctx->best_equity) ctx->best_equity = total_eq;
+        }
+        return;
+    }
+
     if (ctx->list->count >= MAX_MOVES) return;
 
     Move *m = &ctx->list->moves[ctx->list->count];
@@ -357,4 +400,61 @@ int movegen_generate_all(const Board *board, const Dawg *dawg, const Rack *rack,
     generate_row_moves(&ctx);
 
     return list->count;
+}
+
+int movegen_find_best_response_score(const Board *board, const Dawg *dawg, const Rack *rack) {
+    GenContext ctx;
+    ctx.orig_board = board;
+    ctx.dawg = dawg;
+    ctx.orig_rack = rack;
+    ctx.list = NULL;
+    ctx.best_score = 0;
+    ctx.best_equity = 0.0f;
+    ctx.bag_count = 50;
+    ctx.track_equity = false;
+
+    /* 1. Generate Horizontal Moves */
+    ctx.board = board;
+    ctx.is_transposed = false;
+    memcpy(&ctx.cur_rack, rack, sizeof(Rack));
+    generate_row_moves(&ctx);
+
+    /* 2. Generate Vertical Moves via Transposed Board */
+    Board transposed;
+    board_transpose(&transposed, board);
+    ctx.board = &transposed;
+    ctx.is_transposed = true;
+    memcpy(&ctx.cur_rack, rack, sizeof(Rack));
+    generate_row_moves(&ctx);
+
+    return ctx.best_score;
+}
+
+float movegen_find_best_response_equity(const Board *board, const Dawg *dawg, const Rack *rack, int bag_count) {
+    GenContext ctx;
+    ctx.orig_board = board;
+    ctx.dawg = dawg;
+    ctx.orig_rack = rack;
+    ctx.list = NULL;
+    ctx.best_score = 0;
+    ctx.best_equity = -1000.0f;
+    ctx.bag_count = bag_count;
+    ctx.track_equity = true;
+
+    /* 1. Generate Horizontal Moves */
+    ctx.board = board;
+    ctx.is_transposed = false;
+    memcpy(&ctx.cur_rack, rack, sizeof(Rack));
+    generate_row_moves(&ctx);
+
+    /* 2. Generate Vertical Moves via Transposed Board */
+    Board transposed;
+    board_transpose(&transposed, board);
+    ctx.board = &transposed;
+    ctx.is_transposed = true;
+    memcpy(&ctx.cur_rack, rack, sizeof(Rack));
+    generate_row_moves(&ctx);
+
+    if (ctx.best_equity < -500.0f) return 0.0f;
+    return ctx.best_equity;
 }

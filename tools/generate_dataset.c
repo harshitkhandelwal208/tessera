@@ -160,6 +160,33 @@ int main(int argc, char *argv[]) {
                 current_player = 1 - current_player;
             }
 
+            /* Compute final game score and outcome for both players */
+            int p0_score = 0, p1_score = 0;
+            for (int t = 0; t < turn_count; t++) {
+                if (turns[t].move.type == MOVE_PLAY) {
+                    if (turns[t].player == 0) p0_score += turns[t].score;
+                    else p1_score += turns[t].score;
+                }
+            }
+            int p0_pen = 0, p1_pen = 0;
+            for (int i = 0; i < racks[0].count; i++) {
+                char c = racks[0].tiles[i];
+                if (c >= 'A' && c <= 'Z') p0_pen += TILE_VALUES[c - 'A'];
+            }
+            for (int i = 0; i < racks[1].count; i++) {
+                char c = racks[1].tiles[i];
+                if (c >= 'A' && c <= 'Z') p1_pen += TILE_VALUES[c - 'A'];
+            }
+            if (racks[0].count == 0 && bag.count == 0) {
+                p0_score += 2 * p1_pen;
+            } else if (racks[1].count == 0 && bag.count == 0) {
+                p1_score += 2 * p0_pen;
+            } else {
+                p0_score -= p0_pen;
+                p1_score -= p1_pen;
+            }
+            float final_margin_p0 = (float)(p0_score - p1_score);
+
             /* Extract training samples based on empirical next-turn equity */
             TrainingSample local_samples[MAX_GAME_TURNS];
             int num_local = 0;
@@ -188,13 +215,20 @@ int main(int argc, char *argv[]) {
                  */
                 float residual_equity = (active_next_score - 26.0f) - 0.40f * (opp_next_score - 26.0f);
 
-                /* Normalized target equity in [-1.0, +1.0] */
-                float norm_target = fminf(1.0f, fmaxf(-1.0f, residual_equity / 50.0f));
+                /* Normalized immediate target equity in [-1.0, +1.0] */
+                float norm_immediate = fminf(1.0f, fmaxf(-1.0f, residual_equity / 50.0f));
+
+                /* Normalized whole-game victory margin in [-1.0, +1.0] */
+                float player_sign = (turns[t].player == 0) ? 1.0f : -1.0f;
+                float norm_margin = fminf(1.0f, fmaxf(-1.0f, (player_sign * final_margin_p0) / 60.0f));
+
+                /* Calibrated TD-blended target: tactical surplus + strategic game margin */
+                float blended_target = (0.40f * norm_immediate) + (0.60f * norm_margin);
 
                 nnue_extract_features(&turns[t].board_before, &turns[t].move,
                                       &turns[t].rack, turns[t].bag_count,
                                       local_samples[num_local].features);
-                local_samples[num_local].target = norm_target;
+                local_samples[num_local].target = blended_target;
                 num_local++;
             }
 
