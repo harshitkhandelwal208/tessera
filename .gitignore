@@ -1,0 +1,8 @@
+*.o
+tests/test_dict
+tests/test_eval
+tests/test_movegen
+test_dict
+test_eval
+test_movegen
+__pycache__/
