@@ -116,12 +116,12 @@ void protocol_run_server_loop(const Dawg *dawg) {
                 continue;
             }
 
-            StillwaterConfig cfg;
-            stillwater_config_default(&cfg);
-            StillwaterMetrics metrics;
+            EngineConfig cfg;
+            engine_config_default(&cfg);
+            EngineMetrics metrics;
 
             MoveList moves;
-            Move best = stillwater_search(&current_board, dawg, &game.ai_rack, &game.bag, &cfg, &moves, &metrics);
+            Move best = lattice_search(&current_board, dawg, &game.ai_rack, &game.bag, &cfg, &moves, &metrics);
 
             if (best.type == MOVE_PLAY) {
                 board_apply_move(&current_board, &best);
@@ -286,8 +286,8 @@ void protocol_run_terminal_game(const Dawg *dawg, bool ai_vs_ai) {
     int turn = 0;
     int pass_count = 0;
 
-    StillwaterConfig cfg;
-    stillwater_config_default(&cfg);
+    EngineConfig cfg;
+    engine_config_default(&cfg);
 
     while (pass_count < 2) {
         board_print(&board);
@@ -423,8 +423,8 @@ void protocol_run_benchmark(const Dawg *dawg) {
     TileBag bag;
     bag_init(&bag);
 
-    StillwaterConfig cfg;
-    stillwater_config_default(&cfg);
+    EngineConfig cfg;
+    engine_config_default(&cfg);
 
     int total_moves_gen = 0;
     clock_t start = clock();
@@ -441,14 +441,14 @@ void protocol_run_benchmark(const Dawg *dawg) {
     printf("Move Generation: %d moves generated across 25 calls in %.3f seconds (%.0f moves/sec)\n",
            total_moves_gen, elapsed_s, (double)total_moves_gen / elapsed_s);
 
-    printf("Stillwater Belief-Lattice Settling Benchmark...\n");
+    printf("Lattice Belief-Settling Benchmark...\n");
     start = clock();
     MoveList ml;
-    StillwaterConfig scfg;
-    stillwater_config_default(&scfg);
+    EngineConfig scfg;
+    engine_config_default(&scfg);
     scfg.max_deliberation_steps = 50;
-    StillwaterMetrics smetrics;
-    Move m = stillwater_search(&board, dawg, &racks[0], &bag, &scfg, &ml, &smetrics);
+    EngineMetrics smetrics;
+    Move m = lattice_search(&board, dawg, &racks[0], &bag, &scfg, &ml, &smetrics);
     end = clock();
     double sim_ms = ((double)(end - start) / CLOCKS_PER_SEC) * 1000.0;
     printf("Decision resolved in %.2f ms!\n", sim_ms);

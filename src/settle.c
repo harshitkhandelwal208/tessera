@@ -97,7 +97,7 @@ float settle_node_backup(Lattice *lat, uint32_t node_idx, Palimpsest *palimpsest
         }
 
         /*
-         * Stillwater Bellman operator:
+         * Distributional Bellman operator:
          * Q(e) = Move.Score + Leave.Equity - gamma * Child.Mean
          */
         float move_static = (float)edge->move.score + edge->move.leave_equity;

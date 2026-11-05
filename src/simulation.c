@@ -5,7 +5,7 @@
 #include <ctype.h>
 #include <time.h>
 
-void stillwater_config_default(StillwaterConfig *config) {
+void engine_config_default(EngineConfig *config) {
     config->max_deliberation_steps = 40;
     config->confidence_bar = 0.98f;
     config->use_palimpsest = true;
@@ -64,16 +64,16 @@ static void shuffle_tiles(char *tiles, int count) {
     }
 }
 
-Move stillwater_search(const Board *board, const Dawg *dawg, const Rack *rack,
-                      const TileBag *bag, const StillwaterConfig *config,
-                      MoveList *all_moves, StillwaterMetrics *metrics) {
+Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
+                    const TileBag *bag, const EngineConfig *config,
+                    MoveList *all_moves, EngineMetrics *metrics) {
     clock_t start_time = clock();
 
-    StillwaterConfig cfg;
+    EngineConfig cfg;
     if (config) cfg = *config;
-    else stillwater_config_default(&cfg);
+    else engine_config_default(&cfg);
 
-    /* 1. Initialize Stillwater components */
+    /* 1. Initialize lattice components */
     Lattice *lat = lattice_create(16384);
     DirtyQueue dq;
     dirty_queue_init(&dq);
@@ -118,7 +118,7 @@ Move stillwater_search(const Board *board, const Dawg *dawg, const Rack *rack,
     uint32_t total_dirty_passes = 0;
     CourtVerdict verdict = court_deliberate(lat, root_idx);
 
-    /* --- STILLWATER SETTLING DELIBERATION LOOP --- */
+    /* --- LATTICE SETTLING DELIBERATION LOOP --- */
     for (int step = 0; step < cfg.max_deliberation_steps && !verdict.should_adjourn; step++) {
         /* A. The Broker decides which frontier leaf to buy */
         uint32_t leaf_idx = broker_select_frontier_leaf(&broker, lat, root_idx);
@@ -198,8 +198,8 @@ Move sim_find_best_move(const Board *board, const Dawg *dawg, const Rack *rack,
                         const TileBag *bag, void *unused_config,
                         MoveList *all_moves) {
     (void)unused_config;
-    StillwaterConfig cfg;
-    stillwater_config_default(&cfg);
-    StillwaterMetrics metrics;
-    return stillwater_search(board, dawg, rack, bag, &cfg, all_moves, &metrics);
+    EngineConfig cfg;
+    engine_config_default(&cfg);
+    EngineMetrics metrics;
+    return lattice_search(board, dawg, rack, bag, &cfg, all_moves, &metrics);
 }

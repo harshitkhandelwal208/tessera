@@ -18,7 +18,7 @@ typedef struct {
     float confidence_bar;       /* Root Court Bayesian confidence threshold (e.g. 0.98) */
     bool use_palimpsest;        /* Whether evaluator rewrites itself mid-move */
     bool use_endgame_solver;    /* Exact playout solver when bag is empty */
-} StillwaterConfig;
+} EngineConfig;
 
 typedef struct {
     uint32_t nodes_in_lattice;
@@ -28,20 +28,20 @@ typedef struct {
     float court_confidence;     /* P(argmax is best) */
     float palimpsest_max_bias;  /* Max learned evaluation correction */
     double deliberation_ms;
-} StillwaterMetrics;
+} EngineMetrics;
 
-void stillwater_config_default(StillwaterConfig *config);
+void engine_config_default(EngineConfig *config);
 
 /*
- * The STILLWATER Scrabble Decision Engine:
+ * The Distributional Belief-Lattice Scrabble Engine:
  * Replaces tree rollouts with a position-keyed belief lattice relaxed by
  * prioritized dirty-queue backward induction, guided by the best-first
  * uncertainty broker, learning via the self-rewriting Palimpsest, and
  * concluding deliberation via the Bayesian Root Court.
  */
-Move stillwater_search(const Board *board, const Dawg *dawg, const Rack *rack,
-                      const TileBag *bag, const StillwaterConfig *config,
-                      MoveList *all_moves, StillwaterMetrics *metrics);
+Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
+                    const TileBag *bag, const EngineConfig *config,
+                    MoveList *all_moves, EngineMetrics *metrics);
 
 /* Unseen tiles pool helper */
 int sim_get_unseen_tiles(const Board *board, const Rack *player_rack, char unseen[100]);

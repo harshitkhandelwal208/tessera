@@ -1,8 +1,8 @@
 # TESSERA
 
-*A Grandmaster Scrabble Engine in Pure Native C, powered by the Stillwater Belief-Lattice Architecture.*
+*A Grandmaster Scrabble Engine in Pure Native C, powered by Distributional Belief-Lattice Search.*
 
-Tessera is a tournament Scrabble engine implemented entirely in native C (`-std=c11`, `-O3`, zero external dependencies). Instead of traditional game trees or alpha-beta search, Tessera ports the **Stillwater belief-lattice paradigm** to Scrabble: a persistent position-keyed directed acyclic graph (DAG) of distributional beliefs relaxed to fixed-point equilibrium via prioritized dirty-queue backward induction.
+Tessera is a tournament Scrabble engine implemented entirely in native C (`-std=c11`, `-O3`, zero external dependencies). Instead of traditional game trees or alpha-beta search, Tessera uses a **position-keyed belief-lattice paradigm** for Scrabble: a persistent directed acyclic graph (DAG) of distributional beliefs relaxed to fixed-point equilibrium via prioritized dirty-queue backward induction.
 
 ---
 
@@ -14,13 +14,13 @@ Tessera is a tournament Scrabble engine implemented entirely in native C (`-std=
 | **Move Generation Latency** | **0.8 – 2.6 ms** | Generates all 2,000+ legal plays for a 7-tile rack |
 | **Dictionary Representation** | **0.71 MB (185,702 edges)** | Complete 267,751-word SOWPODS lexicon compressed via minimal DAWG |
 | **Dictionary Startup Latency** | **0.0001 seconds** | Zero-copy binary flat-array load (`data/dawg.bin`) |
-| **Stillwater Settling Latency** | **35 – 50 ms** | Full belief-lattice relaxation across 500+ speculative nodes |
+| **Belief Settling Latency** | **35 – 50 ms** | Full belief-lattice relaxation across 500+ speculative nodes |
 | **Transpositions Merged** | **100% by Construction** | 64-bit Zobrist hashed open-addressing lattice map |
 | **Bayesian Stopping Confidence** | **98.0% – 99.9%** | Joint Gaussian posterior sampling via the Root Court |
 
 ---
 
-## 2. The Stillwater Scrabble Architecture
+## 2. The Belief-Lattice Scrabble Architecture
 
 ```
                                   ┌───────────────────────────────┐
@@ -54,7 +54,7 @@ Tessera is a tournament Scrabble engine implemented entirely in native C (`-std=
 | **The Root Court** | `include/court.h`, `src/court.c` | Stopping as inference: samples from the joint posterior distribution of candidate moves to estimate $P(m^* \text{ is truly best})$. Moves snap instantly in milliseconds when confidence clears $98\%$; critical choices absorb deliberation. |
 | **Proofs** | `src/settle.c`, `src/simulation.c` | In endgames (empty bag), winning sequences enter the lattice as **pinned, variance-zero beliefs** ($\sigma^2 = 0$). Winning replies prove the parent won via ordinary dirty-queue propagation. |
 | **Appel-Jacobson Gen** | `include/movegen.h`, `src/movegen.c` | Native C move generator running at **1.28 Million moves/sec** over transposed 15×15 boards with 32-bit cross-check bitmasks. |
-| **Web GUI & Demo** | `gui/server.py`, `gui/web/*` | Luxury tournament UI featuring real-time Scrabble board, live Stillwater telemetry metrics, engine hints, AI vs AI showcase mode, and unseen bag tracker. |
+| **Web GUI & Demo** | `gui/server.py`, `gui/web/*` | Luxury tournament UI featuring real-time Scrabble board, live lattice telemetry metrics, engine hints, AI vs AI showcase mode, and unseen bag tracker. |
 
 ---
 
@@ -69,7 +69,7 @@ $$\text{StaticEquity}(M) = \text{Score}(M) + \text{LeaveEquity}(\text{Rack} \set
 - **High-Bingo Synergies:** Positive equity for key prefixes/suffixes (`QU`, `ING`, `ER`, `ED`, `RE`, `Blank+S`).
 - **Board Risk / Hotspots:** Penalizes plays that expose unblocked access to Triple Word (TW) or Triple Letter (TL) squares.
 
-### 3.2 Stillwater Bellman Operator & Settling
+### 3.2 Distributional Bellman Operator & Settling
 For a parent node with candidate plays $m_1, m_2, \dots$:
 $$Q(m) = \text{Score}(m) + \text{LeaveEquity}(m) - \gamma \cdot \mu(\text{Child}(m))$$
 $$\text{Var}(m) = \gamma^2 \cdot \text{Var}(\text{Child}(m)) + \text{residual}$$
