@@ -45,14 +45,14 @@ int main(void) {
     rack_to_string(&ai_rack, rack_str);
     printf("[TEST] AI Rack drawn: %s (Bag remaining: %d)\n", rack_str, bag.count);
 
-    SimConfig config;
-    sim_config_default(&config);
-    config.num_candidates = 8;
-    config.num_simulations = 5;
+    StillwaterConfig config;
+    stillwater_config_default(&config);
+    config.max_deliberation_steps = 25;
 
     MoveList moves;
+    StillwaterMetrics metrics;
     clock_t start = clock();
-    Move best = sim_find_best_move(&board, dawg, &ai_rack, &bag, &config, &moves);
+    Move best = stillwater_search(&board, dawg, &ai_rack, &bag, &config, &moves, &metrics);
     clock_t end = clock();
     double elapsed_ms = ((double)(end - start) / CLOCKS_PER_SEC) * 1000.0;
 

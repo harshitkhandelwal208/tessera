@@ -139,22 +139,30 @@
                     </div>
 
                     <div class="engine-metrics-card">
-                        <h4>Engine Architecture Specs</h4>
+                        <h4>Stillwater Architecture Telemetry</h4>
                         <div class="metric-row">
-                            <span>Move Generation Speed:</span>
-                            <strong>1.28M moves/sec (Native C)</strong>
+                            <span>Lattice Nodes Explored:</span>
+                            <strong id="telemetry-nodes">0</strong>
                         </div>
                         <div class="metric-row">
-                            <span>Lexicon Representation:</span>
-                            <strong>Minimal DAWG (0.71 MB, 185k edges)</strong>
+                            <span>Transpositions Merged:</span>
+                            <strong id="telemetry-transpositions">0</strong>
                         </div>
                         <div class="metric-row">
-                            <span>Midgame Search:</span>
-                            <strong>Monte Carlo 1-Ply Rack Rollouts</strong>
+                            <span>Dirty Relaxation Passes:</span>
+                            <strong id="telemetry-dirty-passes">0</strong>
                         </div>
                         <div class="metric-row">
-                            <span>Endgame Strategy:</span>
-                            <strong>Exact Alpha-Beta Playout Solver</strong>
+                            <span>Root Court Confidence:</span>
+                            <strong id="telemetry-court-conf">—</strong>
+                        </div>
+                        <div class="metric-row">
+                            <span>Palimpsest Max Correction:</span>
+                            <strong id="telemetry-palimpsest">0.0 pts</strong>
+                        </div>
+                        <div class="metric-row">
+                            <span>Move Gen Throughput:</span>
+                            <strong>1.28M moves/sec</strong>
                         </div>
                     </div>
                 </div>

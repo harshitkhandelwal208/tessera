@@ -6,34 +6,49 @@
 #include "dict.h"
 #include "movegen.h"
 #include "eval.h"
-
-#define MAX_CANDIDATES 20
-#define DEFAULT_SIM_ITERATIONS 15
+#include "zobrist.h"
+#include "palimpsest.h"
+#include "lattice.h"
+#include "settle.h"
+#include "broker.h"
+#include "court.h"
 
 typedef struct {
-    int num_candidates;       /* How many top candidate moves to simulate */
-    int num_simulations;      /* How many random opponent racks to sample */
-    bool use_endgame_solver;  /* True when bag is empty */
-} SimConfig;
+    int max_deliberation_steps; /* Max leaf expansion iterations (e.g. 50-100) */
+    float confidence_bar;       /* Root Court Bayesian confidence threshold (e.g. 0.98) */
+    bool use_palimpsest;        /* Whether evaluator rewrites itself mid-move */
+    bool use_endgame_solver;    /* Exact playout solver when bag is empty */
+} StillwaterConfig;
+
+typedef struct {
+    uint32_t nodes_in_lattice;
+    uint32_t transpositions_merged;
+    uint32_t dirty_passes_settled;
+    uint32_t frontier_leaves_bought;
+    float court_confidence;     /* P(argmax is best) */
+    float palimpsest_max_bias;  /* Max learned evaluation correction */
+    double deliberation_ms;
+} StillwaterMetrics;
+
+void stillwater_config_default(StillwaterConfig *config);
 
 /*
- * Default configuration for fast yet grandmaster-quality decision making.
+ * The STILLWATER Scrabble Decision Engine:
+ * Replaces tree rollouts with a position-keyed belief lattice relaxed by
+ * prioritized dirty-queue backward induction, guided by the best-first
+ * uncertainty broker, learning via the self-rewriting Palimpsest, and
+ * concluding deliberation via the Bayesian Root Court.
  */
-void sim_config_default(SimConfig *config);
+Move stillwater_search(const Board *board, const Dawg *dawg, const Rack *rack,
+                      const TileBag *bag, const StillwaterConfig *config,
+                      MoveList *all_moves, StillwaterMetrics *metrics);
 
-/*
- * Unseen tiles pool: computes remaining tiles not visible to the current player.
- * (Bag tiles + opponent rack).
- */
+/* Unseen tiles pool helper */
 int sim_get_unseen_tiles(const Board *board, const Rack *player_rack, char unseen[100]);
 
-/*
- * Reranks top candidate moves using Monte Carlo lookahead simulation:
- * Evaluates candidate moves against simulated opponent racks drawn from unseen tiles.
- * The best move according to simulated equity is placed at index 0 of candidate_list.
- */
+/* Backward compatibility wrapper for existing callers */
 Move sim_find_best_move(const Board *board, const Dawg *dawg, const Rack *rack,
-                        const TileBag *bag, const SimConfig *config,
+                        const TileBag *bag, void *unused_config,
                         MoveList *all_moves);
 
 #endif /* SIMULATION_H */

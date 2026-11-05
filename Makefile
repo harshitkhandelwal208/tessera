@@ -1,8 +1,8 @@
 CC = gcc
 CFLAGS = -O3 -march=native -flto -Wall -Wextra -std=c11 -Iinclude
-LDFLAGS = -flto
+LDFLAGS = -flto -lm
 
-SRCS = src/dict.c src/board.c src/movegen.c src/eval.c src/simulation.c src/protocol.c
+SRCS = src/dict.c src/board.c src/movegen.c src/eval.c src/zobrist.c src/palimpsest.c src/lattice.c src/settle.c src/broker.c src/court.c src/simulation.c src/protocol.c
 OBJS = $(SRCS:.c=.o)
 TARGET = tessera
 

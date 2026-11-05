@@ -399,6 +399,19 @@ async function submitPlayMove() {
         addHistoryRow("Player", fullWord, `${String.fromCharCode(65 + startC)}${startR + 1}`, res.score, res.player_score);
         statusMsgEl.textContent = `Player scored ${res.score} points with ${fullWord}! AI is thinking...`;
 
+        if (res.metrics) {
+            const elNodes = document.getElementById("telemetry-nodes");
+            const elTrans = document.getElementById("telemetry-transpositions");
+            const elPasses = document.getElementById("telemetry-dirty-passes");
+            const elConf = document.getElementById("telemetry-court-conf");
+            const elPalimp = document.getElementById("telemetry-palimpsest");
+            if (elNodes) elNodes.textContent = res.metrics.nodes || 0;
+            if (elTrans) elTrans.textContent = res.metrics.transpositions || 0;
+            if (elPasses) elPasses.textContent = res.metrics.settle_passes || 0;
+            if (elConf) elConf.textContent = ((res.metrics.confidence || 0) * 100).toFixed(1) + "%";
+            if (elPalimp) elPalimp.textContent = (res.metrics.palimpsest_bias || 0).toFixed(2) + " pts";
+        }
+
         const freshState = await apiGetState();
         renderState(freshState);
 
@@ -425,6 +438,19 @@ async function triggerAiTurn() {
         } else {
             addHistoryRow("Tessera AI", "(Pass)", "-", 0, res.ai_score);
             statusMsgEl.textContent = `Tessera AI passed. Your turn!`;
+        }
+
+        if (res.metrics) {
+            const elNodes = document.getElementById("telemetry-nodes");
+            const elTrans = document.getElementById("telemetry-transpositions");
+            const elPasses = document.getElementById("telemetry-dirty-passes");
+            const elConf = document.getElementById("telemetry-court-conf");
+            const elPalimp = document.getElementById("telemetry-palimpsest");
+            if (elNodes) elNodes.textContent = res.metrics.nodes || 0;
+            if (elTrans) elTrans.textContent = res.metrics.transpositions || 0;
+            if (elPasses) elPasses.textContent = res.metrics.settle_passes || 0;
+            if (elConf) elConf.textContent = ((res.metrics.confidence || 0) * 100).toFixed(1) + "%";
+            if (elPalimp) elPalimp.textContent = (res.metrics.palimpsest_bias || 0).toFixed(2) + " pts";
         }
 
         const freshState = await apiGetState();

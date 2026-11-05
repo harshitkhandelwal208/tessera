@@ -3,15 +3,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <time.h>
 
-void sim_config_default(SimConfig *config) {
-    config->num_candidates = 12;
-    config->num_simulations = 10;
+void stillwater_config_default(StillwaterConfig *config) {
+    config->max_deliberation_steps = 40;
+    config->confidence_bar = 0.98f;
+    config->use_palimpsest = true;
     config->use_endgame_solver = true;
 }
 
 int sim_get_unseen_tiles(const Board *board, const Rack *player_rack, char unseen[100]) {
-    /* Count total tiles from standard distribution */
     int counts[27];
     for (int i = 0; i < 27; i++) {
         counts[i] = TILE_BAG_DISTRIBUTION[i];
@@ -31,7 +32,7 @@ int sim_get_unseen_tiles(const Board *board, const Rack *player_rack, char unsee
         }
     }
 
-    /* Subtract player's rack */
+    /* Subtract player rack */
     for (int i = 0; i < player_rack->count; i++) {
         char t = player_rack->tiles[i];
         if (t == '?') {
@@ -41,7 +42,6 @@ int sim_get_unseen_tiles(const Board *board, const Rack *player_rack, char unsee
         }
     }
 
-    /* Collect unseen tiles */
     int unseen_count = 0;
     for (int i = 0; i < 26; i++) {
         for (int k = 0; k < counts[i]; k++) {
@@ -64,14 +64,35 @@ static void shuffle_tiles(char *tiles, int count) {
     }
 }
 
-Move sim_find_best_move(const Board *board, const Dawg *dawg, const Rack *rack,
-                        const TileBag *bag, const SimConfig *config,
-                        MoveList *all_moves) {
-    /* Generate all legal moves */
-    movegen_generate_all(board, dawg, rack, all_moves);
+Move stillwater_search(const Board *board, const Dawg *dawg, const Rack *rack,
+                      const TileBag *bag, const StillwaterConfig *config,
+                      MoveList *all_moves, StillwaterMetrics *metrics) {
+    clock_t start_time = clock();
 
-    /* If no moves possible, pass or exchange */
-    if (all_moves->count == 0) {
+    StillwaterConfig cfg;
+    if (config) cfg = *config;
+    else stillwater_config_default(&cfg);
+
+    /* 1. Initialize Stillwater components */
+    Lattice *lat = lattice_create(16384);
+    DirtyQueue dq;
+    dirty_queue_init(&dq);
+    Palimpsest palimpsest;
+    palimpsest_init(&palimpsest);
+    Broker broker;
+    broker_init(&broker);
+
+    /* 2. Register and expand Root Node */
+    bool created = false;
+    uint32_t root_idx = lattice_find_or_insert(lat, board, 0, &created);
+    lat->root_index = root_idx;
+
+    lattice_expand_node(lat, root_idx, dawg, rack, cfg.use_palimpsest ? &palimpsest : NULL);
+    LatticeNode *root = &lat->nodes[root_idx];
+
+    /* Handle pass or exchange if no moves */
+    if (root->num_edges == 0) {
+        lattice_free(lat);
         Move ex_move;
         if (eval_should_exchange(board, rack, bag ? bag->count : 0, 0.0f, &ex_move)) {
             return ex_move;
@@ -82,147 +103,103 @@ Move sim_find_best_move(const Board *board, const Dawg *dawg, const Rack *rack,
         return pass_move;
     }
 
-    /* Compute static equity for all candidate moves */
-    for (int i = 0; i < all_moves->count; i++) {
-        all_moves->moves[i].leave_equity = eval_move_static(board, &all_moves->moves[i]);
-        all_moves->moves[i].sim_equity = all_moves->moves[i].leave_equity;
-    }
-
-    /* Sort all moves by static equity descending */
-    eval_sort_moves(all_moves);
-
-    /* Check if exchanging is better than the best play */
+    /* Check if exchange is superior to best initial play */
     Move ex_move;
     if (eval_should_exchange(board, rack, bag ? bag->count : 0,
-                            all_moves->moves[0].leave_equity, &ex_move)) {
+                            root->edges[0].q_value, &ex_move)) {
+        lattice_free(lat);
         return ex_move;
     }
 
-    int num_candidates = config ? config->num_candidates : 12;
-    if (num_candidates > all_moves->count) {
-        num_candidates = all_moves->count;
-    }
-
-    int num_sims = config ? config->num_simulations : 10;
-    if (num_sims <= 0 || num_candidates <= 1) {
-        return all_moves->moves[0];
-    }
-
-    /* Gather unseen tiles */
+    /* 3. Gather Unseen Tiles */
     char unseen[100];
     int unseen_count = sim_get_unseen_tiles(board, rack, unseen);
 
-    /* --- ENDGAME SOLVER (Bag is empty) --- */
-    if (bag && bag->count == 0 && config && config->use_endgame_solver) {
-        /* Opponent's rack is known with 100% exactness */
-        Rack opp_exact_rack;
-        rack_init(&opp_exact_rack);
-        int opp_rack_val = 0;
-        for (int i = 0; i < unseen_count && i < RACK_CAPACITY; i++) {
-            rack_add_tile(&opp_exact_rack, unseen[i]);
-            if (unseen[i] != '?') {
-                opp_rack_val += TILE_VALUES[unseen[i] - 'A'];
-            }
-        }
+    uint32_t total_dirty_passes = 0;
+    CourtVerdict verdict = court_deliberate(lat, root_idx);
 
-        int best_candidate_idx = 0;
-        float best_endgame_net = -10000.0f;
+    /* --- STILLWATER SETTLING DELIBERATION LOOP --- */
+    for (int step = 0; step < cfg.max_deliberation_steps && !verdict.should_adjourn; step++) {
+        /* A. The Broker decides which frontier leaf to buy */
+        uint32_t leaf_idx = broker_select_frontier_leaf(&broker, lat, root_idx);
+        if (leaf_idx == 0) break;
 
-        for (int c = 0; c < num_candidates; c++) {
-            Move *cand = &all_moves->moves[c];
-
-            /* If candidate plays out completely */
-            if (cand->num_placed == rack->count) {
-                /* Game ends! We get 2x opponent remaining tile value */
-                float net = (float)cand->score + (2.0f * (float)opp_rack_val);
-                cand->sim_equity = net;
-                if (net > best_endgame_net) {
-                    best_endgame_net = net;
-                    best_candidate_idx = c;
-                }
-                continue;
-            }
-
-            /* Opponent response on speculative board */
-            Board spec_board;
-            board_copy(&spec_board, board);
-            board_apply_move(&spec_board, cand);
-
-            MoveList opp_moves;
-            movegen_generate_all(&spec_board, dawg, &opp_exact_rack, &opp_moves);
-
-            int max_opp_score = 0;
-            for (int j = 0; j < opp_moves.count; j++) {
-                if (opp_moves.moves[j].score > max_opp_score) {
-                    max_opp_score = opp_moves.moves[j].score;
-                }
-            }
-
-            float net = (float)cand->score - (float)max_opp_score;
-            cand->sim_equity = net;
-            if (net > best_endgame_net) {
-                best_endgame_net = net;
-                best_candidate_idx = c;
-            }
-        }
-
-        return all_moves->moves[best_candidate_idx];
-    }
-
-    /* --- MIDGAME MONTE CARLO SIMULATION --- */
-    if (unseen_count == 0) {
-        return all_moves->moves[0];
-    }
-
-    float opp_response_sums[MAX_CANDIDATES] = {0.0f};
-
-    for (int s = 0; s < num_sims; s++) {
-        shuffle_tiles(unseen, unseen_count);
-
+        /* B. Sample opponent rack from unseen pool */
         Rack sim_opp_rack;
         rack_init(&sim_opp_rack);
-        int draw_count = unseen_count < RACK_CAPACITY ? unseen_count : RACK_CAPACITY;
-        for (int d = 0; d < draw_count; d++) {
-            rack_add_tile(&sim_opp_rack, unseen[d]);
-        }
 
-        for (int c = 0; c < num_candidates; c++) {
-            Move *cand = &all_moves->moves[c];
-
-            Board spec_board;
-            board_copy(&spec_board, board);
-            board_apply_move(&spec_board, cand);
-
-            MoveList opp_moves;
-            movegen_generate_all(&spec_board, dawg, &sim_opp_rack, &opp_moves);
-
-            float best_opp_equity = 0.0f;
-            for (int j = 0; j < opp_moves.count; j++) {
-                float opp_eq = (float)opp_moves.moves[j].score +
-                               eval_rack_leave(opp_moves.moves[j].leave);
-                if (opp_eq > best_opp_equity) {
-                    best_opp_equity = opp_eq;
-                }
+        if (bag && bag->count == 0 && cfg.use_endgame_solver) {
+            /* Endgame: opponent rack is deterministic and fully known! */
+            for (int i = 0; i < unseen_count && i < RACK_CAPACITY; i++) {
+                rack_add_tile(&sim_opp_rack, unseen[i]);
             }
-
-            opp_response_sums[c] += best_opp_equity;
+        } else {
+            /* Midgame: random sample */
+            shuffle_tiles(unseen, unseen_count);
+            int draw_cnt = unseen_count < RACK_CAPACITY ? unseen_count : RACK_CAPACITY;
+            for (int i = 0; i < draw_cnt; i++) {
+                rack_add_tile(&sim_opp_rack, unseen[i]);
+            }
         }
+
+        /* C. Expand frontier leaf in the lattice */
+        lattice_expand_node(lat, leaf_idx, dawg, &sim_opp_rack,
+                            cfg.use_palimpsest ? &palimpsest : NULL);
+
+        /* D. Enqueue into dirty queue */
+        dirty_queue_push(&dq, leaf_idx, 20.0f);
+
+        /* E. Relax the lattice by prioritized backward induction */
+        total_dirty_passes += settle_lattice(lat, &dq,
+                                            cfg.use_palimpsest ? &palimpsest : NULL,
+                                            128);
+
+        /* F. The Root Court deliberates: P(argmax is best) */
+        verdict = court_deliberate(lat, root_idx);
     }
 
-    /* Compute final net equity and find champion move */
-    int champion_idx = 0;
-    float champion_equity = -100000.0f;
+    /* Final root settling pass */
+    settle_node_backup(lat, root_idx, &palimpsest);
+    verdict = court_deliberate(lat, root_idx);
 
-    for (int c = 0; c < num_candidates; c++) {
-        float avg_opp = opp_response_sums[c] / (float)num_sims;
-        /* Net Equity = Static Equity - 0.85 * Avg Opponent Best Response */
-        all_moves->moves[c].sim_equity = all_moves->moves[c].leave_equity - (0.85f * avg_opp);
-
-        if (all_moves->moves[c].sim_equity > champion_equity) {
-            champion_equity = all_moves->moves[c].sim_equity;
-            champion_idx = c;
+    /* 4. Extract candidates into all_moves */
+    if (all_moves) {
+        all_moves->count = root->num_edges;
+        for (int i = 0; i < root->num_edges; i++) {
+            all_moves->moves[i] = root->edges[i].move;
+            all_moves->moves[i].leave_equity = root->edges[i].q_value;
+            all_moves->moves[i].sim_equity = root->edges[i].q_value;
         }
+        eval_sort_moves(all_moves);
     }
 
-    return all_moves->moves[champion_idx];
+    Move best_move = root->edges[verdict.best_edge_idx].move;
+    best_move.leave_equity = root->edges[verdict.best_edge_idx].q_value;
+    best_move.sim_equity = root->edges[verdict.best_edge_idx].q_value;
+
+    clock_t end_time = clock();
+    double elapsed_ms = ((double)(end_time - start_time) / CLOCKS_PER_SEC) * 1000.0;
+
+    if (metrics) {
+        metrics->nodes_in_lattice = lat->num_nodes;
+        metrics->transpositions_merged = lat->total_transpositions_merged;
+        metrics->dirty_passes_settled = total_dirty_passes;
+        metrics->frontier_leaves_bought = broker.leaves_purchased;
+        metrics->court_confidence = verdict.confidence;
+        metrics->palimpsest_max_bias = palimpsest.max_absolute_correction;
+        metrics->deliberation_ms = elapsed_ms;
+    }
+
+    lattice_free(lat);
+    return best_move;
+}
+
+Move sim_find_best_move(const Board *board, const Dawg *dawg, const Rack *rack,
+                        const TileBag *bag, void *unused_config,
+                        MoveList *all_moves) {
+    (void)unused_config;
+    StillwaterConfig cfg;
+    stillwater_config_default(&cfg);
+    StillwaterMetrics metrics;
+    return stillwater_search(board, dawg, rack, bag, &cfg, all_moves, &metrics);
 }

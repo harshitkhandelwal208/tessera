@@ -116,14 +116,12 @@ void protocol_run_server_loop(const Dawg *dawg) {
                 continue;
             }
 
-            SimConfig cfg;
-            sim_config_default(&cfg);
+            StillwaterConfig cfg;
+            stillwater_config_default(&cfg);
+            StillwaterMetrics metrics;
 
             MoveList moves;
-            clock_t start = clock();
-            Move best = sim_find_best_move(&current_board, dawg, &game.ai_rack, &game.bag, &cfg, &moves);
-            clock_t end = clock();
-            double ms = ((double)(end - start) / CLOCKS_PER_SEC) * 1000.0;
+            Move best = stillwater_search(&current_board, dawg, &game.ai_rack, &game.bag, &cfg, &moves, &metrics);
 
             if (best.type == MOVE_PLAY) {
                 board_apply_move(&current_board, &best);
@@ -155,13 +153,16 @@ void protocol_run_server_loop(const Dawg *dawg) {
             game.turn = 0;
 
             printf("{\"status\":\"ok\",\"time_ms\":%.2f,\"move\":{\"type\":%d,\"word\":\"%s\",\"row\":%d,\"col\":%d,\"dir\":\"%s\",\"score\":%d,\"leave\":\"%s\",\"equity\":%.2f},",
-                   ms, best.type, best.word, best.row, best.col,
+                   metrics.deliberation_ms, best.type, best.word, best.row, best.col,
                    best.dir == DIR_HORIZONTAL ? "H" : "V",
                    best.score, best.leave, best.sim_equity);
 
             char p_rack[RACK_CAPACITY + 1], a_rack[RACK_CAPACITY + 1];
             rack_to_string(&game.player_rack, p_rack);
             rack_to_string(&game.ai_rack, a_rack);
+            printf("\"metrics\":{\"nodes\":%u,\"transpositions\":%u,\"settle_passes\":%u,\"confidence\":%.2f,\"palimpsest_bias\":%.2f},",
+                   metrics.nodes_in_lattice, metrics.transpositions_merged, metrics.dirty_passes_settled,
+                   metrics.court_confidence, metrics.palimpsest_max_bias);
             printf("\"player_score\":%d,\"ai_score\":%d,\"bag_count\":%d,\"game_over\":%s,\"ai_rack\":\"%s\"}\n",
                    game.player_score, game.ai_score, game.bag.count,
                    game.game_over ? "true" : "false", a_rack);
@@ -285,8 +286,8 @@ void protocol_run_terminal_game(const Dawg *dawg, bool ai_vs_ai) {
     int turn = 0;
     int pass_count = 0;
 
-    SimConfig cfg;
-    sim_config_default(&cfg);
+    StillwaterConfig cfg;
+    stillwater_config_default(&cfg);
 
     while (pass_count < 2) {
         board_print(&board);
@@ -422,8 +423,8 @@ void protocol_run_benchmark(const Dawg *dawg) {
     TileBag bag;
     bag_init(&bag);
 
-    SimConfig cfg;
-    sim_config_default(&cfg);
+    StillwaterConfig cfg;
+    stillwater_config_default(&cfg);
 
     int total_moves_gen = 0;
     clock_t start = clock();
@@ -440,13 +441,21 @@ void protocol_run_benchmark(const Dawg *dawg) {
     printf("Move Generation: %d moves generated across 25 calls in %.3f seconds (%.0f moves/sec)\n",
            total_moves_gen, elapsed_s, (double)total_moves_gen / elapsed_s);
 
-    printf("Full Monte Carlo Lookahead Simulation Benchmark (12 candidates x 10 sims)...\n");
+    printf("Stillwater Belief-Lattice Settling Benchmark...\n");
     start = clock();
     MoveList ml;
-    Move m = sim_find_best_move(&board, dawg, &racks[0], &bag, &cfg, &ml);
+    StillwaterConfig scfg;
+    stillwater_config_default(&scfg);
+    scfg.max_deliberation_steps = 50;
+    StillwaterMetrics smetrics;
+    Move m = stillwater_search(&board, dawg, &racks[0], &bag, &scfg, &ml, &smetrics);
     end = clock();
     double sim_ms = ((double)(end - start) / CLOCKS_PER_SEC) * 1000.0;
-    printf("Decision resolved in %.2f ms (Best word: %s, Score: %d, Sim Equity: %.2f)\n",
-           sim_ms, m.word, m.score, m.sim_equity);
+    printf("Decision resolved in %.2f ms!\n", sim_ms);
+    printf("  Best Play: %s, Score: %d, Settled Q-value: %.2f\n", m.word, m.score, m.sim_equity);
+    printf("  Lattice Nodes: %u, Transpositions Merged: %u\n", smetrics.nodes_in_lattice, smetrics.transpositions_merged);
+    printf("  Dirty Passes Settled: %u, Frontier Leaves Bought: %u\n", smetrics.dirty_passes_settled, smetrics.frontier_leaves_bought);
+    printf("  Root Court Confidence: %.1f%%, Palimpsest Max Bias: %.2f pts\n",
+           smetrics.court_confidence * 100.0f, smetrics.palimpsest_max_bias);
     printf("[BENCHMARK] Complete.\n");
 }
