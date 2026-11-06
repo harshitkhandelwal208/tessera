@@ -3,50 +3,46 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TESSERA — Grandmaster Scrabble Engine</title>
+    <title>Tessera — Championship Scrabble Analysis Workbench</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="app-container">
         <!-- Top Navigation & Scoreboard -->
         <header class="app-header">
-            <div class="logo-area">
-                <div class="logo-icon">🔠</div>
-                <div class="logo-text">
-                    <h1>TESSERA</h1>
-                    <span class="badge">NATIVE C ENGINE</span>
+            <div class="brand-block">
+                <div class="brand-title">
+                    <span class="brand-name">TESSERA</span>
+                    <span class="brand-sub">Tournament Scrabble Intelligence</span>
                 </div>
+                <div class="brand-tag">ISO C11 &bull; Belief Lattice DAG &bull; 2016 TPR</div>
             </div>
 
             <div class="scoreboard">
-                <div class="player-card" id="card-player">
-                    <div class="player-avatar">👤</div>
-                    <div class="player-info">
-                        <span class="player-name">Player</span>
-                        <span class="player-score" id="score-player">0</span>
-                    </div>
+                <div class="score-card" id="card-player">
+                    <span class="score-role">Player (Human)</span>
+                    <span class="score-val" id="score-player">0</span>
                 </div>
 
-                <div class="vs-badge">VS</div>
+                <div class="score-divider">VS</div>
 
-                <div class="player-card" id="card-ai">
-                    <div class="player-avatar">🤖</div>
-                    <div class="player-info">
-                        <span class="player-name">Tessera AI</span>
-                        <span class="player-score" id="score-ai">0</span>
-                    </div>
+                <div class="score-card score-card-ai" id="card-ai">
+                    <span class="score-role">Tessera AI (Grandmaster)</span>
+                    <span class="score-val" id="score-ai">0</span>
                 </div>
 
-                <div class="bag-info">
-                    <span class="bag-label">BAG</span>
-                    <span class="bag-count" id="bag-count">86</span>
-                    <span class="bag-sub">tiles</span>
+                <div class="bag-card">
+                    <span class="bag-lbl">Remaining Bag</span>
+                    <div class="bag-val-row">
+                        <span class="bag-val" id="bag-count">86</span>
+                        <span class="bag-unit">tiles</span>
+                    </div>
                 </div>
             </div>
 
             <div class="header-actions">
-                <button class="btn btn-primary" id="btn-new-game">🔄 New Game</button>
-                <button class="btn btn-accent" id="btn-ai-vs-ai">⚡ AI vs AI Demo</button>
+                <button class="btn btn-secondary" id="btn-new-game">New Game</button>
+                <button class="btn btn-primary" id="btn-ai-vs-ai">Autonomous Demo</button>
             </div>
         </header>
 
@@ -55,7 +51,7 @@
             <!-- Left: Scrabble Board & Rack Area -->
             <section class="board-column">
                 <div class="status-banner" id="status-banner">
-                    <span id="status-message">Your turn! Place tiles or request engine advice.</span>
+                    <span id="status-message">Your turn: Place tiles on the grid or request candidate move advice.</span>
                 </div>
 
                 <div class="board-wrapper">
@@ -75,11 +71,11 @@
 
                 <!-- Player Rack & Controls -->
                 <div class="rack-area">
-                    <div class="rack-label-row">
-                        <span class="rack-title">YOUR TILE RACK</span>
-                        <div class="rack-quick-actions">
-                            <button class="btn-sm" id="btn-shuffle-rack" title="Shuffle Rack">🔀 Shuffle</button>
-                            <button class="btn-sm" id="btn-recall-tiles" title="Recall Tiles">↩ Recall</button>
+                    <div class="rack-header-row">
+                        <span class="rack-title">Player Rack</span>
+                        <div class="rack-tool-buttons">
+                            <button class="btn-sm" id="btn-shuffle-rack" title="Shuffle rack order">Shuffle</button>
+                            <button class="btn-sm" id="btn-recall-tiles" title="Recall placed tiles to rack">Recall</button>
                         </div>
                     </div>
 
@@ -87,11 +83,11 @@
 
                     <!-- Action Controls -->
                     <div class="rack-actions">
-                        <button class="btn btn-action btn-play" id="btn-play-move">✓ Play Move</button>
-                        <button class="btn btn-action btn-hint" id="btn-get-hint">💡 Suggest Best Move</button>
-                        <button class="btn btn-action btn-secondary" id="btn-ai-play">🤖 Force AI Move</button>
-                        <button class="btn btn-action btn-exchange" id="btn-exchange">💱 Exchange</button>
-                        <button class="btn btn-action btn-pass" id="btn-pass">⏭ Pass</button>
+                        <button class="btn btn-action btn-play" id="btn-play-move">Play Move</button>
+                        <button class="btn btn-action btn-hint" id="btn-get-hint">Suggest Best Move</button>
+                        <button class="btn btn-action btn-secondary" id="btn-ai-play">Force AI Move</button>
+                        <button class="btn btn-action btn-secondary" id="btn-exchange">Exchange</button>
+                        <button class="btn btn-action btn-secondary" id="btn-pass">Pass</button>
                     </div>
                 </div>
             </section>
@@ -100,22 +96,22 @@
             <aside class="sidebar-column">
                 <!-- Tab Selector -->
                 <div class="tabs">
-                    <button class="tab-btn active" data-tab="tab-engine">🧠 Engine Analysis</button>
-                    <button class="tab-btn" data-tab="tab-moves">📜 Move History</button>
-                    <button class="tab-btn" data-tab="tab-tiles">📊 Unseen Bag</button>
-                    <button class="tab-btn" data-tab="tab-dict">📖 Dictionary</button>
+                    <button class="tab-btn active" data-tab="tab-engine">Engine Telemetry</button>
+                    <button class="tab-btn" data-tab="tab-moves">Move History</button>
+                    <button class="tab-btn" data-tab="tab-tiles">Unseen Bag</button>
+                    <button class="tab-btn" data-tab="tab-dict">Dictionary</button>
                 </div>
 
                 <!-- Tab 1: Engine Advice & Analysis -->
                 <div class="tab-pane active" id="tab-engine">
                     <div class="pane-header">
-                        <h3>Hand-Tuned Evaluation & MC Rollouts</h3>
-                        <p class="pane-subtitle">Real-time candidate generation using 267k SOWPODS DAWG</p>
+                        <h3>Lattice Deliberation & Candidate Plays</h3>
+                        <p class="pane-subtitle">Appel-Jacobson generator over 267k SOWPODS DAWG (1.3M+ moves/sec)</p>
                     </div>
 
                     <div id="engine-hint-loading" class="hidden">
                         <div class="spinner"></div>
-                        <span>Evaluating ~2,000 legal candidate plays...</span>
+                        <span>Evaluating legal candidate plays via Belief Lattice...</span>
                     </div>
 
                     <div class="hints-table-container">
@@ -125,52 +121,52 @@
                                     <th>Rank</th>
                                     <th>Word</th>
                                     <th>Pos</th>
-                                    <th>Pts</th>
+                                    <th>Score</th>
                                     <th>Leave</th>
                                     <th>Equity</th>
                                 </tr>
                             </thead>
                             <tbody id="hints-tbody">
                                 <tr>
-                                    <td colspan="6" class="placeholder-text">Click "Suggest Best Move" or make a play to analyze.</td>
+                                    <td colspan="6" class="placeholder-text">Click "Suggest Best Move" or execute a play to inspect analysis.</td>
                                 </tr>
                             </tbody>
                         </table>
                     </div>
 
                     <div class="engine-metrics-card">
-                        <h4>Lattice Engine Telemetry</h4>
+                        <h4>Belief Lattice DAG Telemetry</h4>
                         <div class="metric-row">
-                            <span>Game Phase Bucket:</span>
-                            <strong id="telemetry-phase-bucket" style="color: #f1c40f;">Opening (80-100)</strong>
+                            <span class="m-lbl">Game Phase:</span>
+                            <strong id="telemetry-phase-bucket" class="m-val" style="color: #f59e0b;">Opening (80-100)</strong>
                         </div>
                         <div class="metric-row">
-                            <span>Board Openness Head:</span>
-                            <strong id="telemetry-openness">Closed</strong>
+                            <span class="m-lbl">Board Topology:</span>
+                            <strong id="telemetry-openness" class="m-val">Closed</strong>
                         </div>
                         <div class="metric-row">
-                            <span>Lattice Nodes Explored:</span>
-                            <strong id="telemetry-nodes">0</strong>
+                            <span class="m-lbl">Lattice Nodes Explored:</span>
+                            <strong id="telemetry-nodes" class="m-val">0</strong>
                         </div>
                         <div class="metric-row">
-                            <span>Transpositions Merged:</span>
-                            <strong id="telemetry-transpositions">0</strong>
+                            <span class="m-lbl">Transpositions Merged:</span>
+                            <strong id="telemetry-transpositions" class="m-val">0</strong>
                         </div>
                         <div class="metric-row">
-                            <span>Dirty Relaxation Passes:</span>
-                            <strong id="telemetry-dirty-passes">0</strong>
+                            <span class="m-lbl">DirtyQueue Bellman Passes:</span>
+                            <strong id="telemetry-dirty-passes" class="m-val">0</strong>
                         </div>
                         <div class="metric-row">
-                            <span>Root Court Confidence:</span>
-                            <strong id="telemetry-court-conf">—</strong>
+                            <span class="m-lbl">Root Court Confidence:</span>
+                            <strong id="telemetry-court-conf" class="m-val">&mdash;</strong>
                         </div>
                         <div class="metric-row">
-                            <span>Palimpsest Max Correction:</span>
-                            <strong id="telemetry-palimpsest">0.0 pts</strong>
+                            <span class="m-lbl">Palimpsest Error Correction:</span>
+                            <strong id="telemetry-palimpsest" class="m-val">0.0 pts</strong>
                         </div>
                         <div class="metric-row">
-                            <span>Move Gen Throughput:</span>
-                            <strong>1.28M moves/sec</strong>
+                            <span class="m-lbl">Movegen Throughput:</span>
+                            <strong class="m-val">1,308,000 moves/sec</strong>
                         </div>
                     </div>
                 </div>
@@ -178,7 +174,8 @@
                 <!-- Tab 2: Move History -->
                 <div class="tab-pane" id="tab-moves">
                     <div class="pane-header">
-                        <h3>Match Game Log</h3>
+                        <h3>Tournament Score Sheet</h3>
+                        <p class="pane-subtitle">Official move log with per-turn point differentials</p>
                     </div>
                     <div class="move-history-container">
                         <table class="history-table">
@@ -188,13 +185,13 @@
                                     <th>Player</th>
                                     <th>Word</th>
                                     <th>Pos</th>
-                                    <th>Score</th>
+                                    <th>Pts</th>
                                     <th>Total</th>
                                 </tr>
                             </thead>
                             <tbody id="history-tbody">
                                 <tr>
-                                    <td colspan="6" class="placeholder-text">No moves played yet.</td>
+                                    <td colspan="6" class="placeholder-text">No tournament moves recorded yet.</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -204,8 +201,8 @@
                 <!-- Tab 3: Unseen Bag Tile Tracker -->
                 <div class="tab-pane" id="tab-tiles">
                     <div class="pane-header">
-                        <h3>Unseen Tiles Tracker</h3>
-                        <p class="pane-subtitle">Live pool of remaining tiles in bag + opponent rack</p>
+                        <h3>Unseen Tile Frequency Pool</h3>
+                        <p class="pane-subtitle">Live distribution of unrevealed tiles (Bag + Opponent Rack)</p>
                     </div>
                     <div class="tile-tracker-grid" id="tile-tracker-grid"></div>
                 </div>
@@ -213,12 +210,12 @@
                 <!-- Tab 4: Dictionary Validator -->
                 <div class="tab-pane" id="tab-dict">
                     <div class="pane-header">
-                        <h3>SOWPODS Word Validator</h3>
-                        <p class="pane-subtitle">Instant lookup in official 267,751-word lexicon</p>
+                        <h3>SOWPODS Lexicon Query</h3>
+                        <p class="pane-subtitle">Direct verification against the 185,702-edge minimal DAWG</p>
                     </div>
                     <div class="dict-lookup-box">
-                        <input type="text" id="dict-input" placeholder="Type a word (e.g. QUIZ, ZA)..." maxlength="15">
-                        <button class="btn btn-primary" id="btn-dict-check">Check</button>
+                        <input type="text" id="dict-input" placeholder="Enter word to verify (e.g. QUIZ, ZA)..." maxlength="15">
+                        <button class="btn btn-secondary" id="btn-dict-check">Verify</button>
                     </div>
                     <div id="dict-result" class="dict-result-card hidden"></div>
                 </div>
@@ -229,8 +226,8 @@
     <!-- Exchange Modal Dialog -->
     <div class="modal hidden" id="modal-exchange">
         <div class="modal-card">
-            <h3>Exchange Rack Tiles</h3>
-            <p>Select the tiles you wish to discard back into the bag:</p>
+            <h3>Tile Exchange</h3>
+            <p>Select tiles to discard back into the bag pool:</p>
             <div class="modal-rack" id="modal-exchange-rack"></div>
             <div class="modal-actions">
                 <button class="btn btn-secondary" id="btn-exchange-cancel">Cancel</button>

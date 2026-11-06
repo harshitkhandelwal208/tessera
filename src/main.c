@@ -49,9 +49,9 @@ int main(int argc, char *argv[]) {
     Dawg *dawg = get_or_load_dawg();
 
     if (nnue_load(&g_nnue, "data/nnue.bin")) {
-        printf("[INFO] Deep NNUE Evaluator loaded successfully (448->128->32->1, 246 KB)\n");
+        fprintf(stderr, "[INFO] Deep NNUE Evaluator loaded successfully (448->128->32->1, 246 KB)\n");
     } else {
-        printf("[INFO] NNUE model data/nnue.bin not found. Using hand-tuned Grandmaster Evaluator.\n");
+        fprintf(stderr, "[INFO] NNUE model data/nnue.bin not found. Using hand-tuned Grandmaster Evaluator.\n");
     }
 
     if (argc >= 2 && (strcmp(argv[1], "server") == 0 || strcmp(argv[1], "protocol") == 0)) {

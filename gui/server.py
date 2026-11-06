@@ -46,10 +46,13 @@ class EngineBridge:
                     self._start_engine()
                 self.process.stdin.write(cmd.strip() + "\n")
                 self.process.stdin.flush()
-                response_line = self.process.stdout.readline()
-                if not response_line:
-                    return {"status": "error", "message": "Engine closed pipe"}
-                return json.loads(response_line.strip())
+                while True:
+                    response_line = self.process.stdout.readline()
+                    if not response_line:
+                        return {"status": "error", "message": "Engine closed pipe"}
+                    line_str = response_line.strip()
+                    if line_str.startswith("{") and line_str.endswith("}"):
+                        return json.loads(line_str)
             except Exception as e:
                 self._start_engine()
                 return {"status": "error", "message": str(e)}
