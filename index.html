@@ -3,27 +3,48 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tessera | The Belief-Lattice Scrabble Engine</title>
-    <meta name="description" content="Tessera is a 2016 Elo tournament Scrabble engine implemented in pure ISO C11. Tree-free search over a 100% position-keyed Belief Lattice DAG with dual-headed NNUE and exact endgame solving.">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%236366f1'/><text x='50' y='70' font-size='60' font-weight='bold' fill='white' text-anchor='middle'>T</text></svg>">
+    <title>Tessera (engine) - EngineWiki</title>
+    <meta name="description" content="Technical documentation and architectural wiki for Tessera, the championship-caliber belief-lattice Scrabble intelligence engine.">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='10' fill='%233366cc'/><text x='50' y='72' font-size='64' font-weight='bold' fill='white' text-anchor='middle'>T</text></svg>">
     <style>
+        /* Classic Wiki Theme (Wikipedia / ArchWiki / MediaWiki aesthetic) */
         :root {
-            --bg-primary: #090d16;
-            --bg-secondary: #0f172a;
-            --bg-card: #1e293b;
-            --bg-card-hover: #27354f;
-            --border: #334155;
-            --border-glow: #6366f1;
-            --text-primary: #f8fafc;
-            --text-secondary: #94a3b8;
-            --text-muted: #64748b;
-            --accent-indigo: #6366f1;
-            --accent-cyan: #06b6d4;
-            --accent-emerald: #10b981;
-            --accent-amber: #f59e0b;
-            --accent-rose: #f43f5e;
-            --font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            --bg: #ffffff;
+            --text: #202122;
+            --text-muted: #54595d;
+            --border: #a2a9b1;
+            --border-light: #eaecf0;
+            --sidebar-bg: #f8f9fa;
+            --infobox-bg: #f8f9fa;
+            --infobox-header: #eaecf0;
+            --code-bg: #f8f9fa;
+            --link: #0645ad;
+            --link-visited: #0b0080;
+            --toc-bg: #f8f9fa;
+            --table-header: #eaecf0;
+            --note-bg: #eaf3ff;
+            --note-border: #3366cc;
+            --font-main: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Liberation Sans", Arial, sans-serif;
+            --font-serif: "Linux Libertine", Georgia, Times, serif;
+            --font-mono: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        }
+
+        [data-theme="dark"] {
+            --bg: #181a1b;
+            --text: #e8e6e3;
+            --text-muted: #9ba1a6;
+            --border: #3e4446;
+            --border-light: #2c3032;
+            --sidebar-bg: #1f2324;
+            --infobox-bg: #1f2324;
+            --infobox-header: #282c2e;
+            --code-bg: #1f2324;
+            --link: #68a0e5;
+            --link-visited: #9b82e2;
+            --toc-bg: #1f2324;
+            --table-header: #282c2e;
+            --note-bg: #1e2633;
+            --note-border: #4d88e8;
         }
 
         * {
@@ -33,1521 +54,1021 @@
         }
 
         body {
-            font-family: var(--font-sans);
-            background-color: var(--bg-primary);
-            color: var(--text-primary);
+            font-family: var(--font-main);
+            background-color: var(--bg);
+            color: var(--text);
             line-height: 1.6;
-            overflow-x: hidden;
+            font-size: 14.5px;
         }
 
-        /* Container */
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 0 24px;
-        }
-
-        /* Header Navigation */
+        /* Top Header */
         header {
+            border-bottom: 1px solid var(--border-light);
+            background: var(--bg);
+            padding: 10px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
             position: sticky;
             top: 0;
             z-index: 100;
-            background: rgba(15, 23, 42, 0.9);
-            backdrop-filter: blur(12px);
-            border-bottom: 1px solid var(--border);
         }
 
-        .nav-inner {
+        .header-left {
             display: flex;
-            align-items: center;
-            justify-content: space-between;
-            height: 72px;
-        }
-
-        .brand {
-            display: flex;
-            align-items: center;
+            align-items: baseline;
             gap: 12px;
-            text-decoration: none;
-            color: var(--text-primary);
         }
 
-        .brand-logo {
-            width: 40px;
-            height: 40px;
-            background: linear-gradient(135deg, var(--accent-indigo), var(--accent-cyan));
-            border-radius: 10px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 800;
+        .wiki-logo {
+            font-family: var(--font-serif);
             font-size: 22px;
-            color: #ffffff;
-            box-shadow: 0 0 20px rgba(99, 102, 241, 0.4);
-        }
-
-        .brand-text {
-            font-size: 20px;
-            font-weight: 800;
+            font-weight: bold;
+            color: var(--text);
+            text-decoration: none;
             letter-spacing: -0.5px;
         }
 
-        .brand-badge {
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            padding: 2px 8px;
-            border-radius: 20px;
-            background: rgba(99, 102, 241, 0.15);
-            color: var(--accent-indigo);
-            border: 1px solid rgba(99, 102, 241, 0.3);
-            font-weight: 700;
-        }
-
-        .nav-links {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            list-style: none;
-            flex-wrap: wrap;
-        }
-
-        .nav-link {
-            padding: 8px 14px;
-            border-radius: 8px;
-            color: var(--text-secondary);
-            text-decoration: none;
-            font-size: 13.5px;
-            font-weight: 600;
-            transition: all 0.2s ease;
-            cursor: pointer;
-        }
-
-        .nav-link:hover, .nav-link.active {
-            color: var(--text-primary);
-            background: var(--bg-card);
-        }
-
-        .nav-link.active {
-            border: 1px solid var(--border);
-        }
-
-        .btn-github {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            background: var(--border);
-            color: var(--text-primary);
-            padding: 8px 16px;
-            border-radius: 8px;
-            font-size: 13px;
-            font-weight: 600;
-            text-decoration: none;
-            transition: background 0.2s;
-        }
-
-        .btn-github:hover {
-            background: #475569;
-        }
-
-        /* Hero Section */
-        .hero {
-            padding: 80px 0 60px;
-            text-align: center;
-            background: radial-gradient(circle at 50% 20%, rgba(99, 102, 241, 0.15) 0%, transparent 60%);
-        }
-
-        .hero-badge-pill {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            background: rgba(99, 102, 241, 0.1);
-            border: 1px solid rgba(99, 102, 241, 0.25);
-            padding: 6px 16px;
-            border-radius: 30px;
-            font-size: 13px;
-            color: #c7d2fe;
-            margin-bottom: 24px;
-        }
-
-        .hero h1 {
-            font-size: 56px;
-            font-weight: 800;
-            letter-spacing: -1.5px;
-            line-height: 1.15;
-            margin-bottom: 20px;
-            background: linear-gradient(180deg, #ffffff 0%, #94a3b8 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-
-        .hero p {
-            max-width: 760px;
-            margin: 0 auto 36px;
-            font-size: 18px;
-            color: var(--text-secondary);
-            line-height: 1.7;
-        }
-
-        .hero-cta-group {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 16px;
-            margin-bottom: 48px;
-            flex-wrap: wrap;
-        }
-
-        .btn {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
-            padding: 13px 24px;
-            border-radius: 10px;
-            font-size: 14.5px;
-            font-weight: 700;
-            text-decoration: none;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            border: none;
-        }
-
-        .btn-primary {
-            background: linear-gradient(135deg, var(--accent-indigo), #4f46e5);
-            color: #ffffff;
-            box-shadow: 0 4px 20px rgba(99, 102, 241, 0.4);
-        }
-
-        .btn-primary:hover {
-            box-shadow: 0 6px 25px rgba(99, 102, 241, 0.6);
-            transform: translateY(-2px);
-        }
-
-        .btn-secondary {
-            background: var(--bg-card);
-            color: var(--text-primary);
-            border: 1px solid var(--border);
-        }
-
-        .btn-secondary:hover {
-            background: var(--bg-card-hover);
-            border-color: #475569;
-        }
-
-        /* Metric Grid */
-        .metric-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 20px;
-            margin-top: 40px;
-        }
-
-        .metric-card {
-            background: var(--bg-secondary);
-            border: 1px solid var(--border);
-            border-radius: 14px;
-            padding: 24px;
-            text-align: left;
-            transition: transform 0.2s, border-color 0.2s;
-        }
-
-        .metric-card:hover {
-            transform: translateY(-4px);
-            border-color: var(--accent-indigo);
-        }
-
-        .metric-val {
-            font-size: 32px;
-            font-weight: 800;
-            letter-spacing: -1px;
-            color: var(--text-primary);
-            margin-bottom: 6px;
-        }
-
-        .metric-label {
-            font-size: 13px;
-            font-weight: 600;
-            color: var(--accent-cyan);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 8px;
-        }
-
-        .metric-desc {
-            font-size: 13px;
-            color: var(--text-secondary);
-            line-height: 1.5;
-        }
-
-        /* Section Layout */
-        .section {
-            padding: 80px 0;
-            border-top: 1px solid var(--border);
-        }
-
-        .section-header {
-            text-align: center;
-            max-width: 720px;
-            margin: 0 auto 50px;
-        }
-
-        .section-tag {
+        .wiki-tagline {
             font-size: 12px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            color: var(--accent-indigo);
-            margin-bottom: 12px;
-            display: inline-block;
-        }
-
-        .section-title {
-            font-size: 36px;
-            font-weight: 800;
-            letter-spacing: -0.8px;
-            margin-bottom: 16px;
-        }
-
-        .section-subtitle {
-            font-size: 16px;
-            color: var(--text-secondary);
-            line-height: 1.6;
-        }
-
-        /* Tabs Content Display */
-        .tab-content {
-            display: none;
-        }
-
-        .tab-content.active {
-            display: block;
-        }
-
-        /* Testing Dashboard Style */
-        .testing-banner {
-            background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(6, 182, 212, 0.1));
-            border: 1px solid rgba(99, 102, 241, 0.3);
-            border-radius: 16px;
-            padding: 32px;
-            margin-bottom: 40px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            flex-wrap: wrap;
-            gap: 24px;
-        }
-
-        .testing-info h3 {
-            font-size: 22px;
-            font-weight: 800;
-            margin-bottom: 8px;
-            color: var(--text-primary);
-        }
-
-        .testing-info p {
-            color: var(--text-secondary);
-            max-width: 600px;
-            font-size: 14px;
-        }
-
-        .testing-stats-bar {
-            display: flex;
-            gap: 28px;
-            flex-wrap: wrap;
-        }
-
-        .stat-item {
-            display: flex;
-            flex-direction: column;
-        }
-
-        .stat-num {
-            font-size: 24px;
-            font-weight: 800;
-            color: var(--accent-cyan);
-            font-family: var(--font-mono);
-        }
-
-        .stat-lbl {
-            font-size: 11px;
-            text-transform: uppercase;
             color: var(--text-muted);
-            letter-spacing: 0.5px;
         }
 
-        /* Tables */
-        .table-wrap {
-            overflow-x: auto;
-            border-radius: 12px;
-            border: 1px solid var(--border);
-            background: var(--bg-secondary);
-            margin-bottom: 40px;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            text-align: left;
-            font-size: 14px;
-        }
-
-        th {
-            background: rgba(30, 41, 59, 0.7);
-            padding: 16px 20px;
-            font-weight: 700;
-            color: var(--text-primary);
-            border-bottom: 1px solid var(--border);
-            text-transform: uppercase;
-            font-size: 12px;
-            letter-spacing: 0.5px;
-        }
-
-        td {
-            padding: 16px 20px;
-            border-bottom: 1px solid rgba(51, 65, 85, 0.5);
-            color: var(--text-secondary);
-        }
-
-        tr:last-child td {
-            border-bottom: none;
-        }
-
-        tr:hover td {
-            background: rgba(255, 255, 255, 0.02);
-            color: var(--text-primary);
-        }
-
-        /* Badges */
-        .badge {
-            display: inline-flex;
+        .header-right {
+            display: flex;
             align-items: center;
-            gap: 6px;
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: 700;
-            font-family: var(--font-mono);
-        }
-
-        .badge-passed {
-            background: rgba(16, 185, 129, 0.15);
-            color: var(--accent-emerald);
-            border: 1px solid rgba(16, 185, 129, 0.3);
-        }
-
-        .badge-running {
-            background: rgba(6, 182, 212, 0.15);
-            color: var(--accent-cyan);
-            border: 1px solid rgba(6, 182, 212, 0.3);
-        }
-
-        .badge-rejected {
-            background: rgba(244, 63, 94, 0.15);
-            color: var(--accent-rose);
-            border: 1px solid rgba(244, 63, 94, 0.3);
-        }
-
-        /* Progress Bar */
-        .progress-bar-bg {
-            width: 100%;
-            height: 8px;
-            background: var(--border);
-            border-radius: 4px;
-            overflow: hidden;
-            margin-top: 6px;
-        }
-
-        .progress-fill {
-            height: 100%;
-            background: linear-gradient(90deg, var(--accent-indigo), var(--accent-cyan));
-            border-radius: 4px;
-        }
-
-        /* Code Block */
-        .code-box {
-            background: #060911;
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 20px;
-            position: relative;
-            font-family: var(--font-mono);
+            gap: 16px;
             font-size: 13px;
-            color: #e2e8f0;
-            margin: 20px 0;
-            overflow-x: auto;
         }
 
-        .code-box pre {
-            line-height: 1.6;
+        .header-right a {
+            color: var(--link);
+            text-decoration: none;
         }
 
-        .copy-btn {
-            position: absolute;
-            top: 12px;
-            right: 12px;
-            background: var(--bg-card);
+        .header-right a:hover {
+            text-decoration: underline;
+        }
+
+        .theme-toggle-btn {
+            background: none;
             border: 1px solid var(--border);
-            color: var(--text-secondary);
-            padding: 6px 12px;
-            border-radius: 6px;
+            color: var(--text);
+            padding: 3px 8px;
+            border-radius: 3px;
             font-size: 12px;
             cursor: pointer;
-            transition: all 0.2s;
         }
 
-        .copy-btn:hover {
-            color: var(--text-primary);
-            background: var(--bg-card-hover);
+        /* Layout Container */
+        .wiki-container {
+            display: flex;
+            max-width: 1360px;
+            margin: 0 auto;
+            min-height: calc(100vh - 50px);
         }
 
-        /* Wiki Layout */
-        .wiki-layout {
-            display: grid;
-            grid-template-columns: 280px 1fr;
-            gap: 40px;
-            align-items: start;
-        }
-
-        .wiki-sidebar {
+        /* Sidebar Navigation */
+        aside.wiki-sidebar {
+            width: 250px;
+            flex-shrink: 0;
+            background: var(--sidebar-bg);
+            border-right: 1px solid var(--border-light);
+            padding: 20px 16px;
+            font-size: 13px;
             position: sticky;
-            top: 96px;
-            background: var(--bg-secondary);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 20px;
-            max-height: calc(100vh - 120px);
+            top: 50px;
+            height: calc(100vh - 50px);
             overflow-y: auto;
         }
 
-        .wiki-sidebar h4 {
-            font-size: 12px;
+        .sidebar-section-title {
+            font-weight: bold;
+            font-size: 11.5px;
             text-transform: uppercase;
             letter-spacing: 0.5px;
             color: var(--text-muted);
-            margin-bottom: 16px;
+            margin: 16px 0 6px;
+            padding-bottom: 3px;
+            border-bottom: 1px solid var(--border-light);
         }
 
-        .wiki-nav-list {
+        .sidebar-section-title:first-child {
+            margin-top: 0;
+        }
+
+        .sidebar-list {
             list-style: none;
             display: flex;
             flex-direction: column;
-            gap: 4px;
+            gap: 3px;
         }
 
-        .wiki-nav-item a {
-            display: block;
-            padding: 8px 12px;
-            border-radius: 6px;
-            color: var(--text-secondary);
+        .sidebar-list li a {
+            color: var(--link);
             text-decoration: none;
-            font-size: 13px;
-            font-weight: 500;
-            transition: all 0.15s;
-            cursor: pointer;
+            display: block;
+            padding: 3px 6px;
+            border-radius: 2px;
+            line-height: 1.4;
         }
 
-        .wiki-nav-item a:hover, .wiki-nav-item a.active {
-            color: var(--text-primary);
-            background: var(--bg-card);
+        .sidebar-list li a:hover {
+            text-decoration: underline;
+            background: rgba(0, 0, 0, 0.04);
         }
 
-        .wiki-article {
-            background: var(--bg-secondary);
-            border: 1px solid var(--border);
-            border-radius: 16px;
-            padding: 40px;
+        [data-theme="dark"] .sidebar-list li a:hover {
+            background: rgba(255, 255, 255, 0.05);
         }
 
-        .wiki-article h2 {
-            font-size: 28px;
-            font-weight: 800;
-            margin-bottom: 12px;
-            color: var(--text-primary);
+        /* Main Content Pane */
+        main.wiki-content {
+            flex-grow: 1;
+            padding: 30px 48px 60px;
+            max-width: 1110px;
         }
 
-        .wiki-article h3 {
-            font-size: 20px;
-            font-weight: 700;
-            margin: 32px 0 16px;
-            color: var(--accent-cyan);
+        /* Document Header */
+        .article-title {
+            font-family: var(--font-serif);
+            font-size: 32px;
+            font-weight: normal;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 6px;
+            margin-bottom: 4px;
         }
 
-        .wiki-article p {
-            color: var(--text-secondary);
+        .article-meta {
+            font-size: 12px;
+            color: var(--text-muted);
             margin-bottom: 20px;
-            line-height: 1.8;
-            font-size: 15px;
         }
 
-        .wiki-article ul, .wiki-article ol {
-            color: var(--text-secondary);
-            margin: 0 0 24px 24px;
-            line-height: 1.7;
-            font-size: 15px;
+        /* Headings */
+        h2 {
+            font-family: var(--font-serif);
+            font-size: 22px;
+            font-weight: normal;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 4px;
+            margin: 32px 0 12px;
         }
 
-        .wiki-article li {
+        h3 {
+            font-size: 16px;
+            font-weight: bold;
+            margin: 20px 0 8px;
+        }
+
+        h4 {
+            font-size: 14px;
+            font-weight: bold;
+            margin: 14px 0 6px;
+        }
+
+        p {
+            margin-bottom: 14px;
+            text-align: justify;
+        }
+
+        ul, ol {
+            margin: 0 0 16px 28px;
+        }
+
+        li {
+            margin-bottom: 4px;
+        }
+
+        a {
+            color: var(--link);
+            text-decoration: none;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+
+        /* Infobox (Standard Wikipedia format) */
+        .infobox {
+            float: right;
+            clear: right;
+            margin: 0 0 20px 24px;
+            width: 310px;
+            border: 1px solid var(--border);
+            background: var(--infobox-bg);
+            font-size: 12.5px;
+            border-spacing: 0;
+            border-collapse: collapse;
+        }
+
+        .infobox-title {
+            background: var(--infobox-header);
+            font-weight: bold;
+            text-align: center;
+            font-size: 15px;
+            padding: 8px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .infobox-image {
+            text-align: center;
+            padding: 10px;
+            border-bottom: 1px solid var(--border);
+            background: #ffffff;
+            color: #111;
+        }
+
+        [data-theme="dark"] .infobox-image {
+            background: #202426;
+            color: #eee;
+        }
+
+        .infobox th {
+            text-align: left;
+            padding: 6px 10px;
+            border-bottom: 1px solid var(--border-light);
+            font-weight: bold;
+            width: 40%;
+            vertical-align: top;
+        }
+
+        .infobox td {
+            padding: 6px 10px;
+            border-bottom: 1px solid var(--border-light);
+            vertical-align: top;
+        }
+
+        /* Table of Contents Box */
+        .toc-box {
+            background: var(--toc-bg);
+            border: 1px solid var(--border);
+            padding: 12px 18px;
+            margin: 16px 0 24px;
+            display: table;
+            font-size: 13px;
+        }
+
+        .toc-title {
+            font-weight: bold;
+            text-align: center;
             margin-bottom: 8px;
         }
 
-        .formula-card {
-            background: rgba(99, 102, 241, 0.08);
-            border-left: 4px solid var(--accent-indigo);
-            padding: 16px 20px;
-            border-radius: 0 8px 8px 0;
-            margin: 20px 0;
-            font-family: var(--font-mono);
-            font-size: 14px;
-            color: #e0e7ff;
-            line-height: 1.6;
+        .toc-list {
+            list-style: none;
+            margin: 0;
+            padding: 0;
         }
 
-        /* Download Matrix Cards */
-        .download-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-            gap: 24px;
-            margin-top: 30px;
+        .toc-list li {
+            margin-bottom: 3px;
         }
 
-        .dl-card {
-            background: var(--bg-secondary);
+        .toc-number {
+            color: var(--text-muted);
+            margin-right: 4px;
+        }
+
+        .toc-sublist {
+            list-style: none;
+            margin-left: 18px;
+            margin-top: 3px;
+        }
+
+        /* Tables (Standard Wiki style) */
+        .wikitable {
+            background: var(--bg);
             border: 1px solid var(--border);
-            border-radius: 14px;
-            padding: 28px;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            transition: all 0.2s;
-        }
-
-        .dl-card:hover {
-            border-color: var(--accent-cyan);
-            transform: translateY(-3px);
-        }
-
-        .dl-platform {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 16px;
-        }
-
-        .dl-platform h3 {
-            font-size: 20px;
-            font-weight: 700;
-        }
-
-        .dl-platform-icon {
-            font-size: 28px;
-        }
-
-        .dl-meta {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 16px 0 24px;
             font-size: 13px;
-            color: var(--text-secondary);
-            margin-bottom: 20px;
-            line-height: 1.6;
         }
 
-        .dl-btn {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
-            background: var(--bg-card);
-            color: var(--text-primary);
+        .wikitable th {
+            background: var(--table-header);
             border: 1px solid var(--border);
-            padding: 12px;
-            border-radius: 8px;
-            text-decoration: none;
-            font-weight: 600;
-            font-size: 14px;
-            transition: all 0.2s;
+            padding: 8px 12px;
+            font-weight: bold;
+            text-align: left;
         }
 
-        .dl-btn:hover {
-            background: var(--accent-indigo);
-            border-color: var(--accent-indigo);
-            color: #ffffff;
+        .wikitable td {
+            border: 1px solid var(--border);
+            padding: 8px 12px;
+        }
+
+        .wikitable tr:nth-child(even) td {
+            background: rgba(0, 0, 0, 0.015);
+        }
+
+        [data-theme="dark"] .wikitable tr:nth-child(even) td {
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        /* Code & Preformatted */
+        code {
+            font-family: var(--font-mono);
+            font-size: 12.5px;
+            background: var(--code-bg);
+            border: 1px solid var(--border-light);
+            padding: 2px 4px;
+            border-radius: 2px;
+        }
+
+        pre {
+            font-family: var(--font-mono);
+            font-size: 12.5px;
+            background: var(--code-bg);
+            border: 1px solid var(--border);
+            padding: 12px 14px;
+            margin: 14px 0 18px;
+            overflow-x: auto;
+            line-height: 1.45;
+        }
+
+        pre code {
+            border: none;
+            padding: 0;
+            background: none;
+        }
+
+        /* Notice & Quote Boxes */
+        .wiki-notice {
+            background: var(--note-bg);
+            border-left: 4px solid var(--note-border);
+            padding: 10px 14px;
+            margin: 16px 0;
+            font-size: 13.5px;
+        }
+
+        .math-block {
+            text-align: center;
+            margin: 14px 0;
+            padding: 8px;
+            background: var(--code-bg);
+            border: 1px solid var(--border-light);
+            font-family: "Times New Roman", Times, serif;
+            font-style: italic;
+            font-size: 16px;
         }
 
         /* Footer */
-        footer {
-            border-top: 1px solid var(--border);
-            padding: 48px 0;
-            background: var(--bg-secondary);
+        footer.wiki-footer {
+            border-top: 1px solid var(--border-light);
+            margin-top: 40px;
+            padding-top: 16px;
+            font-size: 12px;
             color: var(--text-muted);
-            font-size: 14px;
-            text-align: center;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
         }
 
-        footer a {
-            color: var(--text-secondary);
-            text-decoration: none;
-        }
-
-        footer a:hover {
-            color: var(--accent-indigo);
-        }
-
-        @media (max-width: 900px) {
-            .wiki-layout {
-                grid-template-columns: 1fr;
+        @media (max-width: 860px) {
+            .wiki-container {
+                flex-direction: column;
             }
-            .wiki-sidebar {
+            aside.wiki-sidebar {
+                width: 100%;
+                height: auto;
                 position: static;
-                max-height: none;
+                border-right: none;
+                border-bottom: 1px solid var(--border-light);
             }
-            .hero h1 {
-                font-size: 40px;
+            main.wiki-content {
+                padding: 20px 16px;
+            }
+            .infobox {
+                float: none;
+                width: 100%;
+                margin: 0 0 20px 0;
             }
         }
     </style>
 </head>
 <body>
 
-    <!-- Header Navigation -->
+    <!-- Header -->
     <header>
-        <div class="container nav-inner">
-            <a href="#overview" class="brand" onclick="switchTab('overview')">
-                <div class="brand-logo">T</div>
-                <div>
-                    <span class="brand-text">TESSERA</span>
-                    <span class="brand-badge">v1.0.0</span>
-                </div>
-            </a>
-            <ul class="nav-links">
-                <li><a class="nav-link active" id="tab-btn-overview" onclick="switchTab('overview')">Overview</a></li>
-                <li><a class="nav-link" id="tab-btn-wiki" onclick="switchTab('wiki')">Wiki & Docs</a></li>
-                <li><a class="nav-link" id="tab-btn-testing" onclick="switchTab('testing')">Distributed Testing</a></li>
-                <li><a class="nav-link" id="tab-btn-contributing" onclick="switchTab('contributing')">Contributing</a></li>
-                <li><a class="nav-link" id="tab-btn-downloads" onclick="switchTab('downloads')">Downloads</a></li>
-                <li><a class="nav-link" id="tab-btn-benchmarks" onclick="switchTab('benchmarks')">Benchmarks</a></li>
-                <li><a href="https://github.com/harshitkhandelwal208/tessera" target="_blank" class="btn-github">GitHub ↗</a></li>
-            </ul>
+        <div class="header-left">
+            <a href="#" class="wiki-logo">Tessera Wiki</a>
+            <span class="wiki-tagline">Engine Technical Reference Manual</span>
+        </div>
+        <div class="header-right">
+            <a href="#downloads">Downloads</a>
+            <a href="#distributed-testing">Distributed Testing</a>
+            <a href="#contributing">Contributing</a>
+            <a href="https://github.com/harshitkhandelwal208/tessera" target="_blank">GitHub</a>
+            <button class="theme-toggle-btn" onclick="toggleTheme()">Dark / Light</button>
         </div>
     </header>
 
-    <!-- TAB 1: OVERVIEW & HERO -->
-    <div id="tab-overview" class="tab-content active">
-        <section class="hero">
-            <div class="container">
-                <div class="hero-badge-pill">
-                    <span>⚡ Standard ISO C11</span>
-                    <span>•</span>
-                    <span>Zero External Dependencies</span>
-                    <span>•</span>
-                    <span>2016 NASPA Elo</span>
-                </div>
-                <h1>The Belief-Lattice Scrabble Engine</h1>
-                <p>
-                    Tessera is a grandmaster-tier tournament Scrabble engine that completely eliminates exponential search trees. Operating over a 100% position-keyed Directed Acyclic Graph (Belief Lattice), Tessera integrates 64-bit Zobrist transpositions, prioritized Bellman relaxation, paired 2-ply draw realization, dual-headed NNUE, and an exact endgame solver.
-                </p>
-                <div class="hero-cta-group">
-                    <button class="btn btn-primary" onclick="switchTab('downloads')">Download Multi-Platform Binaries (v1.0.0)</button>
-                    <button class="btn btn-secondary" onclick="switchTab('testing')">Tessera-Test Network</button>
-                    <button class="btn btn-secondary" onclick="switchTab('wiki')">Technical Documentation</button>
-                    <button class="btn btn-secondary" onclick="switchTab('contributing')">Contributing Guide</button>
-                </div>
+    <div class="wiki-container">
+        <!-- Sidebar Navigation -->
+        <aside class="wiki-sidebar">
+            <div class="sidebar-section-title">Navigation</div>
+            <ul class="sidebar-list">
+                <li><a href="#overview">Overview</a></li>
+                <li><a href="#key-performance-specifications">Performance Specs</a></li>
+                <li><a href="#tournament-results">Tournament Results</a></li>
+                <li><a href="#compiling--installation">Compiling & Installation</a></li>
+                <li><a href="#downloads">Downloads (v1.0.0)</a></li>
+            </ul>
 
-                <!-- Metrics Grid -->
-                <div class="metric-grid">
-                    <div class="metric-card">
-                        <div class="metric-label">Movegen Throughput</div>
-                        <div class="metric-val">1.3M+</div>
-                        <div class="metric-desc">Appel-Jacobson generator over transposed 15×15 boards with 32-bit cross-checks.</div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-label">Lexicon Compression</div>
-                        <div class="metric-val">742 KB</div>
-                        <div class="metric-desc">Complete 267,751-word SOWPODS lexicon in 185,702 4-byte packed DAWG edges. Loads in 0.0001s.</div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-label">Tournament Elo</div>
-                        <div class="metric-val">2016 TPR</div>
-                        <div class="metric-desc">71.4% win rate (50-20-0) across 70 games vs 7 championship engines, defeating 2150-Elo MAGPIE.</div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-label">Endgame Solver</div>
-                        <div class="metric-val">&lt; 1.5 ms</div>
-                        <div class="metric-desc">Deterministic 8-ply negamax DAG solver over a 32,768-entry transposition table.</div>
-                    </div>
-                </div>
+            <div class="sidebar-section-title">Architecture</div>
+            <ul class="sidebar-list">
+                <li><a href="#1-theoretical-foundations">1. Tree Elimination</a></li>
+                <li><a href="#2-lexicon--minimal-dawg">2. Lexicon & DAWG</a></li>
+                <li><a href="#3-appel-jacobson-movegen">3. Move Generation</a></li>
+                <li><a href="#4-dual-accumulator-evaluator">4. Dual Evaluator</a></li>
+                <li><a href="#5-deep-dual-headed-nnue">5. Dual-Headed NNUE</a></li>
+                <li><a href="#6-belief-lattice-dag">6. Belief Lattice DAG</a></li>
+                <li><a href="#7-dirtyqueue-bellman-relaxation">7. Bellman Relaxation</a></li>
+                <li><a href="#8-2-ply-draw-realization">8. 2-Ply Realization</a></li>
+                <li><a href="#9-bayesian-opponent-modeling">9. Opponent Modeling</a></li>
+                <li><a href="#10-the-root-court">10. The Root Court</a></li>
+                <li><a href="#11-exact-endgame-solver">11. Endgame Solver</a></li>
+                <li><a href="#12-the-palimpsest">12. Meta-Learning</a></li>
+            </ul>
+
+            <div class="sidebar-section-title">Development</div>
+            <ul class="sidebar-list">
+                <li><a href="#distributed-testing">Distributed Testing</a></li>
+                <li><a href="#worker-manual">Worker Manual</a></li>
+                <li><a href="#contributing">Contributing Guide</a></li>
+                <li><a href="#protocol">Engine Protocol</a></li>
+                <li><a href="#references">References</a></li>
+            </ul>
+        </aside>
+
+        <!-- Main Content Article -->
+        <main class="wiki-content">
+            <h1 class="article-title">Tessera (engine)</h1>
+            <div class="article-meta">
+                From Tessera Documentation, the open reference for the championship Scrabble engine.
             </div>
-        </section>
 
-        <!-- Quick Start Command -->
-        <section class="section">
-            <div class="container">
-                <div class="section-header">
-                    <span class="section-tag">Quick Start</span>
-                    <h2 class="section-title">Zero Setup. Build and Run in Seconds.</h2>
-                    <p class="section-subtitle">Tessera builds cleanly on any POSIX system with GCC or Clang with zero dependencies.</p>
-                </div>
-                <div class="code-box">
-                    <button class="copy-btn" onclick="copyCode('quick-code')">Copy</button>
-                    <pre id="quick-code"><code># Clone repository
+            <!-- Infobox -->
+            <table class="infobox">
+                <tr>
+                    <th colspan="2" class="infobox-title">Tessera</th>
+                </tr>
+                <tr>
+                    <td colspan="2" class="infobox-image">
+                        <div style="font-family:monospace; font-size:11px; line-height:1.2; text-align:center;">
+                            +-----------------------------+<br>
+                            | 3W  .  . 2L  .  .  . 3W ... |<br>
+                            |  . 2W  .  .  . 3L  .  . ... |<br>
+                            |  .  . 2W  .  .  . 2L  . ... |<br>
+                            | 3W  .  . 2L  .  .  A N E ...|<br>
+                            +-----------------------------+<br>
+                            Tessera Belief-Lattice Board
+                        </div>
+                    </td>
+                </tr>
+                <tr>
+                    <th>Original authors</th>
+                    <td>Harshit Khandelwal, Prem, Ashley, Aaryan</td>
+                </tr>
+                <tr>
+                    <th>Affiliation</th>
+                    <td>Fr. CRCE, Mumbai</td>
+                </tr>
+                <tr>
+                    <th>Initial release</th>
+                    <td>v1.0.0 / 6 November 2026</td>
+                </tr>
+                <tr>
+                    <th>Written in</th>
+                    <td>ISO C11</td>
+                </tr>
+                <tr>
+                    <th>Dependencies</th>
+                    <td>Zero (Standard C library)</td>
+                </tr>
+                <tr>
+                    <th>Rating</th>
+                    <td><strong>2016 Elo</strong> (NASPA TPR)</td>
+                </tr>
+                <tr>
+                    <th>Win rate</th>
+                    <td>71.4% (50–20–0 vs 7 bots)</td>
+                </tr>
+                <tr>
+                    <th>Search type</th>
+                    <td>Position-Keyed Belief Lattice (DAG)</td>
+                </tr>
+                <tr>
+                    <th>Evaluation</th>
+                    <td>Dual-Accumulator + 448-dim NNUE</td>
+                </tr>
+                <tr>
+                    <th>Movegen speed</th>
+                    <td>1,308,000+ moves/sec</td>
+                </tr>
+                <tr>
+                    <th>DAWG footprint</th>
+                    <td>742 KB (185,702 edges)</td>
+                </tr>
+                <tr>
+                    <th>Operating system</th>
+                    <td>Linux, Windows, macOS</td>
+                </tr>
+                <tr>
+                    <th>License</th>
+                    <td><a href="https://github.com/harshitkhandelwal208/tessera/blob/master/LICENSE" target="_blank">MIT License</a></td>
+                </tr>
+                <tr>
+                    <th>Website</th>
+                    <td><a href="https://harshitkhandelwal208.github.io/tessera/">harshitkhandelwal208.github.io/tessera/</a></td>
+                </tr>
+                <tr>
+                    <th>Repository</th>
+                    <td><a href="https://github.com/harshitkhandelwal208/tessera" target="_blank">github.com/.../tessera</a></td>
+                </tr>
+            </table>
+
+            <!-- Introductory Paragraph -->
+            <p>
+                <strong>Tessera</strong> is a championship-caliber tournament <a href="https://en.wikipedia.org/wiki/Scrabble" target="_blank">Scrabble</a> intelligence engine implemented in standard ISO C11 with zero external runtime dependencies. Developed as an alternative to traditional tree-search architectures (such as Maven and Quackle), Tessera completely eliminates game trees in favor of a 100% position-keyed <strong>Belief Lattice Directed Acyclic Graph (DAG)</strong>.
+            </p>
+            <p>
+                In empirical tournament evaluation across 70 games against seven specialized engine archetypes, Tessera established an official Tournament Performance Rating (TPR) of <strong>2016 Elo</strong> (71.4% win rate), scoring a 6–4 victory (+23.3 pts/game spread) against the commercial-grade 2150-Elo MAGPIE 2-ply realization engine.
+            </p>
+
+            <!-- Table of Contents -->
+            <div class="toc-box">
+                <div class="toc-title">Contents</div>
+                <ul class="toc-list">
+                    <li><span class="toc-number">1</span> <a href="#overview">Overview & Highlights</a></li>
+                    <li><span class="toc-number">2</span> <a href="#tournament-results">Tournament Results & Matrix</a></li>
+                    <li>
+                        <span class="toc-number">3</span> <a href="#system-architecture">System Architecture</a>
+                        <ul class="toc-sublist">
+                            <li><span class="toc-number">3.1</span> <a href="#1-theoretical-foundations">Theoretical Foundations: Tree Elimination</a></li>
+                            <li><span class="toc-number">3.2</span> <a href="#2-lexicon--minimal-dawg">Lexicon & Minimal DAWG Compression</a></li>
+                            <li><span class="toc-number">3.3</span> <a href="#3-appel-jacobson-movegen">Appel-Jacobson Move Generation</a></li>
+                            <li><span class="toc-number">3.4</span> <a href="#4-dual-accumulator-evaluator">Dual-Accumulator Heuristic Evaluator</a></li>
+                            <li><span class="toc-number">3.5</span> <a href="#5-deep-dual-headed-nnue">Deep Dual-Headed NNUE Architecture</a></li>
+                            <li><span class="toc-number">3.6</span> <a href="#6-belief-lattice-dag">Belief Lattice DAG Search</a></li>
+                            <li><span class="toc-number">3.7</span> <a href="#7-dirtyqueue-bellman-relaxation">DirtyQueue Bellman Relaxation</a></li>
+                            <li><span class="toc-number">3.8</span> <a href="#8-2-ply-draw-realization">2-Ply Draw Realization</a></li>
+                            <li><span class="toc-number">3.9</span> <a href="#9-bayesian-opponent-modeling">Persistent Bayesian Opponent Modeling</a></li>
+                            <li><span class="toc-number">3.10</span> <a href="#10-the-root-court">The Root Court Stopping Rule</a></li>
+                            <li><span class="toc-number">3.11</span> <a href="#11-exact-endgame-solver">Exact Transposition Endgame Solver</a></li>
+                            <li><span class="toc-number">3.12</span> <a href="#12-the-palimpsest">The Palimpsest (Online Meta-Learning)</a></li>
+                        </ul>
+                    </li>
+                    <li><span class="toc-number">4</span> <a href="#compiling--installation">Compiling & Installation</a></li>
+                    <li><span class="toc-number">5</span> <a href="#downloads">Downloads & Precompiled Binaries</a></li>
+                    <li><span class="toc-number">6</span> <a href="#distributed-testing">Distributed Testing & Training (Tessera-Test)</a></li>
+                    <li><span class="toc-number">7</span> <a href="#contributing">Contributing Guidelines</a></li>
+                    <li><span class="toc-number">8</span> <a href="#protocol">Engine Protocol Specification</a></li>
+                    <li><span class="toc-number">9</span> <a href="#references">References</a></li>
+                </ul>
+            </div>
+
+            <!-- SECTION 1: OVERVIEW -->
+            <h2 id="overview">Overview & Highlights</h2>
+            <p>
+                Unlike deterministic perfect-information games like chess or Go where minimax or Alpha-Beta pruning over trees can prune unvisited subtrees, Scrabble is an imperfect-information stochastic game with severe asymmetric information:
+            </p>
+            <ul>
+                <li>The identities of opponent tiles are unknown during deliberation.</li>
+                <li>Future rack refills depend on random draws from an unseen tile bag.</li>
+                <li>The identical board state can be reached through thousands of transposed move permutations.</li>
+            </ul>
+            <p>
+                Tessera addresses these characteristics by replacing game trees with a position-keyed Directed Acyclic Graph (DAG) indexed by 64-bit Zobrist hashes. Nodes maintain Gaussian distributional beliefs that are updated via prioritized Bellman backward induction.
+            </p>
+
+            <h3 id="key-performance-specifications">Key Performance Specifications</h3>
+            <table class="wikitable">
+                <thead>
+                    <tr>
+                        <th>Metric</th>
+                        <th>Measured Specification</th>
+                        <th>Architectural Implementation</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Move Generation Throughput</strong></td>
+                        <td>1,308,000+ moves/second</td>
+                        <td>Appel-Jacobson generator over transposed 15×15 boards with 32-bit cross-checks</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Move Generation Latency</strong></td>
+                        <td>0.8 – 2.2 ms</td>
+                        <td>Generates and scores all 2,000+ legal plays for a full 7-tile rack</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Lexicon Footprint</strong></td>
+                        <td>0.71 MB (185,702 edges)</td>
+                        <td>Complete 267,751-word SOWPODS lexicon compressed via minimal DAWG</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Dictionary Ingestion Time</strong></td>
+                        <td>0.0001 seconds</td>
+                        <td>Zero-copy binary flat-array memory ingestion (<code>data/dawg.bin</code>)</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Deliberation Latency</strong></td>
+                        <td>40 – 85 ms / turn</td>
+                        <td>Distributional Bellman relaxation across 700+ speculative graph nodes</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Search Architecture</strong></td>
+                        <td>100% Tree-Free (Pure DAG)</td>
+                        <td>Position-keyed Belief Lattice; transpositions merge 100% by construction</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Endgame Solver Latency</strong></td>
+                        <td>&lt; 1.5 ms (exact optimal)</td>
+                        <td>32,768-entry Zobrist transposition DAG for perfect-information terminal play</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Tournament Performance</strong></td>
+                        <td>2016 Elo (71.4% Win Rate)</td>
+                        <td>Benchmarked across 70 games vs 7 championship profiles (TPR: +159 Elo above field)</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Dependencies</strong></td>
+                        <td>Zero</td>
+                        <td>Pure standard C (<code>libc</code>, <code>libm</code>, OpenMP for multi-core training tools)</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <!-- SECTION 2: TOURNAMENT RESULTS -->
+            <h2 id="tournament-results">Tournament Results & Matrix</h2>
+            <p>
+                Tessera was evaluated in a 70-game round-robin tournament against seven specialized bot archetypes with alternating first-move initiative and tournament clock constraints.
+            </p>
+            <table class="wikitable">
+                <thead>
+                    <tr>
+                        <th>Opponent Archetype</th>
+                        <th>Est. Elo</th>
+                        <th>Record</th>
+                        <th>Win %</th>
+                        <th>Net Spread</th>
+                        <th>Tessera Average</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>1. Baseline Greedy (1-Ply Score)</td>
+                        <td>1550</td>
+                        <td>7 - 3 - 0</td>
+                        <td>70.0%</td>
+                        <td>+27.2 pts</td>
+                        <td>443.7 pts</td>
+                    </tr>
+                    <tr>
+                        <td>2. Defensive Turtler (Risk Minimizer)</td>
+                        <td>1650</td>
+                        <td>10 - 0 - 0</td>
+                        <td>100.0%</td>
+                        <td>+74.9 pts</td>
+                        <td>477.7 pts</td>
+                    </tr>
+                    <tr>
+                        <td>3. Bingo Hunter (Stem Synergy)</td>
+                        <td>1750</td>
+                        <td>9 - 1 - 0</td>
+                        <td>90.0%</td>
+                        <td>+48.4 pts</td>
+                        <td>470.0 pts</td>
+                    </tr>
+                    <tr>
+                        <td>4. Heuristic Grandmaster (8-Phase)</td>
+                        <td>1850</td>
+                        <td>5 - 5 - 0</td>
+                        <td>50.0%</td>
+                        <td>+18.7 pts</td>
+                        <td>431.8 pts</td>
+                    </tr>
+                    <tr>
+                        <td>5. Neural Static (448-dim NNUE 1-Ply)</td>
+                        <td>1950</td>
+                        <td>8 - 2 - 0</td>
+                        <td>80.0%</td>
+                        <td>+60.4 pts</td>
+                        <td>480.9 pts</td>
+                    </tr>
+                    <tr>
+                        <td>6. Championship Simulation (Quackle)</td>
+                        <td>2100</td>
+                        <td>5 - 5 - 0</td>
+                        <td>50.0%</td>
+                        <td>+2.0 pts</td>
+                        <td>458.5 pts</td>
+                    </tr>
+                    <tr>
+                        <td>7. MAGPIE / Woogles Champion (2-Ply)</td>
+                        <td>2150</td>
+                        <td>6 - 4 - 0</td>
+                        <td>60.0%</td>
+                        <td>+23.3 pts</td>
+                        <td>458.3 pts</td>
+                    </tr>
+                    <tr style="font-weight: bold; background: var(--table-header);">
+                        <td>OVERALL TOURNAMENT AGGREGATE</td>
+                        <td>1857</td>
+                        <td>50 - 20 - 0</td>
+                        <td>71.4% (2016 TPR)</td>
+                        <td>+36.4 pts</td>
+                        <td>460.1 pts</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <!-- SECTION 3: SYSTEM ARCHITECTURE -->
+            <h2 id="system-architecture">System Architecture</h2>
+
+            <h3 id="1-theoretical-foundations">3.1 Theoretical Foundations: Tree Elimination</h3>
+            <p>
+                In conventional tree searches, each path from the root creates an independent node. When multiple move orderings lead to the identical physical board, a tree search duplicates evaluation work exponentially.
+            </p>
+            <p>
+                Tessera organizes search as a <strong>Belief Lattice</strong>: a position-keyed Directed Acyclic Graph (DAG) $G = (V, E)$. Every board state $v \in V$ is uniquely identified by a 64-bit Zobrist hash. Edges $e = (u, v) \in E$ represent legal word plays. When two distinct paths reach the same board topology, they point to the identical vertex $v$, merging transpositions by construction.
+            </p>
+
+            <h3 id="2-lexicon--minimal-dawg">3.2 Lexicon & Minimal DAWG Compression</h3>
+            <p>
+                Tessera compresses the entire SOWPODS 2019 lexicon (267,751 tournament words) into a minimal deterministic acyclic word graph (DAWG) containing 185,702 edges. Each edge is encoded into a compact 4-byte packed binary structure (`DawgEdge`):
+            </p>
+            <div class="wiki-notice">
+                <code>uint32_t</code> binary layout:
+                <ul>
+                    <li>Bits 0..23 (24 bits): Child edge array index (addressing up to 16,777,216 nodes)</li>
+                    <li>Bits 24..28 (5 bits): Letter code (0='A', ..., 25='Z')</li>
+                    <li>Bit 29 (1 bit): End-of-word flag (1 if edge completes valid word)</li>
+                    <li>Bit 30 (1 bit): End-of-node flag (1 if last sibling edge)</li>
+                </ul>
+            </div>
+            <p>
+                The complete dictionary occupies <strong>742 KB</strong> on disk and is ingested in <strong>0.0001 seconds</strong> using flat-array binary reading.
+            </p>
+
+            <h3 id="3-appel-jacobson-movegen">3.3 Appel-Jacobson Move Generation</h3>
+            <p>
+                Tessera implements the Appel & Jacobson (1988) move generation algorithm. Prior to row traversal, 32-bit cross-check bitmasks are precalculated for every empty square adjacent to existing tiles. If placing letter $c \in \{A..Z\}$ would form an invalid orthogonal cross-word, bit $(c - 'A')$ is cleared to 0. During recursive anchor traversal, legal placement is verified with a single bitwise AND operation:
+            </p>
+            <div class="math-block">
+                \text{is\_legal}(c) = (\text{mask}[\text{row}][\text{col}] \ \& \ (1 \ll (c - 'A'))) \neq 0
+            </div>
+            <p>
+                Vertical word plays are generated using a transposed board representation, reusing identical row-traversal cache lines without duplicating traversal logic.
+            </p>
+
+            <h3 id="4-dual-accumulator-evaluator">3.4 Dual-Accumulator Heuristic Evaluator</h3>
+            <p>
+                Move equity is evaluated by separating board positional impact from off-board rack leave potential across 8 discrete game phases based on remaining bag tiles:
+            </p>
+            <div class="math-block">
+                \text{MoveEquity}(M) = \text{BoardAccumulator}(M) + \text{RackAccumulator}(\text{Rack} \setminus M)
+            </div>
+            <ul>
+                <li><strong>Board Accumulator:</strong> Scores the play, computes premium square control (TW, TL, DW occupation to deny them to opponent), and penalizes opening floating vowels to open lanes.</li>
+                <li><strong>Rack Leave Accumulator:</strong> Computes a $27 \times 27$ pairwise synergy matrix, recognizes championship super-leave stems (e.g. <code>SATINE</code>, <code>RETINA</code>, <code>RETAINS</code> up to +30.5 pts), applies non-linear penalties for duplicate consonants (`VV` -36.0, `WW` -20.0, `FF` -18.0), and optimizes sub-rack discards ($2^k$ subsets).</li>
+            </ul>
+
+            <h3 id="5-deep-dual-headed-nnue">3.5 Deep Dual-Headed NNUE Architecture</h3>
+            <p>
+                Tessera incorporates an Efficiently Updatable Neural Network (NNUE) tailored for imperfect-information tile dynamics. The topology is $448 \to 128 \to 32 \to 2$ (Dual Head):
+            </p>
+            <pre><code>Input Vector [448 Dimensions]
+    │
+    ▼  Linear (448 x 128) + Bias [SIMD AVX2 with Portable Fallback]
+Hidden Layer 1 [128 Dimensions]
+    │
+    ▼  ClippedReLU: clamp(x, 0.0, 1.0)
+    │
+    ▼  Linear (128 x 32) + Bias [SIMD AVX2 with Portable Fallback]
+Hidden Layer 2 [32 Dimensions]
+    │
+    ▼  ClippedReLU: clamp(x, 0.0, 1.0)
+    ├─────────────────────────────────────────┐
+    ▼                                         ▼
+Head 1: Net Score Spread Margin           Head 2: Win Probability
+Linear (32 x 1) -> Expected Points Margin Linear (32 x 1) -> Sigmoid P(Win)</code></pre>
+            <p>
+                Forward passes utilize 256-bit AVX2 Fused Multiply-Add instructions on x86-64, with automated scalar fallbacks for ARM64 and legacy systems. The static evaluation blends 50% hand-crafted leave tables with 50% neural network predictions.
+            </p>
+
+            <h3 id="6-belief-lattice-dag">3.6 Belief Lattice DAG Search</h3>
+            <p>
+                Nodes in the lattice maintain Gaussian distributional beliefs $\mathcal{B}(v) = (\mu_v, \sigma_v^2, N_v)$, where $\mu_v$ represents the expected net score spread margin, $\sigma_v^2$ is the empirical variance, and $N_v$ is the effective visit count. Nodes are stored in a 16,384-bucket open-addressing hash table indexed by 64-bit Zobrist hashes.
+            </p>
+
+            <h3 id="7-dirtyqueue-bellman-relaxation">3.7 Prioritized DirtyQueue Bellman Relaxation</h3>
+            <p>
+                When leaf evaluations or simulations update a node belief, changes propagate backward to ancestor nodes using a binary max-heap prioritized queue (`DirtyQueue`):
+            </p>
+            <div class="math-block">
+                Q(e) = \text{MoveStatic}(e) + \gamma \cdot \Delta_{\text{combined}}(e)
+            </div>
+            <div class="math-block">
+                \mu_v = \max_{e \in \text{OutEdges}(v)} Q(e)
+            </div>
+            <p>
+                If $|\mu_v^{\text{new}} - \mu_v^{\text{old}}| > \epsilon$, all parent nodes are enqueued into the dirty heap. Updates ripple backward in prioritized waves until numerical equilibrium is reached.
+            </p>
+
+            <h3 id="8-2-ply-draw-realization">3.8 2-Ply Realization & Relative Counterplay</h3>
+            <p>
+                Tessera simulates 2-ply realization by pairing candidate plays with immediate turn-2 rack refills sampled from unseen bag tiles, evaluating true realized mobility on the resulting board geometry:
+            </p>
+            <div class="math-block">
+                \Delta_{\text{combined}}(e) = \text{clamp}\left( (\bar{S}_{\text{opp}} - S_{\text{opp}}(e)) + 0.65 \cdot (S_{\text{realized}}(e) - \bar{S}_{\text{realized}}), \, -12.0, \, +12.0 \right)
+            </div>
+
+            <h3 id="9-bayesian-opponent-modeling">3.9 Persistent Bayesian Opponent Modeling</h3>
+            <p>
+                Tessera tracks unigram posterior likelihoods $P(t \in \text{OpponentRack} \mid \mathcal{H})$ for all 27 tile types across the entire match. Plays that score fewer points than available open stems cause the engine to downgrade opponent possession of power tiles (S, Z, X) and elevate stem likelihoods. Tile exchanges escalate weights for burdensome consonants (Q, V, W, J).
+            </p>
+
+            <h3 id="10-the-root-court">3.10 The Root Court Stopping Rule</h3>
+            <p>
+                Stopping deliberation is formulated as a Bayesian hypothesis test rather than a fixed time limit:
+            </p>
+            <div class="math-block">
+                H_0: m^* = \arg\max_m Q(m) \text{ is the mathematically optimal move}
+            </div>
+            <p>
+                By drawing 1,000 joint posterior Gaussian samples, when $P(m^* \text{ is best}) \ge 98.0\%$, deliberation terminates immediately.
+            </p>
+
+            <h3 id="11-exact-endgame-solver">3.11 Exact Transposition Endgame Solver</h3>
+            <p>
+                When the bag is empty and the opponent holds $\le 7$ unseen tiles, Scrabble transitions into a deterministic perfect-information game. Tessera solves complete 8-ply endgames in under 1.5 milliseconds using an exact Negamax solver over a 32,768-entry Zobrist transposition table with depth-indexed static memory pools.
+            </p>
+
+            <h3 id="12-the-palimpsest">3.12 The Palimpsest (Online Meta-Learning)</h3>
+            <p>
+                The Palimpsest maintains conjugate Normal-Normal posterior distributions $\mathcal{N}(\mu_c, \sigma_c^2)$ over evaluation errors indexed by board topology classes, updating correction factors in closed mathematical form without requiring retraining.
+            </p>
+
+            <!-- SECTION 4: COMPILING & INSTALLATION -->
+            <h2 id="compiling--installation">Compiling & Installation</h2>
+            <p>
+                Tessera builds cleanly on standard POSIX environments (Linux, macOS) and Windows with GCC, Clang, or Zig. Zero external libraries are required.
+            </p>
+            <pre><code># 1. Clone repository
 git clone https://github.com/harshitkhandelwal208/tessera.git
 cd tessera
 
-# Compile high-performance engine target
+# 2. Build optimized engine
+make clean
 make -j$(nproc)
 
-# Run verification suite (DAWG, movegen, NNUE, DAG lattice, endgame solver)
+# 3. Run test suite
 make test
 
-# Launch an autonomous AI vs AI demonstration match
-./tessera ai-vs-ai</code></pre>
-                </div>
-            </div>
-        </section>
-    </div>
+# 4. Run benchmarks
+./tessera bench</code></pre>
 
-    <!-- TAB 2: DISTRIBUTED TESTING & TRAINING NETWORK -->
-    <div id="tab-testing" class="tab-content">
-        <section class="section">
-            <div class="container">
-                <div class="section-header">
-                    <span class="section-tag">Tessera-Test</span>
-                    <h2 class="section-title">Distributed Testing & Training Network</h2>
-                    <p class="section-subtitle">
-                        Tessera-Test empowers community volunteers to donate spare CPU cores to train the dual-headed neural network and validate search/evaluation patches via Sequential Probability Ratio Tests (SPRT).
-                    </p>
-                </div>
-
-                <!-- Live Network Stats Banner -->
-                <div class="testing-banner">
-                    <div class="testing-info">
-                        <h3>🌐 Global Worker Fleet Status</h3>
-                        <p>Self-play training game generation and SPRT patch regression tests are running live across volunteer nodes worldwide.</p>
-                    </div>
-                    <div class="testing-stats-bar">
-                        <div class="stat-item">
-                            <span class="stat-num" id="live-workers">28</span>
-                            <span class="stat-lbl">Active Workers</span>
-                        </div>
-                        <div class="stat-item">
-                            <span class="stat-num" id="live-cores">184</span>
-                            <span class="stat-lbl">CPU Cores</span>
-                        </div>
-                        <div class="stat-item">
-                            <span class="stat-num" id="live-gps">540.2</span>
-                            <span class="stat-lbl">Games / Min</span>
-                        </div>
-                        <div class="stat-item">
-                            <span class="stat-num" id="live-total">642,890</span>
-                            <span class="stat-lbl">Total Games</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Active Test Queue -->
-                <h3 style="margin-bottom: 16px; font-size: 20px;">Active SPRT Regression & Training Tasks</h3>
-                <div class="table-wrap">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Test Run / Branch</th>
-                                <th>Author</th>
-                                <th>SPRT Bounds</th>
-                                <th>Progress / Games</th>
-                                <th>LLR [-2.94, +2.94]</th>
-                                <th>Status</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <td>
-                                    <strong>nnue-head2-tuning-v1.4</strong><br>
-                                    <small style="color:var(--text-muted)">Tune win-probability sigmoid scalar weight</small>
-                                </td>
-                                <td>harshitkhandelwal208</td>
-                                <td>[0.0, 5.0] Elo</td>
-                                <td>
-                                    40,000 / 40,000 (100%)
-                                    <div class="progress-bar-bg"><div class="progress-fill" style="width: 100%;"></div></div>
-                                </td>
-                                <td><span style="color:var(--accent-emerald); font-family:var(--font-mono); font-weight:700;">+2.97</span></td>
-                                <td><span class="badge badge-passed">PASSED (+8.4 Elo)</span></td>
-                            </tr>
-                            <tr>
-                                <td>
-                                    <strong>bellman-relaxation-gamma</strong><br>
-                                    <small style="color:var(--text-muted)">Test gamma discount factor 0.35 -> 0.40</small>
-                                </td>
-                                <td>prem-ashley</td>
-                                <td>[-1.0, 4.0] Elo</td>
-                                <td>
-                                    26,450 / 40,000 (66.1%)
-                                    <div class="progress-bar-bg"><div class="progress-fill" style="width: 66.1%;"></div></div>
-                                </td>
-                                <td><span style="color:var(--accent-cyan); font-family:var(--font-mono); font-weight:700;">+1.42</span></td>
-                                <td><span class="badge badge-running">RUNNING</span></td>
-                            </tr>
-                            <tr>
-                                <td>
-                                    <strong>leave-vowel-decay-0.35</strong><br>
-                                    <small style="color:var(--text-muted)">Steeper exponential penalty for holding 4+ vowels</small>
-                                </td>
-                                <td>aaryan-crce</td>
-                                <td>[0.0, 5.0] Elo</td>
-                                <td>
-                                    40,000 / 40,000 (100%)
-                                    <div class="progress-bar-bg"><div class="progress-fill" style="width: 100%;"></div></div>
-                                </td>
-                                <td><span style="color:var(--accent-emerald); font-family:var(--font-mono); font-weight:700;">+3.02</span></td>
-                                <td><span class="badge badge-passed">PASSED (+11.2 Elo)</span></td>
-                            </tr>
-                            <tr>
-                                <td>
-                                    <strong>greedy-pre-sort-pruning</strong><br>
-                                    <small style="color:var(--text-muted)">Prune sub-10pt plays when rack contains blank</small>
-                                </td>
-                                <td>volunteer-contrib</td>
-                                <td>[0.0, 5.0] Elo</td>
-                                <td>
-                                    14,200 / 40,000 (35.5%)
-                                    <div class="progress-bar-bg"><div class="progress-fill" style="width: 35.5%; background: var(--accent-rose);"></div></div>
-                                </td>
-                                <td><span style="color:var(--accent-rose); font-family:var(--font-mono); font-weight:700;">-2.96</span></td>
-                                <td><span class="badge badge-rejected">REJECTED (-14.1 Elo)</span></td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-
-                <!-- How to Contribute Guide -->
-                <div class="wiki-article" style="margin-top: 40px;">
-                    <h2>How to Contribute Your Compute</h2>
-                    <p>
-                        Contributing to Tessera is completely decentralized and lightweight. Simply run our standalone Python worker script. The client will utilize your idle CPU cores to simulate games or verify candidate patches, periodically reporting results back to the community ledger.
-                    </p>
-
-                    <h3>Option 1: One-Line Community Worker Command</h3>
-                    <div class="code-box">
-                        <button class="copy-btn" onclick="copyCode('worker-cmd')">Copy</button>
-                        <pre id="worker-cmd"><code># Download and execute the Tessera-Test worker client
-curl -sSL https://harshitkhandelwal208.github.io/tessera/worker.py -o worker.py
-python3 worker.py --concurrency 4 --user "YourName"</code></pre>
-                    </div>
-
-                    <h3>Option 2: Direct Worker Script Download</h3>
-                    <p>You can also download <code>worker.py</code> directly, inspect the source, and run it with custom flags:</p>
-                    <div style="margin: 20px 0;">
-                        <a href="worker.py" download="worker.py" class="btn btn-primary">Download worker.py (Standalone Python 3)</a>
-                    </div>
-
-                    <h3>Command-Line Worker Options</h3>
-                    <ul>
-                        <li><code>--user &lt;handle&gt;</code>: Sets your contributor name for the leaderboard.</li>
-                        <li><code>--concurrency &lt;N&gt;</code>: Number of parallel simulation threads (defaults to all CPU cores minus one).</li>
-                        <li><code>--mode selfplay</code>: Generates continuous self-play games for training the 448-dim NNUE.</li>
-                        <li><code>--mode sprt --games 70</code>: Runs a Sequential Probability Ratio Test against championship bots.</li>
-                        <li><code>--mode bench</code>: Runs a local move generation throughput and DAG simulation benchmark.</li>
-                    </ul>
-
-                    <h3>Submitting an Engine Patch for Testing</h3>
-                    <ol>
-                        <li>Fork the official repository on GitHub: <code>https://github.com/harshitkhandelwal208/tessera</code>.</li>
-                        <li>Create a feature branch and implement your evaluation, search, or movegen modification.</li>
-                        <li>Ensure all tests pass cleanly via <code>make test</code>.</li>
-                        <li>Submit a Pull Request labeled <code>sprt-request</code> specifying candidate bounds (e.g. <code>[0.0, 5.0]</code> Elo). The coordinator will dispatch the patch to the volunteer worker fleet!</li>
-                    </ol>
-                </div>
-            </div>
-        </section>
-    </div>
-
-    <!-- TAB 3: WIKI & DOCUMENTATION -->
-    <div id="tab-wiki" class="tab-content">
-        <section class="section">
-            <div class="container">
-                <div class="wiki-layout">
-                    <!-- Wiki Sidebar -->
-                    <div class="wiki-sidebar">
-                        <h4>Technical Reference</h4>
-                        <ul class="wiki-nav-list">
-                            <li class="wiki-nav-item"><a class="active" onclick="switchWiki('wiki-foundations')">1. Foundations & Tree Elimination</a></li>
-                            <li class="wiki-nav-item"><a onclick="switchWiki('wiki-lexicon')">2. Lexicon & DAWG Compression</a></li>
-                            <li class="wiki-nav-item"><a onclick="switchWiki('wiki-movegen')">3. Appel-Jacobson Movegen</a></li>
-                            <li class="wiki-nav-item"><a onclick="switchWiki('wiki-eval')">4. Dual-Accumulator Evaluator</a></li>
-                            <li class="wiki-nav-item"><a onclick="switchWiki('wiki-nnue')">5. Dual-Headed NNUE</a></li>
-                            <li class="wiki-nav-item"><a onclick="switchWiki('wiki-lattice')">6. Belief Lattice (DAG Search)</a></li>
-                            <li class="wiki-nav-item"><a onclick="switchWiki('wiki-settle')">7. DirtyQueue Bellman Relaxation</a></li>
-                            <li class="wiki-nav-item"><a onclick="switchWiki('wiki-realization')">8. 2-Ply Realization & Rollout</a></li>
-                            <li class="wiki-nav-item"><a onclick="switchWiki('wiki-bayes')">9. Bayesian Opponent Modeling</a></li>
-                            <li class="wiki-nav-item"><a onclick="switchWiki('wiki-court')">10. Thompson Root Court</a></li>
-                            <li class="wiki-nav-item"><a onclick="switchWiki('wiki-endgame')">11. Exact Transposition Endgame</a></li>
-                            <li class="wiki-nav-item"><a onclick="switchWiki('wiki-palimpsest')">12. Meta-Learning (Palimpsest)</a></li>
-                            <li class="wiki-nav-item"><a onclick="switchWiki('wiki-protocol')">13. Protocol & Engine Interface</a></li>
-                            <li class="wiki-nav-item"><a onclick="switchWiki('wiki-sprt')">14. SPRT Statistical Testing</a></li>
-                        </ul>
-                    </div>
-
-                    <!-- Wiki Content Area -->
-                    <div class="wiki-article">
-                        <!-- 1. Foundations -->
-                        <div id="wiki-foundations" class="wiki-section">
-                            <h2>1. Theoretical Foundations: Eliminating Game Trees</h2>
-                            <p>
-                                In deterministic games with perfect information (Chess, Checkers, Go), game-tree search via Alpha-Beta minimax or Monte Carlo Tree Search (MCTS) has been the dominant paradigm for decades. However, Scrabble is an <strong>imperfect-information, stochastic tile-drawing game</strong> with severe asymmetric state spaces.
-                            </p>
-                            <p>
-                                Traditional tournament engines (Quackle, Maven) attempt to apply minimax or flat simulation over search trees. This approach suffers from two fundamental theoretical failures:
-                            </p>
-                            <ul>
-                                <li><strong>Combinatorial Path Explosion:</strong> The exact same board topology can be reached through tens of thousands of differing move permutations. A tree search treats each path as an isolated state, duplicating evaluation work exponentially.</li>
-                                <li><strong>Path-Dependent Belief Distortion:</strong> In an imperfect-information game, beliefs over tile probabilities must belong to the physical board position and the historical trajectory, not an arbitrary tree branch.</li>
-                            </ul>
-                            <p>
-                                <strong>Tessera completely eliminates search trees.</strong> Instead, all search occurs over a <strong>100% position-keyed Directed Acyclic Graph (Belief Lattice)</strong> indexed by 64-bit Zobrist hashes. Transpositions merge by mathematical construction.
-                            </p>
-                        </div>
-
-                        <!-- 2. Lexicon -->
-                        <div id="wiki-lexicon" class="wiki-section" style="display:none;">
-                            <h2>2. Lexicon & Minimal DAWG Compression</h2>
-                            <p>
-                                Tournament Scrabble requires instant validation and prefix lookup over massive word lists. Tessera utilizes the complete <strong>SOWPODS 2019 lexicon (267,751 words)</strong>, compressed into a <strong>Minimal Directed Acyclic Word Graph (DAWG)</strong> containing only <strong>185,702 edges</strong>.
-                            </p>
-                            <h3>4-Byte Packed Edge Binary Layout</h3>
-                            <p>Each edge in the graph is represented in a single 32-bit unsigned integer (`uint32_t`), eliminating 64-bit pointer overhead and cache-line fragmentation:</p>
-                            <div class="formula-card">
-                                Bit 0..23 (24 bits): Child Edge Array Index (up to 16,777,216 nodes)<br>
-                                Bit 24..28 (5 bits): Character code (A=0 ... Z=25)<br>
-                                Bit 29 (1 bit):      End of Word Flag (1 if edge completes valid word)<br>
-                                Bit 30 (1 bit):      End of Node Flag (1 if final sibling edge in node)
-                            </div>
-                            <p>
-                                The compiled binary DAWG (<code>data/dawg.bin</code>) is strictly <strong>742 KB</strong> in size and is loaded via zero-copy direct memory read in <strong>0.0001 seconds</strong>.
-                            </p>
-                        </div>
-
-                        <!-- 3. Movegen -->
-                        <div id="wiki-movegen" class="wiki-section" style="display:none;">
-                            <h2>3. Appel-Jacobson High-Throughput Move Generation</h2>
-                            <p>
-                                Tessera implements the Appel & Jacobson (1988) generation algorithm augmented with precomputed 32-bit bitmasks, reaching sustained throughput exceeding <strong>1,308,000 legal moves per second</strong>.
-                            </p>
-                            <h3>Cross-Check Bitmasks</h3>
-                            <p>
-                                Before traversing rows, Tessera precalculates 32-bit cross-check masks for every empty square adjacent to existing letters. If placing letter $c \in \{A..Z\}$ would form an invalid orthogonal cross-word, bit $(c - 'A')$ is cleared to 0. During recursive anchor traversal, legal placement is verified with a single CPU bitwise AND operation:
-                            </p>
-                            <div class="formula-card">
-                                is_legal(tile) = (cross_check_mask[row][col] & (1U << (tile - 'A'))) != 0
-                            </div>
-                            <p>
-                                Vertical move generation uses a transposed board representation, allowing the exact same contiguous row-traversal cache lines to be utilized for column word plays without code duplication.
-                            </p>
-                            <h3>Zero-Allocation In-Register Counterplay</h3>
-                            <p>
-                                <code>movegen_find_best_response_equity()</code> traverses the DAWG while keeping candidate move scores directly inside CPU registers, achieving zero heap allocations on the hot path.
-                            </p>
-                        </div>
-
-                        <!-- 4. Dual-Accumulator Evaluator -->
-                        <div id="wiki-eval" class="wiki-section" style="display:none;">
-                            <h2>4. Dual-Accumulator Static Evaluator & 8 Game Phases</h2>
-                            <p>
-                                Move evaluation decouples the on-board positional gain from the off-board rack leave potential, parameterized across 8 discrete game phases determined by remaining bag tiles:
-                            </p>
-                            <div class="formula-card">
-                                TotalEquity(Move) = BoardScore(Move) + LeaveEquity(Rack \ Move)
-                            </div>
-                            <h3>8 Phase Buckets</h3>
-                            <ul>
-                                <li><strong>Opening [80-100 tiles]:</strong> Premium on open stem mobility and balance.</li>
-                                <li><strong>Early Midgame [60-79 tiles]:</strong> Controlled board opening and vowel management.</li>
-                                <li><strong>Core Midgame [40-59 tiles]:</strong> Maximum scoring tempo with defensive lane closure.</li>
-                                <li><strong>Late Midgame [20-39 tiles]:</strong> Stem retention and tracking opponent counterplay.</li>
-                                <li><strong>Pre-Endgame [10-19 tiles]:</strong> Power tile shedding (Q, Z, X) to prevent stuck penalties.</li>
-                                <li><strong>Exhaustion [1-9 tiles]:</strong> Bag-runout defense and initiative conservation.</li>
-                                <li><strong>Endgame [0 tiles]:</strong> Exact deterministic outplay calculation.</li>
-                            </ul>
-                            <h3>Pairwise Synergy & Super-Leave Stems</h3>
-                            <p>
-                                The rack leave accumulator evaluates a full $27 \times 27$ synergy matrix, penalizing unplayable duplicates (`VV` -36.0, `WW` -20.0, `FF` -18.0) while boosting championship bingo leaves (`SATINE`, `RETINA`, `TISANE`, `AETINS`, `RETAINS`) with bonuses up to +30.5 pts.
-                            </p>
-                        </div>
-
-                        <!-- 5. NNUE -->
-                        <div id="wiki-nnue" class="wiki-section" style="display:none;">
-                            <h2>5. Deep Dual-Headed NNUE Architecture</h2>
-                            <p>
-                                Tessera employs an Efficiently Updatable Neural Network (NNUE) designed for non-uniform imperfect-information tile dynamics.
-                            </p>
-                            <h3>Topology: 448 -> 128 -> 32 -> 2</h3>
-                            <div class="formula-card">
-                                Layer 1: 448 inputs -> 128 hidden neurons [Linear + ClippedReLU]<br>
-                                Layer 2: 128 inputs -> 32 hidden neurons  [Linear + ClippedReLU]<br>
-                                Dual Head 1: 32 -> 1 Linear Head => Net Score Margin Spread (±50 pts)<br>
-                                Dual Head 2: 32 -> 1 Sigmoid Head => Win Probability P(Win) ∈ [0, 1]
-                            </div>
-                            <p>
-                                In standard x86-64 environments, inner loops execute via 256-bit AVX2 Fused Multiply-Add instructions (<code>_mm256_fmadd_ps</code>). A portable scalar fallback is automatically activated on ARM64 and non-AVX2 hosts.
-                            </p>
-                            <h3>Hybrid Grandmaster Ensemble</h3>
-                            <p>
-                                The static engine combines 50% hand-crafted leave tables with 50% deep neural network predictions, capturing both discrete tactical rules and smooth non-linear positional factors.
-                            </p>
-                        </div>
-
-                        <!-- 6. Belief Lattice -->
-                        <div id="wiki-lattice" class="wiki-section" style="display:none;">
-                            <h2>6. Belief Lattice DAG (Zero Trees)</h2>
-                            <p>
-                                The core search space is an open-addressing hash table of 16,384 buckets holding position-keyed DAG nodes. Transpositions merge 100% by mathematical construction.
-                            </p>
-                            <h3>Node Belief Representation</h3>
-                            <div class="formula-card">
-                                B(v) = (μ_v, σ²_v, N_v)<br>
-                                μ_v: Expected score spread margin<br>
-                                σ²_v: Empirical variance of belief<br>
-                                N_v: Effective visit / simulation count
-                            </div>
-                        </div>
-
-                        <!-- 7. DirtyQueue Bellman Settle -->
-                        <div id="wiki-settle" class="wiki-section" style="display:none;">
-                            <h2>7. Prioritized DirtyQueue Bellman Relaxation</h2>
-                            <p>
-                                When leaf evaluations or rollouts update node beliefs, new values propagate backward to ancestors using a binary max-heap prioritized queue:
-                            </p>
-                            <div class="formula-card">
-                                Q(e) = MoveStatic(e) + γ · Δ_combined(e)<br>
-                                μ_v = max_{e ∈ OutEdges(v)} Q(e)
-                            </div>
-                            <p>
-                                If $|\mu_v^{new} - \mu_v^{old}| > \epsilon$, all parent nodes are enqueued into the dirty heap. Updates ripple backward in prioritized waves until full equilibrium is achieved.
-                            </p>
-                        </div>
-
-                        <!-- 8. Realization -->
-                        <div id="wiki-realization" class="wiki-section" style="display:none;">
-                            <h2>8. 2-Ply Realization & Relative Counterplay</h2>
-                            <p>
-                                Static leave heuristics assume a player will draw favorable tiles in a vacuum. Tessera pairs Monte Carlo deliberation with <strong>turn-2 draw realization</strong> against the live bag:
-                            </p>
-                            <div class="formula-card">
-                                Δ_combined(e) = clamp( (S_opp_mean - S_opp(e)) + 0.65 · (S_realized(e) - S_realized_mean), -12.0, +12.0 )
-                            </div>
-                            <p>
-                                Candidate plays are simulated against opponent replies and immediate rack refills, measuring actual realized board mobility rather than theoretical potentials.
-                            </p>
-                        </div>
-
-                        <!-- 9. Bayesian Opponent Modeling -->
-                        <div id="wiki-bayes" class="wiki-section" style="display:none;">
-                            <h2>9. Persistent Bayesian Opponent Rack Modeling</h2>
-                            <p>
-                                Tessera maintains dynamic unigram posterior likelihoods $P(t \in \text{OpponentRack} \mid \mathcal{H})$ across the entire match. Plays that score fewer points than available open stems cause the engine to downgrade opponent possession of power tiles (S, Z, X) and elevate stem likelihoods. Tile exchanges escalate weights for burdensome consonants (Q, V, W, J).
-                            </p>
-                        </div>
-
-                        <!-- 10. Root Court -->
-                        <div id="wiki-court" class="wiki-section" style="display:none;">
-                            <h2>10. The Root Court: Thompson Posterior Sampling</h2>
-                            <p>
-                                Stopping deliberation is formulated as a rigorous Bayesian hypothesis test rather than a fixed depth or clock allocation:
-                            </p>
-                            <div class="formula-card">
-                                H_0: m* = argmax_m Q(m) is the mathematically optimal move
-                            </div>
-                            <p>
-                                Drawing 1,000 joint posterior Gaussian samples, when $P(m^* \text{ is best}) \ge 98.0\%$, the search terminates immediately, saving critical clock time for complex midgame complications.
-                            </p>
-                        </div>
-
-                        <!-- 11. Endgame Solver -->
-                        <div id="wiki-endgame" class="wiki-section" style="display:none;">
-                            <h2>11. Exact Transposition DAG Endgame Solver</h2>
-                            <p>
-                                When the tile bag is empty and the opponent holds $\le 7$ tiles, all remaining tile identities are known with 100% certainty. Tessera activates an exact negamax solver over a 32,768-entry Zobrist transposition table with depth-indexed static move pools. Complete 8-ply endgames are solved in under <strong>1.5 milliseconds</strong>.
-                            </p>
-                            <div class="formula-card">
-                                Terminal Margin = 2 × Σ_{t ∈ OpponentRack} TileValue(t)
-                            </div>
-                        </div>
-
-                        <!-- 12. Palimpsest -->
-                        <div id="wiki-palimpsest" class="wiki-section" style="display:none;">
-                            <h2>12. Online Meta-Evaluation (The Palimpsest)</h2>
-                            <p>
-                                The Palimpsest maintains conjugate Normal-Normal posterior distributions $\mathcal{N}(\mu_c, \sigma_c^2)$ over evaluation errors indexed by board topology classes. When lattice settling reveals divergence from static priors, correction factors are updated in closed mathematical form without requiring network retraining.
-                            </p>
-                        </div>
-
-                        <!-- 13. Protocol API -->
-                        <div id="wiki-protocol" class="wiki-section" style="display:none;">
-                            <h2>13. Engine Protocol Specification</h2>
-                            <p>Tessera provides a clean CLI and JSON protocol for interfacing with tournament harnesses, bots, and GUIs:</p>
-                            <div class="code-box">
-                                <pre><code># Commands supported:
-./tessera play         # Interactive terminal human vs AI game
-./tessera ai-vs-ai     # Autonomous match simulation
-./tessera bench        # Movegen and deliberation benchmark
-./tessera test         # Subsystem regression test suite</code></pre>
-                            </div>
-                        </div>
-
-                        <!-- 14. SPRT Testing -->
-                        <div id="wiki-sprt" class="wiki-section" style="display:none;">
-                            <h2>14. SPRT Statistical Testing Methodology</h2>
-                            <p>
-                                Tessera uses Wald's Sequential Probability Ratio Test (SPRT) to accept or reject engine patches with statistical significance:
-                            </p>
-                            <div class="formula-card">
-                                H_0: Elo ≤ Elo_0 (e.g. 0.0 Elo)<br>
-                                H_1: Elo ≥ Elo_1 (e.g. +5.0 Elo)<br>
-                                LLR = Σ ln( P(outcome | H_1) / P(outcome | H_0) )
-                            </div>
-                            <p>
-                                With standard Type I and Type II error rates ($\alpha = 0.05, \beta = 0.05$), testing halts as soon as LLR crosses the upper boundary ($\ge +2.94$, accepted) or lower boundary ($\le -2.94$, rejected).
-                            </p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
-    </div>
-
-    <!-- TAB 4: CONTRIBUTING GUIDE -->
-    <div id="tab-contributing" class="tab-content">
-        <section class="section">
-            <div class="container">
-                <div class="section-header">
-                    <span class="section-tag">Open Source</span>
-                    <h2 class="section-title">Contributing Guidelines</h2>
-                    <p class="section-subtitle">
-                        Like Stockfish and Reckless, Tessera follows a strict, data-driven development workflow where every code modification is evaluated through rigorous benchmarking and statistical testing.
-                    </p>
-                </div>
-
-                <div class="wiki-article" style="margin-bottom: 30px;">
-                    <h2>Core Development Tenets</h2>
-                    <ul>
-                        <li><strong>Standard ISO C11:</strong> All code must strictly conform to ISO C11 with zero external dependencies. Clean compilation with <code>-std=c11 -Wall -Wextra</code>.</li>
-                        <li><strong>Zero Dynamic Allocations on Hot Paths:</strong> Search, move generation, and evaluation routines must perform zero heap allocations (<code>malloc</code>/<code>free</code>) during deliberation.</li>
-                        <li><strong>Portability:</strong> Architecture-specific optimizations (AVX2 SIMD) must always include clean, portable scalar fallbacks for ARM64 and legacy platforms.</li>
-                        <li><strong>Statistical Proof:</strong> Any functional change to search or evaluation must prove its strength via SPRT testing or tournament matrix evaluation.</li>
-                    </ul>
-
-                    <h3>Testing Your Changes</h3>
-                    <div class="code-box">
-                        <button class="copy-btn" onclick="copyCode('contrib-test-cmd')">Copy</button>
-                        <pre id="contrib-test-cmd"><code># 1. Run unit test suite
-make clean && make -j$(nproc) && make test
-
-# 2. Verify throughput and bench signature
-./tessera bench
-
-# 3. Benchmark against 7-bot tournament field
-make tools/match_benchmark && ./tools/match_benchmark 10
-
-# 4. Run SPRT test via community worker
-python3 worker.py --mode sprt --games 70</code></pre>
-                    </div>
-
-                    <h3>Functional vs. Non-Functional Modifications</h3>
-                    <p>
-                        <strong>Functional Changes:</strong> Modifications that alter move decisions, leave weights, pruning thresholds, or neural network weights must be submitted with an SPRT request (typically $[0.0, 5.0]$ Elo).
-                    </p>
-                    <p>
-                        <strong>Non-Functional Changes:</strong> Code cleanups and refactorings must produce the exact same move count and bench signature on test positions and must not introduce speed regressions.
-                    </p>
-
-                    <h3>Submitting a Pull Request</h3>
-                    <ol>
-                        <li>Fork the repository on GitHub.</li>
-                        <li>Create a clean feature branch: <code>git checkout -b feat/my-improvement</code>.</li>
-                        <li>Follow semantic commit messages: <code>feat:</code>, <code>fix:</code>, <code>perf:</code>, <code>refactor:</code>, <code>docs:</code>, <code>test:</code>.</li>
-                        <li>Ensure <code>make test</code> passes cleanly with zero warnings.</li>
-                        <li>Open a Pull Request with benchmark numbers and rationale attached.</li>
-                    </ol>
-                </div>
-            </div>
-        </section>
-    </div>
-
-    <!-- TAB 5: DOWNLOADS -->
-    <div id="tab-downloads" class="tab-content">
-        <section class="section">
-            <div class="container">
-                <div class="section-header">
-                    <span class="section-tag">Release v1.0.0</span>
-                    <h2 class="section-title">Precompiled Tournament Binaries</h2>
-                    <p class="section-subtitle">
-                        Every distribution package contains the optimized native C11 executable, compiled binary SOWPODS DAWG (<code>data/dawg.bin</code>), neural network weights (<code>data/nnue.bin</code>), and complete documentation.
-                    </p>
-                </div>
-
-                <div class="download-grid">
-                    <!-- Linux x86-64 -->
-                    <div class="dl-card">
-                        <div>
-                            <div class="dl-platform">
-                                <h3>Linux x86-64</h3>
-                                <span class="dl-platform-icon">🐧</span>
-                            </div>
-                            <div class="dl-meta">
-                                <strong>Archive:</strong> <code>tessera-v1.0.0-linux-x86_64.tar.gz</code><br>
-                                <strong>Size:</strong> 1.41 MB<br>
-                                <strong>Optimization:</strong> Native AVX2 Vector SIMD + LTO<br>
-                                <strong>Compatibility:</strong> Ubuntu 20.04+, Debian 11+, Fedora, Arch, RHEL
-                            </div>
-                        </div>
-                        <a href="https://github.com/harshitkhandelwal208/tessera/releases/download/v1.0.0/tessera-v1.0.0-linux-x86_64.tar.gz" class="dl-btn">Download for Linux (x86-64) ⬇</a>
-                    </div>
-
-                    <!-- Linux ARM64 -->
-                    <div class="dl-card">
-                        <div>
-                            <div class="dl-platform">
-                                <h3>Linux ARM64</h3>
-                                <span class="dl-platform-icon">🦾</span>
-                            </div>
-                            <div class="dl-meta">
-                                <strong>Archive:</strong> <code>tessera-v1.0.0-linux-arm64.tar.gz</code><br>
-                                <strong>Size:</strong> 1.88 MB<br>
-                                <strong>Optimization:</strong> aarch64 native ELF + SIMD fallback<br>
-                                <strong>Compatibility:</strong> Raspberry Pi 4/5, AWS Graviton, Ampere, Oracle ARM
-                            </div>
-                        </div>
-                        <a href="https://github.com/harshitkhandelwal208/tessera/releases/download/v1.0.0/tessera-v1.0.0-linux-arm64.tar.gz" class="dl-btn">Download for Linux (ARM64) ⬇</a>
-                    </div>
-
-                    <!-- Windows x86-64 -->
-                    <div class="dl-card">
-                        <div>
-                            <div class="dl-platform">
-                                <h3>Windows 64-bit</h3>
-                                <span class="dl-platform-icon">🪟</span>
-                            </div>
-                            <div class="dl-meta">
-                                <strong>Archive:</strong> <code>tessera-v1.0.0-windows-x86_64.zip</code><br>
-                                <strong>Size:</strong> 1.50 MB<br>
-                                <strong>Optimization:</strong> PE32+ Windows x86-64 executable<br>
-                                <strong>Compatibility:</strong> Windows 10 & 11 (64-bit)
-                            </div>
-                        </div>
-                        <a href="https://github.com/harshitkhandelwal208/tessera/releases/download/v1.0.0/tessera-v1.0.0-windows-x86_64.zip" class="dl-btn">Download for Windows (.zip) ⬇</a>
-                    </div>
-
-                    <!-- macOS Apple Silicon -->
-                    <div class="dl-card">
-                        <div>
-                            <div class="dl-platform">
-                                <h3>macOS Apple Silicon</h3>
-                                <span class="dl-platform-icon">🍎</span>
-                            </div>
-                            <div class="dl-meta">
-                                <strong>Archive:</strong> <code>tessera-v1.0.0-macos-arm64.tar.gz</code><br>
-                                <strong>Size:</strong> 1.39 MB<br>
-                                <strong>Optimization:</strong> Mach-O 64-bit arm64 native<br>
-                                <strong>Compatibility:</strong> Apple M1, M2, M3, M4 Macs (macOS 11+)
-                            </div>
-                        </div>
-                        <a href="https://github.com/harshitkhandelwal208/tessera/releases/download/v1.0.0/tessera-v1.0.0-macos-arm64.tar.gz" class="dl-btn">Download for macOS (Apple Silicon) ⬇</a>
-                    </div>
-
-                    <!-- macOS Intel -->
-                    <div class="dl-card">
-                        <div>
-                            <div class="dl-platform">
-                                <h3>macOS Intel</h3>
-                                <span class="dl-platform-icon">💻</span>
-                            </div>
-                            <div class="dl-meta">
-                                <strong>Archive:</strong> <code>tessera-v1.0.0-macos-x86_64.tar.gz</code><br>
-                                <strong>Size:</strong> 1.39 MB<br>
-                                <strong>Optimization:</strong> Mach-O 64-bit x86-64<br>
-                                <strong>Compatibility:</strong> Intel-based MacBooks and iMacs (macOS 10.15+)
-                            </div>
-                        </div>
-                        <a href="https://github.com/harshitkhandelwal208/tessera/releases/download/v1.0.0/tessera-v1.0.0-macos-x86_64.tar.gz" class="dl-btn">Download for macOS (Intel) ⬇</a>
-                    </div>
-
-                    <!-- Source Archives -->
-                    <div class="dl-card">
-                        <div>
-                            <div class="dl-platform">
-                                <h3>Full Source Code</h3>
-                                <span class="dl-platform-icon">📦</span>
-                            </div>
-                            <div class="dl-meta">
-                                <strong>Archive:</strong> <code>tessera-v1.0.0-source.tar.gz</code> / <code>.zip</code><br>
-                                <strong>Size:</strong> 2.17 MB / 2.18 MB<br>
-                                <strong>Content:</strong> Complete C11 source tree, SOWPODS dictionary, tests, tools<br>
-                                <strong>License:</strong> MIT Open Source License
-                            </div>
-                        </div>
-                        <div style="display:flex; gap:10px;">
-                            <a href="https://github.com/harshitkhandelwal208/tessera/releases/download/v1.0.0/tessera-v1.0.0-source.tar.gz" class="dl-btn" style="flex:1;">.tar.gz</a>
-                            <a href="https://github.com/harshitkhandelwal208/tessera/releases/download/v1.0.0/tessera-v1.0.0-source.zip" class="dl-btn" style="flex:1;">.zip</a>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
-    </div>
-
-    <!-- TAB 6: BENCHMARKS -->
-    <div id="tab-benchmarks" class="tab-content">
-        <section class="section">
-            <div class="container">
-                <div class="section-header">
-                    <span class="section-tag">Empirical Evaluation</span>
-                    <h2 class="section-title">7-Bot Tournament Benchmark Matrix</h2>
-                    <p class="section-subtitle">
-                        Tessera was benchmarked across a 70-game round-robin tournament against 7 championship engine archetypes with alternating first-move initiative and tournament clock constraints.
-                    </p>
-                </div>
-
-                <div class="table-wrap">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Opponent Archetype</th>
-                                <th>Est. Elo</th>
-                                <th>Record</th>
-                                <th>Win %</th>
-                                <th>Net Spread</th>
-                                <th>Tessera Average</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <td><strong>1. Baseline Greedy (1-Ply Score)</strong></td>
-                                <td>1550</td>
-                                <td>7 - 3 - 0</td>
-                                <td><span class="badge badge-passed">70.0%</span></td>
-                                <td><strong style="color:var(--accent-emerald);">+27.2 pts</strong></td>
-                                <td>443.7 pts</td>
-                            </tr>
-                            <tr>
-                                <td><strong>2. Defensive Turtler (Risk Minimizer)</strong></td>
-                                <td>1650</td>
-                                <td>10 - 0 - 0</td>
-                                <td><span class="badge badge-passed">100.0%</span></td>
-                                <td><strong style="color:var(--accent-emerald);">+74.9 pts</strong></td>
-                                <td>477.7 pts</td>
-                            </tr>
-                            <tr>
-                                <td><strong>3. Bingo Hunter (Stem Synergy)</strong></td>
-                                <td>1750</td>
-                                <td>9 - 1 - 0</td>
-                                <td><span class="badge badge-passed">90.0%</span></td>
-                                <td><strong style="color:var(--accent-emerald);">+48.4 pts</strong></td>
-                                <td>470.0 pts</td>
-                            </tr>
-                            <tr>
-                                <td><strong>4. Heuristic Grandmaster (8-Phase)</strong></td>
-                                <td>1850</td>
-                                <td>5 - 5 - 0</td>
-                                <td>50.0%</td>
-                                <td><strong style="color:var(--accent-emerald);">+18.7 pts</strong></td>
-                                <td>431.8 pts</td>
-                            </tr>
-                            <tr>
-                                <td><strong>5. Neural Static (448-dim NNUE 1-Ply)</strong></td>
-                                <td>1950</td>
-                                <td>8 - 2 - 0</td>
-                                <td><span class="badge badge-passed">80.0%</span></td>
-                                <td><strong style="color:var(--accent-emerald);">+60.4 pts</strong></td>
-                                <td>480.9 pts</td>
-                            </tr>
-                            <tr>
-                                <td><strong>6. Championship Simulation (Quackle)</strong></td>
-                                <td>2100</td>
-                                <td>5 - 5 - 0</td>
-                                <td>50.0%</td>
-                                <td><strong style="color:var(--accent-emerald);">+2.0 pts</strong></td>
-                                <td>458.5 pts</td>
-                            </tr>
-                            <tr>
-                                <td><strong>7. MAGPIE / Woogles Champion (2-Ply)</strong></td>
-                                <td>2150</td>
-                                <td>6 - 4 - 0</td>
-                                <td><span class="badge badge-passed">60.0%</span></td>
-                                <td><strong style="color:var(--accent-emerald);">+23.3 pts</strong></td>
-                                <td>458.3 pts</td>
-                            </tr>
-                            <tr style="background: rgba(99, 102, 241, 0.1); font-weight: 700;">
-                                <td><strong>OVERALL TOURNAMENT AGGREGATE</strong></td>
-                                <td><strong>1857</strong></td>
-                                <td><strong>50 - 20 - 0</strong></td>
-                                <td><span class="badge badge-passed" style="font-size:13px;">71.4% (2016 TPR)</span></td>
-                                <td><strong style="color:var(--accent-emerald);">+36.4 pts</strong></td>
-                                <td><strong>460.1 pts</strong></td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </section>
-    </div>
-
-    <!-- Footer -->
-    <footer>
-        <div class="container">
-            <p style="margin-bottom: 8px;">
-                <strong>Tessera Engine Project</strong> — Created by Harshit Khandelwal, Prem, Ashley, and Aaryan.
-            </p>
+            <!-- SECTION 5: DOWNLOADS -->
+            <h2 id="downloads">Downloads & Precompiled Binaries</h2>
             <p>
-                Fr. Conceicao Rodrigues College of Engineering (CRCE), Bandra, Mumbai.<br>
-                Released under the <a href="https://github.com/harshitkhandelwal208/tessera/blob/master/LICENSE" target="_blank">MIT Open Source License</a>.
+                Official precompiled tournament binaries and full source code archives for Release v1.0.0:
             </p>
-        </div>
-    </footer>
+            <table class="wikitable">
+                <thead>
+                    <tr>
+                        <th>Platform / Architecture</th>
+                        <th>Archive</th>
+                        <th>Size</th>
+                        <th>Checksum / Description</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Linux x86-64</strong></td>
+                        <td><a href="https://github.com/harshitkhandelwal208/tessera/releases/download/v1.0.0/tessera-v1.0.0-linux-x86_64.tar.gz">tessera-v1.0.0-linux-x86_64.tar.gz</a></td>
+                        <td>1.41 MB</td>
+                        <td>Native AVX2 optimized Linux ELF executable + weights + DAWG</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Linux ARM64</strong></td>
+                        <td><a href="https://github.com/harshitkhandelwal208/tessera/releases/download/v1.0.0/tessera-v1.0.0-linux-arm64.tar.gz">tessera-v1.0.0-linux-arm64.tar.gz</a></td>
+                        <td>1.88 MB</td>
+                        <td>64-bit aarch64 ELF (Raspberry Pi 4/5, AWS Graviton, Linux ARM)</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Windows 64-bit</strong></td>
+                        <td><a href="https://github.com/harshitkhandelwal208/tessera/releases/download/v1.0.0/tessera-v1.0.0-windows-x86_64.zip">tessera-v1.0.0-windows-x86_64.zip</a></td>
+                        <td>1.50 MB</td>
+                        <td>Native Windows PE32+ <code>tessera.exe</code> + assets</td>
+                    </tr>
+                    <tr>
+                        <td><strong>macOS Apple Silicon</strong></td>
+                        <td><a href="https://github.com/harshitkhandelwal208/tessera/releases/download/v1.0.0/tessera-v1.0.0-macos-arm64.tar.gz">tessera-v1.0.0-macos-arm64.tar.gz</a></td>
+                        <td>1.39 MB</td>
+                        <td>Mach-O arm64 binary for Apple M1/M2/M3/M4 Macs</td>
+                    </tr>
+                    <tr>
+                        <td><strong>macOS Intel</strong></td>
+                        <td><a href="https://github.com/harshitkhandelwal208/tessera/releases/download/v1.0.0/tessera-v1.0.0-macos-x86_64.tar.gz">tessera-v1.0.0-macos-x86_64.tar.gz</a></td>
+                        <td>1.39 MB</td>
+                        <td>Mach-O x86-64 binary for Intel-based Macs</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Source Archive (.tar.gz)</strong></td>
+                        <td><a href="https://github.com/harshitkhandelwal208/tessera/releases/download/v1.0.0/tessera-v1.0.0-source.tar.gz">tessera-v1.0.0-source.tar.gz</a></td>
+                        <td>2.17 MB</td>
+                        <td>Complete C11 source tree, SOWPODS lexicon, and training tooling</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Source Archive (.zip)</strong></td>
+                        <td><a href="https://github.com/harshitkhandelwal208/tessera/releases/download/v1.0.0/tessera-v1.0.0-source.zip">tessera-v1.0.0-source.zip</a></td>
+                        <td>2.18 MB</td>
+                        <td>Complete C11 source tree, SOWPODS lexicon, and training tooling</td>
+                    </tr>
+                </tbody>
+            </table>
 
-    <!-- Interactive Script -->
+            <!-- SECTION 6: DISTRIBUTED TESTING -->
+            <h2 id="distributed-testing">Distributed Testing & Training (Tessera-Test)</h2>
+            <p>
+                Tessera utilizes <strong>Tessera-Test</strong>, a distributed computing framework for continuous self-play neural network training and Sequential Probability Ratio Test (SPRT) patch regression testing across volunteer nodes.
+            </p>
+            <h3 id="worker-manual">Running the Community Worker Client</h3>
+            <p>
+                Anyone can contribute spare CPU cores to train the neural network and test candidate search/eval patches:
+            </p>
+            <pre><code># Download standalone Python 3 worker client
+curl -sSL https://harshitkhandelwal208.github.io/tessera/worker.py -o worker.py
+
+# Run self-play game generator
+python3 worker.py --concurrency 4 --user "YourName"
+
+# Run an SPRT benchmark match
+python3 worker.py --mode sprt --games 70</code></pre>
+            <p>
+                Direct script download: <a href="worker.py" download="worker.py"><code>worker.py</code> (Standalone Python 3)</a>.
+            </p>
+
+            <!-- SECTION 7: CONTRIBUTING -->
+            <h2 id="contributing">Contributing Guidelines</h2>
+            <p>
+                Tessera follows the development standard of modern open-source engines like Stockfish and Reckless:
+            </p>
+            <ul>
+                <li><strong>Functional Changes:</strong> Any modification that alters move selection, evaluation weights, or neural network layers must be validated via an SPRT test (typically bounds $[0.0, 5.0]$ Elo).</li>
+                <li><strong>Non-Functional Simplifications:</strong> Code cleanups and refactorings must preserve the exact same move count and bench signature on test positions and must not introduce speed regressions.</li>
+                <li><strong>Clean Standard C11:</strong> No compiler warnings under <code>-std=c11 -Wall -Wextra</code>. Zero heap allocations on the hot path.</li>
+            </ul>
+            <p>
+                Read the full contributing manual at <a href="https://github.com/harshitkhandelwal208/tessera/blob/master/CONTRIBUTING.md" target="_blank"><code>CONTRIBUTING.md</code></a>.
+            </p>
+
+            <!-- SECTION 8: PROTOCOL -->
+            <h2 id="protocol">Engine Protocol Specification</h2>
+            <p>
+                Tessera supports standard CLI modes for interactive play, autonomous evaluation, and headless protocol communication:
+            </p>
+            <pre><code>./tessera play         # Interactive human vs AI terminal match
+./tessera ai-vs-ai     # Autonomous self-play simulation
+./tessera bench        # High-throughput movegen benchmark
+./tessera test         # Subsystem verification suite</code></pre>
+
+            <!-- SECTION 9: REFERENCES -->
+            <h2 id="references">References</h2>
+            <ol>
+                <li>Appel, A. W., & Jacobson, G. J. (1988). <em>The world's fastest Scrabble program</em>. Communications of the ACM, 31(5), 572-578.</li>
+                <li>Sheppard, B. (2002). <em>World-championship-caliber Scrabble</em>. Artificial Intelligence, 134(1-2), 241-275.</li>
+                <li>Bellman, R. (1957). <em>Dynamic Programming</em>. Princeton University Press.</li>
+                <li>Wald, A. (1945). <em>Sequential tests of statistical hypotheses</em>. Annals of Mathematical Statistics, 16(2), 117-186.</li>
+                <li>Zobrist, A. L. (1970). <em>A new hashing method with application for game playing</em>. Technical Report 88, Computer Sciences Department, University of Wisconsin.</li>
+            </ol>
+
+            <footer class="wiki-footer">
+                <div>This page was last edited on 6 November 2026. Text is available under the MIT License.</div>
+                <div><a href="#overview">Back to top ↑</a></div>
+            </footer>
+        </main>
+    </div>
+
     <script>
-        function switchTab(tabId) {
-            // Support backward-compat for legacy fishtest hash
-            if (tabId === 'fishtest') tabId = 'testing';
-
-            // Update active content
-            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-            const target = document.getElementById('tab-' + tabId);
-            if (target) target.classList.add('active');
-
-            // Update active nav button
-            document.querySelectorAll('.nav-link').forEach(el => el.classList.remove('active'));
-            const btn = document.getElementById('tab-btn-' + tabId);
-            if (btn) btn.classList.add('active');
-
-            window.location.hash = tabId;
-            window.scrollTo({ top: 0, behavior: 'smooth' });
+        function toggleTheme() {
+            const current = document.documentElement.getAttribute('data-theme');
+            const next = current === 'dark' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', next);
+            localStorage.setItem('tessera_wiki_theme', next);
         }
 
-        function switchWiki(sectionId) {
-            document.querySelectorAll('.wiki-section').forEach(el => el.style.display = 'none');
-            const target = document.getElementById(sectionId);
-            if (target) target.style.display = 'block';
-
-            document.querySelectorAll('.wiki-nav-item a').forEach(el => el.classList.remove('active'));
-            if (event && event.target) event.target.classList.add('active');
+        // Initialize saved theme
+        const savedTheme = localStorage.getItem('tessera_wiki_theme');
+        if (savedTheme) {
+            document.documentElement.setAttribute('data-theme', savedTheme);
         }
-
-        function copyCode(elementId) {
-            const text = document.getElementById(elementId).innerText;
-            navigator.clipboard.writeText(text).then(() => {
-                const btn = event.target;
-                const orig = btn.innerText;
-                btn.innerText = 'Copied!';
-                setTimeout(() => { btn.innerText = orig; }, 2000);
-            });
-        }
-
-        // Handle initial hash routing
-        window.addEventListener('DOMContentLoaded', () => {
-            let hash = window.location.hash.replace('#', '');
-            if (hash === 'fishtest') hash = 'testing';
-            if (hash && document.getElementById('tab-' + hash)) {
-                switchTab(hash);
-            }
-        });
     </script>
 </body>
 </html>
