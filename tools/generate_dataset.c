@@ -92,6 +92,12 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    if (nnue_load(&g_nnue, "data/nnue.bin")) {
+        printf("[INFO] Loaded NNUE model from data/nnue.bin for neural self-play generation!\n");
+    } else {
+        printf("[INFO] No NNUE model found; falling back to 8-phase heuristic dual-accumulator.\n");
+    }
+
     FILE *fout = fopen(out_path, "wb");
     if (!fout) {
         fprintf(stderr, "Error opening output file %s\n", out_path);
@@ -222,8 +228,8 @@ int main(int argc, char *argv[]) {
                 float player_sign = (turns[t].player == 0) ? 1.0f : -1.0f;
                 float norm_margin = fminf(1.0f, fmaxf(-1.0f, (player_sign * final_margin_p0) / 60.0f));
 
-                /* Calibrated TD-blended target: tactical surplus + strategic game margin */
-                float blended_target = (0.40f * norm_immediate) + (0.60f * norm_margin);
+                /* Calibrated TD-blended target: sharp tactical surplus (85%) + gentle game margin (15%) */
+                float blended_target = (0.85f * norm_immediate) + (0.15f * norm_margin);
 
                 nnue_extract_features(&turns[t].board_before, &turns[t].move,
                                       &turns[t].rack, turns[t].bag_count,

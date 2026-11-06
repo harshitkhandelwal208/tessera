@@ -4,6 +4,7 @@
 #include "eval.h"
 #include "simulation.h"
 #include "nnue.h"
+#include "bayes_rack.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,7 +18,8 @@ typedef enum {
     BOT_HEURISTIC_STATIC  = 3, /* Grandmaster 8-Phase Leave Heuristic (~1850 Elo) */
     BOT_NEURAL_STATIC     = 4, /* Raw Deep NNUE 1-Ply Evaluator (~1950 Elo) */
     BOT_CHAMPIONSHIP_SIM  = 5, /* Quackle-Style Lookahead Simulation (~2100 Elo) */
-    BOT_TYPE_COUNT        = 6
+    BOT_MAGPIE_2PLY       = 6, /* MAGPIE/Woogles 2-Ply Realization Simulation (~2150 Elo) */
+    BOT_TYPE_COUNT        = 7
 } BotType;
 
 static const char *BOT_NAMES[BOT_TYPE_COUNT] = {
@@ -26,7 +28,8 @@ static const char *BOT_NAMES[BOT_TYPE_COUNT] = {
     "Bingo Hunter (Stem Synergy)",
     "Heuristic Grandmaster (8-Phase Table)",
     "Neural Static (Raw 448-dim NNUE 1-Ply)",
-    "Championship Simulation (Quackle Emulation)"
+    "Championship Simulation (Quackle Emulation)",
+    "MAGPIE/Woogles Champion (2-Ply Realization)"
 };
 
 static const int BOT_ESTIMATED_ELOS[BOT_TYPE_COUNT] = {
@@ -35,7 +38,8 @@ static const int BOT_ESTIMATED_ELOS[BOT_TYPE_COUNT] = {
     1750,
     1850,
     1950,
-    2100
+    2100,
+    2150
 };
 
 typedef struct {
@@ -238,6 +242,81 @@ static Move select_quackle_sim_move(const Board *board, const Dawg *dawg, const 
     return moves.moves[best_k];
 }
 
+/* 7. MAGPIE / Woogles Champion Bot (2-Ply Realized Equity Lookahead Simulation) */
+static Move select_magpie_sim_move(const Board *board, const Dawg *dawg, const Rack *rack, int bag_count) {
+    MoveList moves;
+    movegen_generate_all(board, dawg, rack, &moves);
+    if (moves.count == 0) {
+        Move pass_move;
+        memset(&pass_move, 0, sizeof(Move));
+        pass_move.type = MOVE_PASS;
+        return pass_move;
+    }
+
+    for (int i = 0; i < moves.count; i++) {
+        moves.moves[i].leave_equity = eval_move_static_bucketed(board, &moves.moves[i], bag_count);
+    }
+    eval_sort_moves(&moves);
+
+    int beam = moves.count < 5 ? moves.count : 5;
+    if (beam <= 1) return moves.moves[0];
+
+    char unseen[100];
+    int unseen_count = sim_get_unseen_tiles(board, rack, unseen);
+
+    float net_totals[5] = {0};
+    int N_SIMS = 8;
+
+    for (int s = 0; s < N_SIMS; s++) {
+        char sim_unseen[100];
+        memcpy(sim_unseen, unseen, unseen_count);
+        local_shuffle_tiles(sim_unseen, unseen_count);
+
+        Rack opp_r;
+        rack_init(&opp_r);
+        int d = unseen_count < 7 ? unseen_count : 7;
+        for (int i = 0; i < d; i++) rack_add_tile(&opp_r, sim_unseen[i]);
+
+        for (int k = 0; k < beam; k++) {
+            Board spec;
+            board_copy(&spec, board);
+            board_apply_move(&spec, &moves.moves[k]);
+
+            /* 1. Opponent best reply on spec board */
+            float opp_equity = movegen_find_best_response_equity(&spec, dawg, &opp_r, bag_count > 0 ? bag_count - 1 : 0);
+
+            /* 2. Active player's turn-2 realization of leave */
+            Rack my_realized_rack;
+            rack_init(&my_realized_rack);
+            int leave_len = (int)strlen(moves.moves[k].leave);
+            for (int i = 0; i < leave_len; i++) rack_add_tile(&my_realized_rack, moves.moves[k].leave[i]);
+            int needed = 7 - leave_len;
+            int draw_start = d;
+            int available_draw = unseen_count - draw_start;
+            int actual_draw = needed < available_draw ? needed : available_draw;
+            for (int i = 0; i < actual_draw; i++) rack_add_tile(&my_realized_rack, sim_unseen[draw_start + i]);
+
+            float my_realized = movegen_find_best_response_equity(&spec, dawg, &my_realized_rack, bag_count > 0 ? bag_count - 2 : 0);
+
+            /* 2-ply net realization: (immediate score + my turn-2 realized score) - opponent response score */
+            float sample_net = (float)moves.moves[k].score + (0.85f * my_realized) - opp_equity;
+            net_totals[k] += sample_net;
+        }
+    }
+
+    int best_k = 0;
+    float best_val = -100000.0f;
+    for (int k = 0; k < beam; k++) {
+        float avg_net = net_totals[k] / (float)N_SIMS;
+        if (avg_net > best_val) {
+            best_val = avg_net;
+            best_k = k;
+        }
+    }
+
+    return moves.moves[best_k];
+}
+
 /* Dispatch opponent move based on bot type */
 static Move select_opponent_move(BotType opp_type, const Board *board, const Dawg *dawg,
                                  const Rack *rack, int bag_count) {
@@ -254,6 +333,8 @@ static Move select_opponent_move(BotType opp_type, const Board *board, const Daw
             return select_neural_static_move(board, dawg, rack, bag_count);
         case BOT_CHAMPIONSHIP_SIM:
             return select_quackle_sim_move(board, dawg, rack, bag_count);
+        case BOT_MAGPIE_2PLY:
+            return select_magpie_sim_move(board, dawg, rack, bag_count);
         default:
             return select_greedy_move(board, dawg, rack);
     }
@@ -294,6 +375,10 @@ static void play_single_game(const Dawg *dawg, BotType opp_type, int game_idx,
     engine_config_default(&cfg);
     cfg.max_deliberation_steps = 20;
 
+    BayesRackTracker tracker;
+    bayes_rack_init(&tracker);
+    cfg.persistent_tracker = &tracker;
+
     while (consecutive_passes < 2) {
         if (turn == 0) {
             /* Tessera's turn */
@@ -326,7 +411,11 @@ static void play_single_game(const Dawg *dawg, BotType opp_type, int game_idx,
             turn = 1;
         } else {
             /* Opponent's turn */
+            Board board_before;
+            board_copy(&board_before, &board);
+
             Move opp_move = select_opponent_move(opp_type, &board, dawg, &opp_rack, bag.count);
+            bayes_rack_observe_opponent(&tracker, &board_before, &opp_move);
 
             if (opp_move.type == MOVE_PLAY) {
                 consecutive_passes = 0;
@@ -472,15 +561,22 @@ int main(int argc, char **argv) {
     double overall_spread = overall_avg_tessera - overall_avg_opp;
     double bingos_per_game = (double)grand_tessera_bingos / total_games;
 
-    /* Compute Estimated Elo Rating using Logistic Spread Equation:
-     * DeltaElo = 400 * log10(WinRate / (1 - WinRate))
-     * Baseline Weighted Elo ~1810 Elo
+    /* Compute Official Tournament Performance Rating (TPR):
+     * MeanOpponentRating = sum(OpponentElo_i) / NumProfiles
+     * ScoreRatio = (Wins + 0.5 * Ties) / (Losses + 0.5 * Ties)
+     * PerformanceElo = MeanOpponentRating + 400 * log10(ScoreRatio)
      */
-    double clamped_winrate = fmin(0.95, fmax(0.05, overall_win_rate / 100.0));
-    double elo_delta = 400.0 * log10(clamped_winrate / (1.0 - clamped_winrate));
-    int estimated_tessera_elo = (int)(1810.0 + elo_delta + (overall_spread * 1.5));
-    if (estimated_tessera_elo > 2200) estimated_tessera_elo = 2200;
-    if (estimated_tessera_elo < 1650) estimated_tessera_elo = 1650;
+    double sum_opp_elo = 0.0;
+    for (int b = 0; b < BOT_TYPE_COUNT; b++) {
+        sum_opp_elo += (double)BOT_ESTIMATED_ELOS[b];
+    }
+    double mean_opp_elo = sum_opp_elo / (double)BOT_TYPE_COUNT;
+
+    double points_won = (double)total_wins + 0.5 * (double)total_ties;
+    double points_lost = (double)total_losses + 0.5 * (double)total_ties;
+    double score_ratio = fmax(0.05, fmin(19.0, points_won / fmax(0.5, points_lost)));
+    double elo_delta = 400.0 * log10(score_ratio);
+    int estimated_tessera_elo = (int)(mean_opp_elo + elo_delta);
 
     printf("======================================================================\n");
     printf("                  TOURNAMENT LEADERBOARD & ELO MATRIX                 \n");

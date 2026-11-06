@@ -25,4 +25,8 @@ void bayes_rack_observe_opponent(BayesRackTracker *tracker, const Board *board_b
 /* Sample an opponent rack conditionally according to Bayesian posterior weights */
 void bayes_rack_sample_rack(const BayesRackTracker *tracker, Rack *out_rack, int draw_count);
 
+/* Sample an opponent rack conditionally from posterior AND return the remaining unseen bag tiles shuffled */
+void bayes_rack_sample_with_bag(const BayesRackTracker *tracker, Rack *out_opp_rack, int opp_draw_count,
+                                char *out_remaining_bag, int *out_remaining_count);
+
 #endif /* BAYES_RACK_H */

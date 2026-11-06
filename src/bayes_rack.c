@@ -93,15 +93,17 @@ void bayes_rack_observe_opponent(BayesRackTracker *tracker, const Board *board_b
     }
 }
 
-void bayes_rack_sample_rack(const BayesRackTracker *tracker, Rack *out_rack, int draw_count) {
-    rack_init(out_rack);
-    if (draw_count <= 0 || tracker->total_unseen <= 0) return;
+void bayes_rack_sample_with_bag(const BayesRackTracker *tracker, Rack *out_opp_rack, int opp_draw_count,
+                                char *out_remaining_bag, int *out_remaining_count) {
+    rack_init(out_opp_rack);
+    if (out_remaining_count) *out_remaining_count = 0;
+    if (tracker->total_unseen <= 0) return;
 
     /* Temporary pool copy for sampling without replacement */
     int pool[NUM_DISTINCT_TILES];
     memcpy(pool, tracker->unseen_counts, sizeof(pool));
 
-    for (int d = 0; d < draw_count; d++) {
+    for (int d = 0; d < opp_draw_count; d++) {
         float total_prob = 0.0f;
         float probs[NUM_DISTINCT_TILES] = {0};
 
@@ -138,8 +140,31 @@ void bayes_rack_sample_rack(const BayesRackTracker *tracker, Rack *out_rack, int
 
         if (chosen_idx >= 0 && pool[chosen_idx] > 0) {
             char tile = index_to_tile(chosen_idx);
-            rack_add_tile(out_rack, tile);
+            rack_add_tile(out_opp_rack, tile);
             pool[chosen_idx]--;
         }
     }
+
+    /* Collect remaining unseen tiles into out_remaining_bag */
+    if (out_remaining_bag && out_remaining_count) {
+        int rem_cnt = 0;
+        for (int i = 0; i < NUM_DISTINCT_TILES; i++) {
+            char t = index_to_tile(i);
+            for (int k = 0; k < pool[i]; k++) {
+                out_remaining_bag[rem_cnt++] = t;
+            }
+        }
+        /* Fisher-Yates shuffle remaining tiles */
+        for (int i = rem_cnt - 1; i > 0; i--) {
+            int j = rand() % (i + 1);
+            char tmp = out_remaining_bag[i];
+            out_remaining_bag[i] = out_remaining_bag[j];
+            out_remaining_bag[j] = tmp;
+        }
+        *out_remaining_count = rem_cnt;
+    }
+}
+
+void bayes_rack_sample_rack(const BayesRackTracker *tracker, Rack *out_rack, int draw_count) {
+    bayes_rack_sample_with_bag(tracker, out_rack, draw_count, NULL, NULL);
 }

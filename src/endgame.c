@@ -7,6 +7,7 @@
 
 #define ENDGAME_TT_SIZE 32768
 #define ENDGAME_INF 100000
+#define MAX_ENDGAME_DEPTH 8
 
 typedef enum {
     TT_EXACT = 0,
@@ -24,6 +25,7 @@ typedef struct {
 
 static EndgameTTEntry g_endgame_tt[ENDGAME_TT_SIZE];
 static bool g_tt_initialized = false;
+static MoveList g_endgame_moves_pool[MAX_ENDGAME_DEPTH + 2];
 
 static void endgame_tt_clear(void) {
     memset(g_endgame_tt, 0, sizeof(g_endgame_tt));
@@ -74,7 +76,7 @@ static int negamax_dag(const Board *board, const Dawg *dawg,
         return -2 * my_rack_val;
     }
 
-    if (depth >= 6) {
+    if (depth >= MAX_ENDGAME_DEPTH) {
         /* Bound depth horizon: heuristic margin */
         return -my_rack_val + opp_rack_val;
     }
@@ -83,7 +85,7 @@ static int negamax_dag(const Board *board, const Dawg *dawg,
     uint32_t tt_idx = (uint32_t)(key & (ENDGAME_TT_SIZE - 1));
     EndgameTTEntry *entry = &g_endgame_tt[tt_idx];
 
-    if (entry->key == key && entry->depth >= (6 - depth)) {
+    if (entry->key == key && entry->depth >= (MAX_ENDGAME_DEPTH - depth)) {
         if (entry->flag == TT_EXACT) {
             if (out_best && depth == 0) *out_best = entry->best_move;
             return entry->value;
@@ -94,10 +96,11 @@ static int negamax_dag(const Board *board, const Dawg *dawg,
         }
     }
 
-    MoveList moves;
-    movegen_generate_all(board, dawg, my_rack, &moves);
+    MoveList *moves = &g_endgame_moves_pool[depth];
+    move_list_init(moves);
+    movegen_generate_all(board, dawg, my_rack, moves);
 
-    if (moves.count == 0) {
+    if (moves->count == 0) {
         /* Must pass */
         int score = -negamax_dag(board, dawg, opp_rack, my_rack, -beta, -alpha,
                                  depth + 1, consecutive_passes + 1, NULL);
@@ -109,25 +112,25 @@ static int negamax_dag(const Board *board, const Dawg *dawg,
     }
 
     /* Simple insertion sort by score descending for move ordering */
-    for (int i = 0; i < moves.count - 1; i++) {
-        for (int j = i + 1; j < moves.count; j++) {
-            if (moves.moves[j].score > moves.moves[i].score) {
-                Move tmp = moves.moves[i];
-                moves.moves[i] = moves.moves[j];
-                moves.moves[j] = tmp;
+    for (int i = 0; i < moves->count - 1; i++) {
+        for (int j = i + 1; j < moves->count; j++) {
+            if (moves->moves[j].score > moves->moves[i].score) {
+                Move tmp = moves->moves[i];
+                moves->moves[i] = moves->moves[j];
+                moves->moves[j] = tmp;
             }
         }
     }
 
     int best_score = -ENDGAME_INF;
-    Move best_move = moves.moves[0];
+    Move best_move = moves->moves[0];
     int orig_alpha = alpha;
 
     /* Search beam: inspect up to 16 best candidate plays in endgame */
-    int beam = moves.count < 16 ? moves.count : 16;
+    int beam = moves->count < 16 ? moves->count : 16;
 
     for (int i = 0; i < beam; i++) {
-        Move *m = &moves.moves[i];
+        Move *m = &moves->moves[i];
 
         /* If this move empties my rack, game immediately terminates! */
         if (m->num_placed == my_rack->count) {
@@ -166,7 +169,7 @@ static int negamax_dag(const Board *board, const Dawg *dawg,
 
     /* Transposition DAG entry update */
     entry->key = key;
-    entry->depth = 6 - depth;
+    entry->depth = MAX_ENDGAME_DEPTH - depth;
     entry->value = best_score;
     entry->best_move = best_move;
     if (best_score <= orig_alpha) {

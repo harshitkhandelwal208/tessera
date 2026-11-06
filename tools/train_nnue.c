@@ -113,8 +113,10 @@ int main(int argc, char *argv[]) {
 
     /* Initialize NNUE model (Warm-start from existing weights if present) */
     NNUEModel model;
+    bool is_warm_start = false;
     if (nnue_load(&model, model_path)) {
         printf("[INFO] Warm-starting from existing model %s for fine-tuning...\n", model_path);
+        is_warm_start = true;
     } else {
         printf("[INFO] No existing model found. Initializing random weights...\n");
         nnue_init_random(&model);
@@ -124,8 +126,21 @@ int main(int argc, char *argv[]) {
     memset(&adam, 0, sizeof(AdamState));
 
     float best_val_mae = 1e9f;
-    float initial_lr = 1.5e-3f;
-    float min_lr = 2.0e-5f;
+    if (is_warm_start) {
+        double init_val_mae_sum = 0.0;
+        #pragma omp parallel for reduction(+:init_val_mae_sum) schedule(static)
+        for (size_t i = 0; i < val_size; i++) {
+            const TrainingSample *sample = &dataset[train_size + i];
+            float pred = nnue_forward(&model, sample->features) / 50.0f;
+            init_val_mae_sum += fabsf(pred - sample->target);
+        }
+        best_val_mae = (float)(init_val_mae_sum / val_size);
+        printf("[INFO] Baseline Validation MAE of loaded weights: %.4f (%.2f pts margin)\n\n",
+               best_val_mae, best_val_mae * 50.0f);
+    }
+
+    float initial_lr = is_warm_start ? 3.5e-4f : 1.5e-3f;
+    float min_lr = is_warm_start ? 1.0e-5f : 2.0e-5f;
 
     clock_t start_time = clock();
 
@@ -318,6 +333,11 @@ int main(int argc, char *argv[]) {
         if (val_mae < best_val_mae) {
             best_val_mae = val_mae;
             is_best = true;
+            /* Calibrate win head proportionally to score head */
+            for (int i = 0; i < NNUE_L2_DIM; i++) {
+                model.w_win[i] = model.w3[i] * 1.5f;
+            }
+            model.b_win = model.b3 * 1.5f;
             nnue_save(&model, model_path);
         }
 

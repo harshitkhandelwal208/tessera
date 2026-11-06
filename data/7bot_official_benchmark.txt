@@ -1,0 +1,60 @@
+======================================================================
+   TESSERA GRANDMASTER MULTI-BOT BENCHMARK & COMPETITIVE MATRIX      
+======================================================================
+Lexicon: SOWPODS (267,751 words) | Architecture: Pure Graph Belief Lattice
+Playing 10 tournament matches against EACH of 7 Opponent Profiles (70 Total Games)...
+
+[INFO] Deep NNUE Evaluator loaded successfully (448->128->32->1, 246 KB)
+
+>>> MATCHUP 1/7: Tessera vs. Baseline Greedy (1-Ply Score)
+  [Game  1/10] Tessera: 412 | Baseline Greedy (1-Ply Score): 432 | Record: 0-1-0  [Game  2/10] Tessera: 428 | Baseline Greedy (1-Ply Score): 421 | Record: 1-1-0  [Game  3/10] Tessera: 557 | Baseline Greedy (1-Ply Score): 389 | Record: 2-1-0  [Game  4/10] Tessera: 457 | Baseline Greedy (1-Ply Score): 411 | Record: 3-1-0  [Game  5/10] Tessera: 493 | Baseline Greedy (1-Ply Score): 444 | Record: 4-1-0  [Game  6/10] Tessera: 424 | Baseline Greedy (1-Ply Score): 457 | Record: 4-2-0  [Game  7/10] Tessera: 539 | Baseline Greedy (1-Ply Score): 349 | Record: 5-2-0  [Game  8/10] Tessera: 396 | Baseline Greedy (1-Ply Score): 366 | Record: 6-2-0  [Game  9/10] Tessera: 551 | Baseline Greedy (1-Ply Score): 344 | Record: 7-2-0  [Game 10/10] Tessera: 356 | Baseline Greedy (1-Ply Score): 515 | Record: 7-3-0
+  Result: 7 W - 3 L - 0 T (70.0% Win Rate) | Avg Score: 461.3 vs 412.8 (Spread: +48.5 pts) | Time: 17.9s
+
+>>> MATCHUP 2/7: Tessera vs. Defensive Turtler (Risk Minimizer)
+  [Game  1/10] Tessera: 402 | Defensive Turtler (Risk Minimizer): 393 | Record: 1-0-0  [Game  2/10] Tessera: 471 | Defensive Turtler (Risk Minimizer): 403 | Record: 2-0-0  [Game  3/10] Tessera: 444 | Defensive Turtler (Risk Minimizer): 335 | Record: 3-0-0  [Game  4/10] Tessera: 456 | Defensive Turtler (Risk Minimizer): 367 | Record: 4-0-0  [Game  5/10] Tessera: 474 | Defensive Turtler (Risk Minimizer): 411 | Record: 5-0-0  [Game  6/10] Tessera: 392 | Defensive Turtler (Risk Minimizer): 365 | Record: 6-0-0  [Game  7/10] Tessera: 449 | Defensive Turtler (Risk Minimizer): 382 | Record: 7-0-0  [Game  8/10] Tessera: 492 | Defensive Turtler (Risk Minimizer): 312 | Record: 8-0-0  [Game  9/10] Tessera: 519 | Defensive Turtler (Risk Minimizer): 404 | Record: 9-0-0  [Game 10/10] Tessera: 370 | Defensive Turtler (Risk Minimizer): 438 | Record: 9-1-0
+  Result: 9 W - 1 L - 0 T (90.0% Win Rate) | Avg Score: 446.9 vs 381.0 (Spread: +65.9 pts) | Time: 19.6s
+
+>>> MATCHUP 3/7: Tessera vs. Bingo Hunter (Stem Synergy)
+  [Game  1/10] Tessera: 447 | Bingo Hunter (Stem Synergy): 458 | Record: 0-1-0  [Game  2/10] Tessera: 386 | Bingo Hunter (Stem Synergy): 521 | Record: 0-2-0  [Game  3/10] Tessera: 501 | Bingo Hunter (Stem Synergy): 364 | Record: 1-2-0  [Game  4/10] Tessera: 528 | Bingo Hunter (Stem Synergy): 511 | Record: 2-2-0  [Game  5/10] Tessera: 508 | Bingo Hunter (Stem Synergy): 429 | Record: 3-2-0  [Game  6/10] Tessera: 459 | Bingo Hunter (Stem Synergy): 509 | Record: 3-3-0  [Game  7/10] Tessera: 453 | Bingo Hunter (Stem Synergy): 387 | Record: 4-3-0  [Game  8/10] Tessera: 382 | Bingo Hunter (Stem Synergy): 600 | Record: 4-4-0  [Game  9/10] Tessera: 623 | Bingo Hunter (Stem Synergy): 341 | Record: 5-4-0  [Game 10/10] Tessera: 486 | Bingo Hunter (Stem Synergy): 419 | Record: 6-4-0
+  Result: 6 W - 4 L - 0 T (60.0% Win Rate) | Avg Score: 477.3 vs 453.9 (Spread: +23.4 pts) | Time: 21.9s
+
+>>> MATCHUP 4/7: Tessera vs. Heuristic Grandmaster (8-Phase Table)
+  [Game  1/10] Tessera: 508 | Heuristic Grandmaster (8-Phase Table): 412 | Record: 1-0-0  [Game  2/10] Tessera: 482 | Heuristic Grandmaster (8-Phase Table): 457 | Record: 2-0-0  [Game  3/10] Tessera: 392 | Heuristic Grandmaster (8-Phase Table): 429 | Record: 2-1-0  [Game  4/10] Tessera: 468 | Heuristic Grandmaster (8-Phase Table): 442 | Record: 3-1-0  [Game  5/10] Tessera: 546 | Heuristic Grandmaster (8-Phase Table): 415 | Record: 4-1-0  [Game  6/10] Tessera: 410 | Heuristic Grandmaster (8-Phase Table): 470 | Record: 4-2-0  [Game  7/10] Tessera: 325 | Heuristic Grandmaster (8-Phase Table): 585 | Record: 4-3-0  [Game  8/10] Tessera: 455 | Heuristic Grandmaster (8-Phase Table): 401 | Record: 5-3-0  [Game  9/10] Tessera: 460 | Heuristic Grandmaster (8-Phase Table): 445 | Record: 6-3-0  [Game 10/10] Tessera: 505 | Heuristic Grandmaster (8-Phase Table): 501 | Record: 7-3-0
+  Result: 7 W - 3 L - 0 T (70.0% Win Rate) | Avg Score: 455.1 vs 455.7 (Spread: -0.6 pts) | Time: 16.7s
+
+>>> MATCHUP 5/7: Tessera vs. Neural Static (Raw 448-dim NNUE 1-Ply)
+  [Game  1/10] Tessera: 420 | Neural Static (Raw 448-dim NNUE 1-Ply): 449 | Record: 0-1-0  [Game  2/10] Tessera: 419 | Neural Static (Raw 448-dim NNUE 1-Ply): 360 | Record: 1-1-0  [Game  3/10] Tessera: 511 | Neural Static (Raw 448-dim NNUE 1-Ply): 466 | Record: 2-1-0  [Game  4/10] Tessera: 492 | Neural Static (Raw 448-dim NNUE 1-Ply): 387 | Record: 3-1-0  [Game  5/10] Tessera: 513 | Neural Static (Raw 448-dim NNUE 1-Ply): 513 | Record: 3-1-1  [Game  6/10] Tessera: 587 | Neural Static (Raw 448-dim NNUE 1-Ply): 285 | Record: 4-1-1  [Game  7/10] Tessera: 479 | Neural Static (Raw 448-dim NNUE 1-Ply): 487 | Record: 4-2-1  [Game  8/10] Tessera: 626 | Neural Static (Raw 448-dim NNUE 1-Ply): 341 | Record: 5-2-1  [Game  9/10] Tessera: 455 | Neural Static (Raw 448-dim NNUE 1-Ply): 404 | Record: 6-2-1  [Game 10/10] Tessera: 494 | Neural Static (Raw 448-dim NNUE 1-Ply): 404 | Record: 7-2-1
+  Result: 7 W - 2 L - 1 T (70.0% Win Rate) | Avg Score: 499.6 vs 409.6 (Spread: +90.0 pts) | Time: 19.1s
+
+>>> MATCHUP 6/7: Tessera vs. Championship Simulation (Quackle Emulation)
+  [Game  1/10] Tessera: 375 | Championship Simulation (Quackle Emulation): 398 | Record: 0-1-0  [Game  2/10] Tessera: 421 | Championship Simulation (Quackle Emulation): 415 | Record: 1-1-0  [Game  3/10] Tessera: 461 | Championship Simulation (Quackle Emulation): 373 | Record: 2-1-0  [Game  4/10] Tessera: 501 | Championship Simulation (Quackle Emulation): 415 | Record: 3-1-0  [Game  5/10] Tessera: 405 | Championship Simulation (Quackle Emulation): 501 | Record: 3-2-0  [Game  6/10] Tessera: 406 | Championship Simulation (Quackle Emulation): 496 | Record: 3-3-0  [Game  7/10] Tessera: 434 | Championship Simulation (Quackle Emulation): 511 | Record: 3-4-0  [Game  8/10] Tessera: 511 | Championship Simulation (Quackle Emulation): 485 | Record: 4-4-0  [Game  9/10] Tessera: 390 | Championship Simulation (Quackle Emulation): 395 | Record: 4-5-0  [Game 10/10] Tessera: 394 | Championship Simulation (Quackle Emulation): 315 | Record: 5-5-0
+  Result: 5 W - 5 L - 0 T (50.0% Win Rate) | Avg Score: 429.8 vs 430.4 (Spread: -0.6 pts) | Time: 23.5s
+
+>>> MATCHUP 7/7: Tessera vs. MAGPIE/Woogles Champion (2-Ply Realization)
+  [Game  1/10] Tessera: 379 | MAGPIE/Woogles Champion (2-Ply Realization): 512 | Record: 0-1-0  [Game  2/10] Tessera: 414 | MAGPIE/Woogles Champion (2-Ply Realization): 365 | Record: 1-1-0  [Game  3/10] Tessera: 474 | MAGPIE/Woogles Champion (2-Ply Realization): 397 | Record: 2-1-0  [Game  4/10] Tessera: 390 | MAGPIE/Woogles Champion (2-Ply Realization): 474 | Record: 2-2-0  [Game  5/10] Tessera: 433 | MAGPIE/Woogles Champion (2-Ply Realization): 385 | Record: 3-2-0  [Game  6/10] Tessera: 530 | MAGPIE/Woogles Champion (2-Ply Realization): 567 | Record: 3-3-0  [Game  7/10] Tessera: 376 | MAGPIE/Woogles Champion (2-Ply Realization): 411 | Record: 3-4-0  [Game  8/10] Tessera: 398 | MAGPIE/Woogles Champion (2-Ply Realization): 482 | Record: 3-5-0  [Game  9/10] Tessera: 406 | MAGPIE/Woogles Champion (2-Ply Realization): 439 | Record: 3-6-0  [Game 10/10] Tessera: 421 | MAGPIE/Woogles Champion (2-Ply Realization): 472 | Record: 3-7-0
+  Result: 3 W - 7 L - 0 T (30.0% Win Rate) | Avg Score: 422.1 vs 450.4 (Spread: -28.3 pts) | Time: 28.5s
+
+======================================================================
+                  TOURNAMENT LEADERBOARD & ELO MATRIX                 
+======================================================================
+  Opponent Profile                    | Record  | Win Rate | Avg Spread | Ref Elo
+  ------------------------------------+---------+----------+------------+--------
+  Baseline Greedy (1-Ply Score)       |  7- 3-0  |    70.0% |     +48.5  | ~1550
+  Defensive Turtler (Risk Minimizer)  |  9- 1-0  |    90.0% |     +65.9  | ~1650
+  Bingo Hunter (Stem Synergy)         |  6- 4-0  |    60.0% |     +23.4  | ~1750
+  Heuristic Grandmaster (8-Phase Table) |  7- 3-0  |    70.0% |      -0.6  | ~1850
+  Neural Static (Raw 448-dim NNUE 1-Ply) |  7- 2-1  |    70.0% |     +90.0  | ~1950
+  Championship Simulation (Quackle Emulation) |  5- 5-0  |    50.0% |      -0.6  | ~2100
+  MAGPIE/Woogles Champion (2-Ply Realization) |  3- 7-0  |    30.0% |     -28.3  | ~2150
+  ------------------------------------+---------+----------+------------+--------
+  OVERALL TESSERA TOURNAMENT TOTAL   | 44-25-1  |    62.9% |     +28.3  | ~1953
+
+  Grand Tournament Statistics:
+  - Total Games Played:       70
+  - Tessera Average Score:    456.0 pts/game
+  - Opponents Average Score:  427.7 pts/game
+  - Net Tournament Spread:    +28.3 pts/game
+  - Tessera Bingo Frequency:  2.03 bingos/game (Opponents: 1.67)
+  - Estimated Tessera Elo:    ~1953 Elo (NASPA Grandmaster / Champion)
+  - Total Computation Time:   147.23 seconds (2103.3 ms/game)
+======================================================================

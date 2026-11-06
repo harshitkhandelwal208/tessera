@@ -18,6 +18,7 @@ typedef struct {
     float confidence_bar;       /* Root Court Bayesian confidence threshold (e.g. 0.98) */
     bool use_palimpsest;        /* Whether evaluator rewrites itself mid-move */
     bool use_endgame_solver;    /* Exact playout solver when bag is empty */
+    void *persistent_tracker;   /* Optional persistent BayesRackTracker across game turns */
 } EngineConfig;
 
 typedef struct {

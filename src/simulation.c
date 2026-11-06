@@ -19,6 +19,7 @@ void engine_config_default(EngineConfig *config) {
     config->confidence_bar = 0.98f;
     config->use_palimpsest = true;
     config->use_endgame_solver = true;
+    config->persistent_tracker = NULL;
 }
 
 int sim_get_unseen_tiles(const Board *board, const Rack *player_rack, char unseen[100]) {
@@ -145,29 +146,50 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
         }
     }
 
-    /* 5. Initialize Bayesian Imperfect-Information Opponent Tracker */
-    BayesRackTracker bayes_tracker;
-    bayes_rack_init(&bayes_tracker);
-    bayes_rack_update_unseen(&bayes_tracker, board, rack);
+    /* 5. Initialize or update Bayesian Imperfect-Information Opponent Tracker */
+    BayesRackTracker local_tracker;
+    BayesRackTracker *bayes_tracker = NULL;
+    if (cfg.persistent_tracker) {
+        bayes_tracker = (BayesRackTracker *)cfg.persistent_tracker;
+        bayes_rack_update_unseen(bayes_tracker, board, rack);
+    } else {
+        bayes_rack_init(&local_tracker);
+        bayes_rack_update_unseen(&local_tracker, board, rack);
+        bayes_tracker = &local_tracker;
+    }
 
     uint32_t total_dirty_passes = 0;
     CourtVerdict verdict = court_deliberate(lat, root_idx);
 
     /* --- LATTICE SETTLING DELIBERATION LOOP WITH ADAPTIVE BANDIT COUNTERPLAY --- */
     int top_k = root->num_edges < 10 ? root->num_edges : 10;
+    int max_steps = cfg.max_deliberation_steps;
 
-    for (int step = 0; step < cfg.max_deliberation_steps && (step < 6 || !verdict.should_adjourn); step++) {
-        /* Sample a concrete opponent rack conditionally from Bayesian posterior */
+    for (int step = 0; step < max_steps && (step < 6 || !verdict.should_adjourn); step++) {
+        /* Dynamically extend deliberation up to 15 steps if decision is closely contested */
+        if (step == max_steps - 1 && verdict.confidence < 0.70f && max_steps < 60) {
+            max_steps += 10;
+        }
+
+        /* Sample a concrete opponent rack conditionally from Bayesian posterior, plus remaining unseen bag */
         Rack sim_opp_rack;
-        rack_init(&sim_opp_rack);
+        char rem_bag[100];
+        int rem_bag_count = 0;
         int draw_cnt = unseen_count < RACK_CAPACITY ? unseen_count : RACK_CAPACITY;
-        bayes_rack_sample_rack(&bayes_tracker, &sim_opp_rack, draw_cnt);
+        bayes_rack_sample_with_bag(bayes_tracker, &sim_opp_rack, draw_cnt, rem_bag, &rem_bag_count);
 
         /* Adaptive bandit candidate active tracking */
+        float best_active_q = -1e9f;
+        for (int k = 0; k < top_k; k++) {
+            if (root->edges[k].q_value > best_active_q) {
+                best_active_q = root->edges[k].q_value;
+            }
+        }
+
         bool active[MAX_LATTICE_EDGES];
         int num_active = 0;
         for (int k = 0; k < top_k; k++) {
-            if (step < 4 || root->edges[k].q_value >= root->edges[0].q_value - 12.0f) {
+            if (step < 4 || root->edges[k].q_value >= best_active_q - 8.0f) {
                 active[k] = true;
                 num_active++;
             } else {
@@ -175,14 +197,16 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
             }
         }
 
-        /* If candidate 0 has decisively broken away from all rivals after step 8, snap adjourn */
+        /* If top candidate has decisively broken away from all rivals after step 8, snap adjourn */
         if (num_active <= 1 && step >= 8) {
             break;
         }
 
-        /* Paired evaluation: test all top candidate replies against the EXACT SAME opponent rack */
+        /* Paired evaluation: test all top candidate replies against the EXACT SAME opponent rack AND draw realization */
         float opp_scores[MAX_LATTICE_EDGES] = {0};
+        float realized_scores[MAX_LATTICE_EDGES] = {0};
         float sum_opp = 0.0f;
+        float sum_realized = 0.0f;
 
         for (int k = 0; k < top_k; k++) {
             if (!active[k]) continue;
@@ -190,6 +214,8 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
             uint32_t c_idx = root->edges[k].target_node_idx;
             if (c_idx > 0 && c_idx < lat->num_nodes) {
                 LatticeNode *leaf = &lat->nodes[c_idx];
+
+                /* 1. Opponent counterplay response on leaf board */
                 float best_opp = movegen_find_best_response_equity(&leaf->board, dawg, &sim_opp_rack, bag_remaining);
                 if (cfg.use_palimpsest) {
                     int ctx = palimpsest_classify(&sim_opp_rack, &leaf->board);
@@ -197,10 +223,28 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
                 }
                 opp_scores[k] = best_opp;
                 sum_opp += best_opp;
+
+                /* 2. Active player's turn-2 draw realization with actual bag tiles */
+                Rack my_realized_rack;
+                rack_init(&my_realized_rack);
+                int leave_len = (int)strlen(root->edges[k].move.leave);
+                for (int i = 0; i < leave_len; i++) {
+                    rack_add_tile(&my_realized_rack, root->edges[k].move.leave[i]);
+                }
+                int needed = RACK_CAPACITY - leave_len;
+                int actual_draw = needed < rem_bag_count ? needed : rem_bag_count;
+                for (int i = 0; i < actual_draw; i++) {
+                    rack_add_tile(&my_realized_rack, rem_bag[i]);
+                }
+                float my_realized = movegen_find_best_response_equity(&leaf->board, dawg, &my_realized_rack,
+                                                                      bag_remaining > 0 ? bag_remaining - 1 : 0);
+                realized_scores[k] = my_realized;
+                sum_realized += my_realized;
             }
         }
 
         float mean_opp = num_active > 0 ? (sum_opp / (float)num_active) : 26.0f;
+        float mean_realized = num_active > 0 ? (sum_realized / (float)num_active) : 26.0f;
 
         for (int k = 0; k < top_k; k++) {
             if (!active[k]) continue;
@@ -208,22 +252,29 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
             uint32_t c_idx = root->edges[k].target_node_idx;
             if (c_idx > 0 && c_idx < lat->num_nodes) {
                 LatticeNode *leaf = &lat->nodes[c_idx];
-                float delta = mean_opp - opp_scores[k]; /* Positive = defensive advantage */
+                /* Combined paired differential:
+                 * (mean_opp - opp_scores[k]): Positive when opponent scores less on our board
+                 * 0.65f * (realized_scores[k] - mean_realized): Positive when our rack leave realizes higher score
+                 */
+                float def_delta = mean_opp - opp_scores[k];
+                float real_delta = realized_scores[k] - mean_realized;
+                float combined_delta = def_delta + (0.65f * real_delta);
+
                 leaf->belief.samples++;
-                leaf->defensive_delta = (leaf->defensive_delta * (float)(leaf->belief.samples - 1) + delta) / (float)leaf->belief.samples;
+                leaf->defensive_delta = (leaf->defensive_delta * (float)(leaf->belief.samples - 1) + combined_delta) / (float)leaf->belief.samples;
 
                 float var_reduction = 36.0f / (1.0f + 0.3f * (float)leaf->belief.samples);
                 leaf->belief.variance = fmaxf(4.0f, var_reduction);
 
                 for (int p = 0; p < leaf->num_parents; p++) {
-                    dirty_queue_push(&dq, leaf->parent_indices[p], fmaxf(1.0f, fabsf(delta)));
+                    dirty_queue_push(&dq, leaf->parent_indices[p], fmaxf(1.0f, fabsf(combined_delta)));
                 }
                 root->edges[k].visits++;
             }
         }
 
         /* Multi-ply graph expansion: expand top promising frontier leaf */
-        if (step == 4 || step == 8) {
+        if (step == 4 || step == 8 || step == 12 || step == 16) {
             uint32_t leaf_idx = broker_select_frontier_leaf(&broker, lat, root_idx);
             if (leaf_idx > 0 && leaf_idx < lat->num_nodes && !lat->nodes[leaf_idx].is_expanded) {
                 lattice_expand_node(lat, leaf_idx, dawg, &sim_opp_rack,

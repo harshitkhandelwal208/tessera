@@ -437,9 +437,12 @@ float eval_board_risk_bucketed(const Board *board, const Move *move, OpennessBuc
             int nc = c + dc[d];
             if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
                 if (board->cells[nr][nc].tile == 0) {
-                    /* Only penalize if opening an unanchored Triple Word square to the opponent */
-                    if (board_get_multiplier(nr, nc) == MULT_TW && !board_is_anchor(board, nr, nc)) {
+                    /* Penalize opening unanchored Triple Word and Double Word squares to the opponent */
+                    MultiplierType mult = board_get_multiplier(nr, nc);
+                    if (mult == MULT_TW && !board_is_anchor(board, nr, nc)) {
                         risk -= (is_v ? 4.5f : 2.5f) * penalty_scale;
+                    } else if (mult == MULT_DW && !board_is_anchor(board, nr, nc)) {
+                        risk -= (is_v ? 1.5f : 0.8f) * penalty_scale;
                     }
                 }
             }
@@ -462,25 +465,27 @@ DualAccumulator eval_move_accumulate(const Board *board, const Move *move, int b
 
     if (move->type != MOVE_PLAY) return acc;
 
-    /* If NNUE is loaded, neural evaluation supersedes hand-tuned heuristic */
-    if (g_nnue.is_loaded) {
-        float nnue_val = nnue_evaluate_move(&g_nnue, board, move, NULL, bag_count);
-        acc.board_acc = (float)move->score;
-        acc.rack_acc = nnue_val - (float)move->score;
-        acc.net_equity = nnue_val;
-        return acc;
-    }
-
     PhaseBucket phase = eval_classify_phase(bag_count);
     OpennessBucket openness = eval_classify_openness(board);
 
-    /* Board Accumulator: Move score + premium square dynamics */
-    acc.board_acc = (float)move->score + eval_board_risk_bucketed(board, move, openness);
+    /* Hand-tuned Grandmaster Heuristic: board risk + 8-phase rack leave tables */
+    float board_risk = eval_board_risk_bucketed(board, move, openness);
+    float rack_leave = eval_rack_leave_bucketed(move->leave, phase);
+    float hand_equity = (float)move->score + board_risk + (0.85f * rack_leave);
 
-    /* Rack Accumulator: 8-Phase leave equity + stem synergies (calibrated weighting) */
-    acc.rack_acc = eval_rack_leave_bucketed(move->leave, phase);
+    /* If NNUE is loaded, combine Hand-Tuned Heuristic and Deep NNUE into a hybrid ensemble */
+    if (g_nnue.is_loaded) {
+        float nnue_val = nnue_evaluate_move(&g_nnue, board, move, NULL, bag_count);
+        float hybrid = (0.50f * hand_equity) + (0.50f * nnue_val);
+        acc.board_acc = (float)move->score + (0.50f * board_risk);
+        acc.rack_acc = hybrid - acc.board_acc;
+        acc.net_equity = hybrid;
+        return acc;
+    }
 
-    acc.net_equity = acc.board_acc + (0.85f * acc.rack_acc);
+    acc.board_acc = (float)move->score + board_risk;
+    acc.rack_acc = rack_leave;
+    acc.net_equity = hand_equity;
     return acc;
 }
 
