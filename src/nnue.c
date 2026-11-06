@@ -6,7 +6,9 @@
 #include <math.h>
 #include <ctype.h>
 #include <stdalign.h>
+#if defined(__AVX2__)
 #include <immintrin.h>
+#endif
 
 NNUEModel g_nnue = {0};
 
@@ -281,11 +283,12 @@ void nnue_extract_features(const Board *board, const Move *move, const Rack *rac
 }
 
 /*
- * AVX2 Vectorized Dot Product + Bias with ClippedReLU activation.
+ * AVX2 Vectorized Dot Product + Bias with ClippedReLU activation (with scalar fallback for portability).
  */
 static inline void avx2_linear_crelu(const float *weights, const float *biases,
                                      const float *in, float *out,
                                      int out_dim, int in_dim) {
+#if defined(__AVX2__)
     for (int o = 0; o < out_dim; o++) {
         __m256 v_acc = _mm256_setzero_ps();
         const float *w_row = &weights[o * in_dim];
@@ -309,6 +312,16 @@ static inline void avx2_linear_crelu(const float *weights, const float *biases,
         sum = fminf(fmaxf(sum, 0.0f), 1.0f);
         out[o] = sum;
     }
+#else
+    for (int o = 0; o < out_dim; o++) {
+        float sum = biases[o];
+        const float *w_row = &weights[o * in_dim];
+        for (int i = 0; i < in_dim; i++) {
+            sum += w_row[i] * in[i];
+        }
+        out[o] = fminf(fmaxf(sum, 0.0f), 1.0f);
+    }
+#endif
 }
 
 float nnue_forward(const NNUEModel *model, const float *features) {
@@ -323,6 +336,7 @@ float nnue_forward(const NNUEModel *model, const float *features) {
     avx2_linear_crelu(model->w2, model->b2, l1_out, l2_out, NNUE_L2_DIM, NNUE_L1_DIM);
 
     /* Layer 3: 32 -> 1 */
+#if defined(__AVX2__)
     __m256 v_acc = _mm256_setzero_ps();
     for (int i = 0; i < NNUE_L2_DIM; i += 8) {
         __m256 v_w = _mm256_loadu_ps(&model->w3[i]);
@@ -337,6 +351,12 @@ float nnue_forward(const NNUEModel *model, const float *features) {
     v_sum128 = _mm_hadd_ps(v_sum128, v_sum128);
 
     float raw_equity = _mm_cvtss_f32(v_sum128) + model->b3;
+#else
+    float raw_equity = model->b3;
+    for (int i = 0; i < NNUE_L2_DIM; i++) {
+        raw_equity += model->w3[i] * l2_out[i];
+    }
+#endif
 
     /* Scaled output to represent expected points margin (+/- 50 pts) */
     return raw_equity * 50.0f;
@@ -357,6 +377,7 @@ NNUEResult nnue_forward_dual(const NNUEModel *model, const float *features) {
     avx2_linear_crelu(model->w2, model->b2, l1_out, l2_out, NNUE_L2_DIM, NNUE_L1_DIM);
 
     /* Layer 3 Dual Head: Score Head & Win-Probability Head */
+#if defined(__AVX2__)
     __m256 v_acc1 = _mm256_setzero_ps();
     __m256 v_acc2 = _mm256_setzero_ps();
 
@@ -383,6 +404,16 @@ NNUEResult nnue_forward_dual(const NNUEModel *model, const float *features) {
     v_sum2 = _mm_hadd_ps(v_sum2, v_sum2);
     float raw_win = _mm_cvtss_f32(v_sum2) + model->b_win;
     res.win_probability = 1.0f / (1.0f + expf(-raw_win * 3.0f));
+#else
+    float raw_equity = model->b3;
+    float raw_win = model->b_win;
+    for (int i = 0; i < NNUE_L2_DIM; i++) {
+        raw_equity += model->w3[i] * l2_out[i];
+        raw_win += model->w_win[i] * l2_out[i];
+    }
+    res.net_spread = raw_equity * 50.0f;
+    res.win_probability = 1.0f / (1.0f + expf(-raw_win * 3.0f));
+#endif
 
     return res;
 }

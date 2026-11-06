@@ -3,8 +3,10 @@
 [![Language](https://img.shields.io/badge/Language-ISO%20C11-blue.svg)](https://en.wikipedia.org/wiki/C11_(C_standard_revision))
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Rating](https://img.shields.io/badge/Rating-~2016%20NASPA%20TPR-red.svg)](#tournament-matrix--empirical-benchmarks)
-[![Search](https://img.shields.io/badge/Search-Belief%20Lattice%20DAG-brightgreen.svg)](#architecture-the-7-pillars-of-tessera)
-[![Platform](https://img.shields.io/badge/Platform-Linux%20x86--64-lightgrey.svg)](#build-test--run-instructions)
+[![Search](https://img.shields.io/badge/Search-Belief%20Lattice%20DAG-brightgreen.svg)](#engine-architecture)
+[![Platforms](https://img.shields.io/badge/Platforms-Linux%20%7C%20Windows%20%7C%20macOS-lightgrey.svg)](#downloads--precompiled-binaries)
+[![Distributed Testing](https://img.shields.io/badge/Testing-Tessera--Test%20(Fishtest)-orange.svg)](https://harshitkhandelwal208.github.io/tessera/#fishtest)
+[![Wiki](https://img.shields.io/badge/Wiki-Documentation-blueviolet.svg)](https://harshitkhandelwal208.github.io/tessera/#wiki)
 
 > **Tessera** is a championship-caliber tournament Scrabble intelligence engine implemented in ISO C11 with zero external dependencies.
 
@@ -66,7 +68,9 @@ OVERALL TOURNAMENT AGGREGATE            1857     50 - 20 - 0  71.4%    +36.4 pts
 
 ---
 
-## Architecture: The 7 Pillars of Tessera
+## Engine Architecture
+
+Tessera is built on an acyclic graph search and dual-representation evaluation pipeline:
 
 ```mermaid
 flowchart TD
@@ -116,7 +120,7 @@ flowchart TD
 
 ---
 
-### Pillar 1: High-Throughput Lexicon & Move Generation
+### 1. Lexicon & Move Generation
 **Source:** [`include/dict.h`](include/dict.h), [`src/dict.c`](src/dict.c), [`include/movegen.h`](include/movegen.h), [`src/movegen.c`](src/movegen.c)
 
 * **Minimal Directed Acyclic Word Graph (DAWG):**
@@ -133,7 +137,7 @@ flowchart TD
 
 ---
 
-### Pillar 2: Dual-Accumulator Evaluator & 8 Game Phases
+### 2. Dual-Accumulator Heuristic Evaluator
 **Source:** [`include/eval.h`](include/eval.h), [`src/eval.c`](src/eval.c)
 
 Tessera separates static evaluation into two decoupled accumulators parameterized across 8 discrete game phases:
@@ -146,13 +150,13 @@ Game Phase Breakdown (Indexed by Remaining Bag Count):
        -> [Pre-Endgame: 10-19] -> [Exhaustion: 1-9] -> [Endgame: 0] -> [Playout]
 ```
 
-#### 1. Board Accumulator
+#### Board Accumulator
 Evaluates the positional impact of the placed tiles on the 15×15 grid:
 $$\text{BoardAccumulator}(M) = \text{Score}(M) + \text{PremiumCapture}(M) - \text{HazardExposure}(M)$$
 - **Premium Denial:** Calculates the defensive gain of occupying Triple Word (TW), Triple Letter (TL), and Double Word (DW) squares to deny them to the opponent.
 - **Hazard Penalization:** Specifically penalizes placing floating vowels adjacent to unblocked TW/TL squares.
 
-#### 2. Rack Leave Accumulator
+#### Rack Leave Accumulator
 Evaluates the equity of the unplayed tiles remaining on the player's rack:
 - **Pairwise Synergy Matrix ($27 \times 27$):** Captures multi-tile harmonies (e.g., `S + Blank` $+14.2$ pts, `E + R` $+7.8$ pts, `A + N` $+5.4$ pts).
 - **Championship Super-Leave Stems:** Built-in recognition of top-tier 5- and 6-letter bingo leaves (`SATINE`, `RETINA`, `TISANE`, `AETINS`, `RETAINS`, `AERST`, `EINST`, `EINRS`, etc.) with bonuses up to $+30.5$ pts.
@@ -161,7 +165,7 @@ Evaluates the equity of the unplayed tiles remaining on the player's rack:
 
 ---
 
-### Pillar 3: Deep Dual-Headed NNUE & Hybrid Ensemble
+### 3. Deep Dual-Headed NNUE Evaluation
 **Source:** [`include/nnue.h`](include/nnue.h), [`src/nnue.c`](src/nnue.c)
 
 Tessera incorporates an **Efficiently Updatable Neural Network (NNUE)** adapted for imperfect-information tile dynamics.
@@ -170,12 +174,12 @@ Tessera incorporates an **Efficiently Updatable Neural Network (NNUE)** adapted 
 ```
 Input Vector [448 Dimensions]
     │
-    ▼  Linear (448 x 128) + Bias [SIMD AVX2]
+    ▼  Linear (448 x 128) + Bias [SIMD AVX2 with Portable Fallback]
 Hidden Layer 1 [128 Dimensions]
     │
     ▼  ClippedReLU: clamp(x, 0.0, 1.0)
     │
-    ▼  Linear (128 x 32) + Bias [SIMD AVX2]
+    ▼  Linear (128 x 32) + Bias [SIMD AVX2 with Portable Fallback]
 Hidden Layer 2 [32 Dimensions]
     │
     ▼  ClippedReLU: clamp(x, 0.0, 1.0)
@@ -186,12 +190,12 @@ Linear (32 x 1) -> Expected Points Margin Linear (32 x 1) -> Sigmoid P(Win)
 ```
 
 - **Feature Decomposition:** 448 inputs covering move placements, unigram tile counts, 378 pairwise bigram synergies, macro vowel-consonant ratios, 16 championship bingo stems, board hazard indicators, and game phase contexts.
-- **AVX2 Vectorization:** All forward passes utilize 256-bit AVX2 instructions (`_mm256_fmadd_ps`, `_mm256_loadu_ps`), executing in sub-microsecond latency.
-- **Grandmaster Hybrid Ensemble:** Combines hand-crafted heuristic anchors (50%) with smooth neural predictions (50%) to ensure both discrete edge-case handling and generalization.
+- **SIMD Vectorization & Portability:** Forward passes utilize 256-bit AVX2 vector instructions (`_mm256_fmadd_ps`, `_mm256_loadu_ps`) on x86-64, with automated scalar fallbacks for ARM64 and legacy systems.
+- **Hybrid Ensemble:** Combines hand-crafted heuristic anchors (50%) with smooth neural predictions (50%) to ensure both discrete edge-case handling and generalization.
 
 ---
 
-### Pillar 4: Pure Position-Keyed Belief Lattice (DAG Search)
+### 4. Position-Keyed Belief Lattice (DAG Search)
 **Source:** [`include/lattice.h`](include/lattice.h), [`src/lattice.c`](src/lattice.c), [`include/settle.h`](include/settle.h), [`src/settle.c`](src/settle.c)
 
 ```
@@ -225,7 +229,7 @@ Tessera Belief Lattice (Pure Position-Keyed DAG):
 
 ---
 
-### Pillar 5: Bayesian Opponent Modeling & Root Court
+### 5. Bayesian Opponent Modeling & Root Court Stopping
 **Source:** [`include/bayes_rack.h`](include/bayes_rack.h), [`src/bayes_rack.c`](src/bayes_rack.c), [`include/court.h`](include/court.h), [`src/court.c`](src/court.c)
 
 * **Persistent Bayesian Opponent Inference:**
@@ -241,7 +245,7 @@ Tessera Belief Lattice (Pure Position-Keyed DAG):
 
 ---
 
-### Pillar 6: Exact Transposition DAG Endgame Solver
+### 6. Exact Deterministic Endgame Solver
 **Source:** [`include/endgame.h`](include/endgame.h), [`src/endgame.c`](src/endgame.c)
 
 When the bag is empty and the opponent holds $\le 7$ unseen tiles, Scrabble transitions into a **deterministic perfect-information game**.
@@ -254,12 +258,42 @@ When the bag is empty and the opponent holds $\le 7$ unseen tiles, Scrabble tran
 
 ---
 
-### Pillar 7: The Palimpsest (Online Meta-Learning)
+### 7. Online Meta-Evaluation & Calibration (The Palimpsest)
 **Source:** [`include/palimpsest.h`](include/palimpsest.h), [`src/palimpsest.c`](src/palimpsest.c)
 
 The Palimpsest is an online meta-learning layer that corrects static evaluation blind spots across specific structural board contexts:
 - Maintains conjugate Normal-Normal posterior distributions $\mathcal{N}(\mu_c, \sigma_c^2)$ over evaluation errors indexed by board topology classes.
 - Updates correction factors in closed mathematical form whenever lattice settling reveals divergence from static priors.
+
+---
+
+## Distributed Training & Testing (Tessera-Test)
+
+Like Stockfish's **Fishtest**, Tessera features a distributed testing framework (**Tessera-Test**) for validating search enhancements and training the dual-headed neural network on hundreds of thousands of self-play games.
+
+* **Live Testing Dashboard:** View ongoing Sequential Probability Ratio Tests (SPRT), patch regressions, and neural network iterations at **[Tessera-Test Portal](https://harshitkhandelwal208.github.io/tessera/#fishtest)**.
+* **Technical Documentation & Wiki:** Read the full architectural specification and API reference at **[Tessera Documentation](https://harshitkhandelwal208.github.io/tessera/#wiki)**.
+* **Volunteer Your Compute:** Anyone can contribute spare CPU cores by running the lightweight community worker:
+  ```bash
+  curl -sSL https://harshitkhandelwal208.github.io/tessera/worker.py -o worker.py
+  python3 worker.py --concurrency 4 --user "YourName"
+  ```
+
+---
+
+## Downloads & Precompiled Binaries
+
+Official precompiled tournament binaries and full source archives are available on the [**Releases Page**](https://github.com/harshitkhandelwal208/tessera/releases/tag/v1.0.0):
+
+| Target Architecture | Archive | Format | Description |
+|---|---|---|---|
+| **Linux x86-64** | [`tessera-v1.0.0-linux-x86_64.tar.gz`](https://github.com/harshitkhandelwal208/tessera/releases/download/v1.0.0/tessera-v1.0.0-linux-x86_64.tar.gz) | `.tar.gz` (1.41 MB) | Native AVX2 optimized Linux ELF binary + weights + DAWG |
+| **Linux ARM64** | [`tessera-v1.0.0-linux-arm64.tar.gz`](https://github.com/harshitkhandelwal208/tessera/releases/download/v1.0.0/tessera-v1.0.0-linux-arm64.tar.gz) | `.tar.gz` (1.88 MB) | 64-bit aarch64 binary for Raspberry Pi 4/5, AWS Graviton, Linux ARM |
+| **Windows x86-64** | [`tessera-v1.0.0-windows-x86_64.zip`](https://github.com/harshitkhandelwal208/tessera/releases/download/v1.0.0/tessera-v1.0.0-windows-x86_64.zip) | `.zip` (1.50 MB) | Native Windows 64-bit `.exe` executable + assets |
+| **macOS Apple Silicon** | [`tessera-v1.0.0-macos-arm64.tar.gz`](https://github.com/harshitkhandelwal208/tessera/releases/download/v1.0.0/tessera-v1.0.0-macos-arm64.tar.gz) | `.tar.gz` (1.39 MB) | Native arm64 Mach-O binary for Apple M1/M2/M3/M4 Macs |
+| **macOS Intel** | [`tessera-v1.0.0-macos-x86_64.tar.gz`](https://github.com/harshitkhandelwal208/tessera/releases/download/v1.0.0/tessera-v1.0.0-macos-x86_64.tar.gz) | `.tar.gz` (1.39 MB) | Native x86-64 Mach-O binary for Intel-based Macs |
+| **Full Source Code** | [`tessera-v1.0.0-source.tar.gz`](https://github.com/harshitkhandelwal208/tessera/releases/download/v1.0.0/tessera-v1.0.0-source.tar.gz) | `.tar.gz` (2.17 MB) | Complete source tree, SOWPODS lexicon, and training tooling |
+| **Full Source Code** | [`tessera-v1.0.0-source.zip`](https://github.com/harshitkhandelwal208/tessera/releases/download/v1.0.0/tessera-v1.0.0-source.zip) | `.zip` (2.18 MB) | Complete source tree, SOWPODS lexicon, and training tooling |
 
 ---
 
