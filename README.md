@@ -5,7 +5,8 @@
 [![Rating](https://img.shields.io/badge/Rating-~2016%20NASPA%20TPR-red.svg)](#tournament-matrix--empirical-benchmarks)
 [![Search](https://img.shields.io/badge/Search-Belief%20Lattice%20DAG-brightgreen.svg)](#engine-architecture)
 [![Platforms](https://img.shields.io/badge/Platforms-Linux%20%7C%20Windows%20%7C%20macOS-lightgrey.svg)](#downloads--precompiled-binaries)
-[![Distributed Testing](https://img.shields.io/badge/Testing-Tessera--Test%20(Fishtest)-orange.svg)](https://harshitkhandelwal208.github.io/tessera/#fishtest)
+[![Distributed Testing](https://img.shields.io/badge/Testing-Tessera--Test-orange.svg)](https://harshitkhandelwal208.github.io/tessera/#testing)
+[![Contributing](https://img.shields.io/badge/Contributing-Guide-blue.svg)](CONTRIBUTING.md)
 [![Wiki](https://img.shields.io/badge/Wiki-Documentation-blueviolet.svg)](https://harshitkhandelwal208.github.io/tessera/#wiki)
 
 > **Tessera** is a championship-caliber tournament Scrabble intelligence engine implemented in ISO C11 with zero external dependencies.
@@ -267,12 +268,13 @@ The Palimpsest is an online meta-learning layer that corrects static evaluation 
 
 ---
 
-## Distributed Training & Testing (Tessera-Test)
+## Distributed Testing & Training (Tessera-Test)
 
-Like Stockfish's **Fishtest**, Tessera features a distributed testing framework (**Tessera-Test**) for validating search enhancements and training the dual-headed neural network on hundreds of thousands of self-play games.
+Tessera maintains a distributed testing and validation framework (**Tessera-Test**) for validating search enhancements and training the dual-headed neural network on hundreds of thousands of self-play games.
 
-* **Live Testing Dashboard:** View ongoing Sequential Probability Ratio Tests (SPRT), patch regressions, and neural network iterations at **[Tessera-Test Portal](https://harshitkhandelwal208.github.io/tessera/#fishtest)**.
+* **Live Testing Dashboard:** View ongoing Sequential Probability Ratio Tests (SPRT), patch regressions, and neural network iterations at **[Tessera-Test Portal](https://harshitkhandelwal208.github.io/tessera/#testing)**.
 * **Technical Documentation & Wiki:** Read the full architectural specification and API reference at **[Tessera Documentation](https://harshitkhandelwal208.github.io/tessera/#wiki)**.
+* **Contributing Guidelines:** For detailed guidelines on contributing code, running SPRT tests, and commit conventions, consult [**`CONTRIBUTING.md`**](CONTRIBUTING.md).
 * **Volunteer Your Compute:** Anyone can contribute spare CPU cores by running the lightweight community worker:
   ```bash
   curl -sSL https://harshitkhandelwal208.github.io/tessera/worker.py -o worker.py
