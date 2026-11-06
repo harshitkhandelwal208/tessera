@@ -1,4 +1,5 @@
 #include "protocol.h"
+#include "bot_archetypes.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -117,6 +118,64 @@ void protocol_run_server_loop(const Dawg *dawg) {
             }
             printf("]}\n");
             fflush(stdout);
+        } else if (strcmp(cmd, "OPPONENT_MOVE") == 0) {
+            int bot_type_int = 6; /* Default to MAGPIE 2-Ply Realization */
+            sscanf(line, "%*s %d", &bot_type_int);
+            if (bot_type_int < 0 || bot_type_int >= BOT_TYPE_COUNT) {
+                bot_type_int = 6;
+            }
+            BotType bot_type = (BotType)bot_type_int;
+
+            if (game.game_over) {
+                printf("{\"status\":\"error\",\"message\":\"Game is over\"}\n");
+                fflush(stdout);
+                continue;
+            }
+
+            clock_t start_clk = clock();
+            Move best = bot_archetype_select_move(bot_type, &current_board, dawg, &game.player_rack, game.bag.count);
+            double elapsed_ms = ((double)(clock() - start_clk) / CLOCKS_PER_SEC) * 1000.0;
+
+            if (best.type == MOVE_PLAY) {
+                board_apply_move(&current_board, &best);
+                memcpy(game.board, current_board.cells, sizeof(game.board));
+                game.player_score += best.score;
+
+                for (int i = 0; i < best.num_placed; i++) {
+                    char t = best.placed[i].is_blank ? '?' : best.placed[i].letter;
+                    rack_remove_tile(&game.player_rack, t);
+                }
+                bag_draw_tiles(&game.bag, &game.player_rack, best.num_placed);
+                game.pass_count = 0;
+            } else if (best.type == MOVE_EXCHANGE) {
+                for (int i = 0; i < best.num_placed; i++) {
+                    rack_remove_tile(&game.player_rack, best.placed[i].letter);
+                    game.bag.tiles[game.bag.count++] = best.placed[i].letter;
+                }
+                bag_shuffle(&game.bag);
+                bag_draw_tiles(&game.bag, &game.player_rack, best.num_placed);
+                game.pass_count = 0;
+            } else {
+                game.pass_count++;
+            }
+
+            if (game.pass_count >= 2 || (game.player_rack.count == 0 && game.bag.count == 0)) {
+                game.game_over = true;
+            }
+            game.turn = 1; /* Now Tessera's turn */
+
+            char p_rack[RACK_CAPACITY + 1], a_rack[RACK_CAPACITY + 1];
+            rack_to_string(&game.player_rack, p_rack);
+            rack_to_string(&game.ai_rack, a_rack);
+
+            printf("{\"status\":\"ok\",\"time_ms\":%.2f,\"bot_type\":%d,\"bot_name\":\"%s\",\"bot_elo\":%d,\"move\":{\"type\":%d,\"word\":\"%s\",\"row\":%d,\"col\":%d,\"dir\":\"%s\",\"score\":%d,\"leave\":\"%s\",\"equity\":%.2f},\"player_score\":%d,\"ai_score\":%d,\"bag_count\":%d,\"game_over\":%s,\"player_rack\":\"%s\",\"ai_rack\":\"%s\"}\n",
+                   elapsed_ms, (int)bot_type, bot_archetype_name(bot_type), bot_archetype_elo(bot_type),
+                   best.type, best.word, best.row, best.col,
+                   best.dir == DIR_HORIZONTAL ? "H" : "V",
+                   best.score, best.leave, best.leave_equity,
+                   game.player_score, game.ai_score, game.bag.count,
+                   game.game_over ? "true" : "false", p_rack, a_rack);
+            fflush(stdout);
         } else if (strcmp(cmd, "AI_MOVE") == 0) {
             if (game.game_over) {
                 printf("{\"status\":\"error\",\"message\":\"Game is over\"}\n");
@@ -177,9 +236,9 @@ void protocol_run_server_loop(const Dawg *dawg) {
             printf("\"metrics\":{\"nodes\":%u,\"transpositions\":%u,\"settle_passes\":%u,\"confidence\":%.2f,\"palimpsest_bias\":%.2f},",
                    metrics.nodes_in_lattice, metrics.transpositions_merged, metrics.dirty_passes_settled,
                    metrics.court_confidence, metrics.palimpsest_max_bias);
-            printf("\"player_score\":%d,\"ai_score\":%d,\"bag_count\":%d,\"game_over\":%s,\"ai_rack\":\"%s\"}\n",
+            printf("\"player_score\":%d,\"ai_score\":%d,\"bag_count\":%d,\"game_over\":%s,\"player_rack\":\"%s\",\"ai_rack\":\"%s\"}\n",
                    game.player_score, game.ai_score, game.bag.count,
-                   game.game_over ? "true" : "false", a_rack);
+                   game.game_over ? "true" : "false", p_rack, a_rack);
             fflush(stdout);
         } else if (strcmp(cmd, "PLAY_MOVE") == 0) {
             /* Format: PLAY_MOVE row col dir word blank_mask */

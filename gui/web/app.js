@@ -1,6 +1,7 @@
 /**
  * TESSERA — Scrabble Engine Web UI Controller
- * Communicates with the native C engine via JSON REST API.
+ * Championship Two-Player Analysis Arena & Demonstration Station
+ * Communicates with the native C11 engine via JSON REST API.
  */
 
 const BOARD_SIZE = 15;
@@ -16,19 +17,73 @@ const TOTAL_DISTRIBUTION = {
     'U':4, 'V':2, 'W':2, 'X':1, 'Y':2, 'Z':1, '?':2
 };
 
-// State
+const OPPONENT_PROFILES = {
+    "6": {
+        name: "MAGPIE Champion",
+        elo: "(2150 Elo)",
+        desc: "2-Ply Realization Simulation against Bayesian tile refills",
+        rackTitle: "Opponent Rack — MAGPIE (2150 Elo)"
+    },
+    "5": {
+        name: "Quackle Simulation",
+        elo: "(2100 Elo)",
+        desc: "Monte Carlo Playout Rollouts with equity evaluation",
+        rackTitle: "Opponent Rack — Quackle (2100 Elo)"
+    },
+    "4": {
+        name: "Neural Static",
+        elo: "(1950 Elo)",
+        desc: "448-dim Position-Keyed NNUE 1-Ply Static Evaluator",
+        rackTitle: "Opponent Rack — Neural Static (1950 Elo)"
+    },
+    "3": {
+        name: "Heuristic Grandmaster",
+        elo: "(1850 Elo)",
+        desc: "8-Phase Leave Evaluation with Vowel-Consonant Balance",
+        rackTitle: "Opponent Rack — Heuristic GM (1850 Elo)"
+    },
+    "2": {
+        name: "Bingo Hunter",
+        elo: "(1750 Elo)",
+        desc: "Prioritizes TISANE/RETINAS stem leave retention",
+        rackTitle: "Opponent Rack — Bingo Hunter (1750 Elo)"
+    },
+    "1": {
+        name: "Defensive Turtler",
+        elo: "(1650 Elo)",
+        desc: "Tight board control, minimizes triple word openings",
+        rackTitle: "Opponent Rack — Turtler (1650 Elo)"
+    },
+    "0": {
+        name: "Baseline Greedy",
+        elo: "(1550 Elo)",
+        desc: "1-Ply Pure Score Maximizer (no leave synergy)",
+        rackTitle: "Opponent Rack — Baseline Greedy (1550 Elo)"
+    },
+    "human": {
+        name: "Human Challenger",
+        elo: "(Interactive)",
+        desc: "Manual play mode — Place tiles and validate moves",
+        rackTitle: "Your Rack (Interactive Challenger)"
+    }
+};
+
+// Global State
 let gameState = null;
 let pendingPlaced = []; // Array of {row, col, letter, is_blank, original_rack_index}
 let selectedRackIndex = -1;
 let moveHistory = [];
 let isAiVsAiRunning = false;
 let aiVsAiTimer = null;
+let selectedOpponentKey = "6";
+let lastMoveCoords = [];
 
-// DOM Elements
+// Cached DOM Elements
 const boardEl = document.getElementById("scrabble-board");
 const colLabelsEl = document.getElementById("col-labels");
 const rowLabelsEl = document.getElementById("row-labels");
 const rackEl = document.getElementById("player-rack");
+const oppRackEl = document.getElementById("opp-rack-tiles");
 const statusMsgEl = document.getElementById("status-message");
 const scorePlayerEl = document.getElementById("score-player");
 const scoreAiEl = document.getElementById("score-ai");
@@ -36,6 +91,8 @@ const bagCountEl = document.getElementById("bag-count");
 const hintsTbodyEl = document.getElementById("hints-tbody");
 const historyTbodyEl = document.getElementById("history-tbody");
 const tileTrackerGridEl = document.getElementById("tile-tracker-grid");
+const leadPillEl = document.getElementById("match-lead-pill");
+const oppSelectEl = document.getElementById("opponent-select");
 
 // Initialize Board UI
 function initBoardGrid() {
@@ -65,7 +122,7 @@ function initBoardGrid() {
             cell.dataset.row = r;
             cell.dataset.col = c;
 
-            // Determine multiplier styling
+            // Multiplier styling
             const mult = getCellMultiplier(r, c);
             if (mult === "TW") { cell.classList.add("cell-tw"); cell.textContent = "3W"; }
             else if (mult === "DW") { cell.classList.add("cell-dw"); cell.textContent = "2W"; }
@@ -116,31 +173,118 @@ function createTileElement(letter, isBlank = false, isPending = false) {
     return tile;
 }
 
+function updateOpponentHeader() {
+    const prof = OPPONENT_PROFILES[selectedOpponentKey] || OPPONENT_PROFILES["6"];
+    const elName = document.getElementById("opp-display-name");
+    const elElo = document.getElementById("opp-display-elo");
+    const elDesc = document.getElementById("opp-display-desc");
+    const elTitle = document.getElementById("opp-rack-title");
+    const humanTools = document.getElementById("human-tools");
+    const humanActions = document.getElementById("human-actions");
+    const playerTitle = document.getElementById("player-rack-title");
+
+    if (elName) elName.textContent = prof.name;
+    if (elElo) elElo.textContent = prof.elo;
+    if (elDesc) elDesc.textContent = prof.desc;
+    if (elTitle) elTitle.textContent = prof.rackTitle;
+
+    if (selectedOpponentKey === "human") {
+        if (humanTools) humanTools.style.display = "flex";
+        if (humanActions) humanActions.style.display = "flex";
+        if (playerTitle) playerTitle.textContent = "Your Rack (Interactive Challenger)";
+    } else {
+        if (humanTools) humanTools.style.display = "none";
+        if (humanActions) humanActions.style.display = "none";
+        if (playerTitle) playerTitle.textContent = "Tessera AI Rack (2016 TPR)";
+    }
+}
+
 // Render Board & Racks from State
 function renderState(state) {
+    if (!state) return;
     gameState = state;
 
     scorePlayerEl.textContent = state.player_score;
     scoreAiEl.textContent = state.ai_score;
     bagCountEl.textContent = state.bag_count;
 
-    // Render cells
+    // Render Lead Pill
+    const pScore = state.player_score;
+    const aScore = state.ai_score;
+    const prof = OPPONENT_PROFILES[selectedOpponentKey] || OPPONENT_PROFILES["6"];
+    if (leadPillEl) {
+        if (pScore === aScore) {
+            leadPillEl.textContent = `Tied ${pScore} \u2013 ${aScore}`;
+        } else if (aScore > pScore) {
+            leadPillEl.textContent = `Tessera +${aScore - pScore} (${aScore}\u2013${pScore})`;
+        } else {
+            const oppShort = prof.name.split(" ")[0];
+            leadPillEl.textContent = `${oppShort} +${pScore - aScore} (${pScore}\u2013${aScore})`;
+        }
+    }
+
+    // Active Turn Indicators
+    const oppDot = document.getElementById("opp-turn-dot");
+    const tesseraDot = document.getElementById("tessera-turn-dot");
+    const oppBox = document.getElementById("player-box-opp");
+    const tesseraBox = document.getElementById("player-box-tessera");
+    const oppBadge = document.getElementById("opp-status-badge");
+    const tesseraBadge = document.getElementById("tessera-status-badge");
+
+    if (state.turn === 0) {
+        // Opponent's turn
+        if (oppDot) oppDot.classList.add("active");
+        if (oppBox) oppBox.classList.add("active-turn-box");
+        if (oppBadge) {
+            oppBadge.textContent = "Active Turn";
+            oppBadge.classList.add("active-turn");
+        }
+
+        if (tesseraDot) tesseraDot.classList.remove("active");
+        if (tesseraBox) tesseraBox.classList.remove("active-turn-box");
+        if (tesseraBadge) {
+            tesseraBadge.textContent = "Waiting";
+            tesseraBadge.classList.remove("active-turn");
+        }
+    } else {
+        // Tessera's turn
+        if (tesseraDot) tesseraDot.classList.add("active");
+        if (tesseraBox) tesseraBox.classList.add("active-turn-box");
+        if (tesseraBadge) {
+            tesseraBadge.textContent = "Active Turn";
+            tesseraBadge.classList.add("active-turn");
+        }
+
+        if (oppDot) oppDot.classList.remove("active");
+        if (oppBox) oppBox.classList.remove("active-turn-box");
+        if (oppBadge) {
+            oppBadge.textContent = "Waiting";
+            oppBadge.classList.remove("active-turn");
+        }
+    }
+
+    // Render Board Cells & Highlights
     const cells = boardEl.querySelectorAll(".cell");
     cells.forEach(cell => {
         const r = parseInt(cell.dataset.row);
         const c = parseInt(cell.dataset.col);
 
-        // Clear existing tiles
+        cell.classList.remove("last-move-cell");
         const oldTile = cell.querySelector(".tile");
         if (oldTile) oldTile.remove();
 
-        // Check if committed in board state
+        // Highlight cells from the latest move
+        if (lastMoveCoords.some(([lr, lc]) => lr === r && lc === c)) {
+            cell.classList.add("last-move-cell");
+        }
+
+        // Committed board tile
         const boardCell = state.board[r][c];
         if (boardCell.tile) {
             const tileEl = createTileElement(boardCell.tile, boardCell.is_blank);
             cell.appendChild(tileEl);
         } else {
-            // Check if pending user placement
+            // Pending human placement
             const pending = pendingPlaced.find(p => p.row === r && p.col === c);
             if (pending) {
                 const tileEl = createTileElement(pending.letter, pending.is_blank, true);
@@ -149,10 +293,11 @@ function renderState(state) {
         }
     });
 
-    renderRack();
+    renderOpponentRack();
+    renderPlayerRack();
     renderTileTracker();
 
-    // Update Phase Bucket & Openness Telemetry
+    // Telemetry Phase & Openness
     const elPhase = document.getElementById("telemetry-phase-bucket");
     const elOpen = document.getElementById("telemetry-openness");
     if (elPhase) {
@@ -187,16 +332,46 @@ function renderState(state) {
     }
 }
 
-function renderRack() {
-    rackEl.innerHTML = "";
-    if (!gameState || !gameState.player_rack) return;
+function renderOpponentRack() {
+    if (!oppRackEl || !gameState) return;
+    oppRackEl.innerHTML = "";
 
+    const rackStr = (selectedOpponentKey === "human") ? gameState.ai_rack : gameState.player_rack;
+    if (!rackStr) return;
+
+    for (let i = 0; i < rackStr.length; i++) {
+        const ch = rackStr[i];
+        const isBlank = (ch === '?');
+        const tileEl = createTileElement(ch, isBlank);
+        oppRackEl.appendChild(tileEl);
+    }
+}
+
+function renderPlayerRack() {
+    rackEl.innerHTML = "";
+    if (!gameState) return;
+
+    const isHuman = (selectedOpponentKey === "human");
+    const rackStr = isHuman ? gameState.player_rack : gameState.ai_rack;
+    if (!rackStr) return;
+
+    if (!isHuman) {
+        // Read-only Tessera AI rack display in AI-vs-AI mode
+        for (let i = 0; i < rackStr.length; i++) {
+            const ch = rackStr[i];
+            const tileEl = createTileElement(ch, ch === '?');
+            rackEl.appendChild(tileEl);
+        }
+        return;
+    }
+
+    // Interactive Human Rack
     const availableTiles = [];
     const usedIndices = new Set(pendingPlaced.map(p => p.original_rack_index));
 
-    for (let i = 0; i < gameState.player_rack.length; i++) {
+    for (let i = 0; i < rackStr.length; i++) {
         if (!usedIndices.has(i)) {
-            availableTiles.push({ letter: gameState.player_rack[i], index: i });
+            availableTiles.push({ letter: rackStr[i], index: i });
         }
     }
 
@@ -213,7 +388,7 @@ function renderRack() {
             } else {
                 selectedRackIndex = t.index;
             }
-            renderRack();
+            renderPlayerRack();
         });
 
         rackEl.appendChild(tileEl);
@@ -221,9 +396,9 @@ function renderRack() {
 }
 
 function handleCellClick(r, c) {
-    if (isAiVsAiRunning) return;
+    if (isAiVsAiRunning || selectedOpponentKey !== "human") return;
 
-    // 1. If square already has a pending placed tile, return it to rack!
+    // 1. If square already has a pending placed tile, return it to rack
     const pendingIdx = pendingPlaced.findIndex(p => p.row === r && p.col === c);
     if (pendingIdx >= 0) {
         pendingPlaced.splice(pendingIdx, 1);
@@ -236,7 +411,7 @@ function handleCellClick(r, c) {
         return;
     }
 
-    // 3. If a rack tile is currently selected, place it here!
+    // 3. If a rack tile is currently selected, place it here
     if (selectedRackIndex >= 0) {
         const letter = gameState.player_rack[selectedRackIndex];
         let placedLetter = letter;
@@ -262,7 +437,7 @@ function handleCellClick(r, c) {
     }
 }
 
-// Tile Tracker (Tab 3)
+// Unseen Bag Tracker (Tab 4)
 function renderTileTracker() {
     if (!tileTrackerGridEl || !gameState) return;
     tileTrackerGridEl.innerHTML = "";
@@ -280,8 +455,9 @@ function renderTileTracker() {
         }
     }
 
-    // Subtract player rack
-    for (const ch of gameState.player_rack) {
+    // Subtract known player rack
+    const activeRack = (selectedOpponentKey === "human") ? gameState.player_rack : "";
+    for (const ch of activeRack) {
         counts[ch]--;
     }
 
@@ -302,6 +478,62 @@ function renderTileTracker() {
         item.appendChild(cnt);
         tileTrackerGridEl.appendChild(item);
     }
+}
+
+// Highlight Newly Placed Move on Board
+function highlightMoveOnBoard(move) {
+    lastMoveCoords = [];
+    if (!move || move.type !== 0 || !move.word) return;
+    const len = move.word.length;
+    for (let i = 0; i < len; i++) {
+        const r = (move.dir === "V") ? move.row + i : move.row;
+        const c = (move.dir === "H") ? move.col + i : move.col;
+        if (r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE) {
+            lastMoveCoords.push([r, c]);
+        }
+    }
+}
+
+function updateTelemetryMetrics(m) {
+    if (!m) return;
+    const elNodes = document.getElementById("telemetry-nodes");
+    const elTrans = document.getElementById("telemetry-transpositions");
+    const elPasses = document.getElementById("telemetry-dirty-passes");
+    const elConf = document.getElementById("telemetry-court-conf");
+    const elPalimp = document.getElementById("telemetry-palimpsest");
+    if (elNodes) elNodes.textContent = (m.nodes || 0).toLocaleString();
+    if (elTrans) elTrans.textContent = (m.transpositions || 0).toLocaleString();
+    if (elPasses) elPasses.textContent = (m.settle_passes || 0).toLocaleString();
+    if (elConf) elConf.textContent = ((m.confidence || 0) * 100).toFixed(1) + "%";
+    if (elPalimp) elPalimp.textContent = (m.palimpsest_bias || 0).toFixed(2) + " pts";
+}
+
+function addHistoryRow(player, word, pos, score, total) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+        <td>${moveHistory.length + 1}</td>
+        <td><strong>${player}</strong></td>
+        <td><code>${word}</code></td>
+        <td>${pos}</td>
+        <td>+${score}</td>
+        <td><strong>${total}</strong></td>
+    `;
+    if (historyTbodyEl.querySelector(".placeholder-text")) {
+        historyTbodyEl.innerHTML = "";
+    }
+    historyTbodyEl.prepend(tr);
+    moveHistory.push({ player, word, pos, score, total });
+}
+
+function declareGameOver(state) {
+    const prof = OPPONENT_PROFILES[selectedOpponentKey] || OPPONENT_PROFILES["6"];
+    let winner = "Tie Game!";
+    if (state.ai_score > state.player_score) {
+        winner = `Tessera AI wins by ${state.ai_score - state.player_score} points!`;
+    } else if (state.player_score > state.ai_score) {
+        winner = `${prof.name} wins by ${state.player_score - state.ai_score} points!`;
+    }
+    statusMsgEl.innerHTML = `<strong style="color: #f59e0b;">🏁 MATCH FINISHED:</strong> ${winner} Final Score: <strong>${state.player_score}</strong> (${prof.name}) &ndash; <strong>${state.ai_score}</strong> (Tessera).`;
 }
 
 // API Communication
@@ -329,6 +561,11 @@ async function apiAiMove() {
     return await res.json();
 }
 
+async function apiOpponentMove(botType = "6") {
+    const res = await fetch(`/api/opponent_move?bot_type=${encodeURIComponent(botType)}`);
+    return await res.json();
+}
+
 async function apiGetHint() {
     const res = await fetch("/api/hint");
     return await res.json();
@@ -353,14 +590,159 @@ async function apiCheckWord(word) {
     return await res.json();
 }
 
-// Play Move Submission
+// Centralized Move Result Processor
+function handleMoveResult(res, actorName, actorRole) {
+    if (res.status !== "ok") {
+        statusMsgEl.textContent = `${actorName} error: ${res.message || "Move failed"}`;
+        return;
+    }
+
+    if (res.move.type === 0) { // MOVE_PLAY
+        const pos = `${String.fromCharCode(65 + res.move.col)}${res.move.row + 1} (${res.move.dir})`;
+        const total = (actorRole === "Opponent") ? res.player_score : res.ai_score;
+        addHistoryRow(actorName, res.move.word, pos, res.move.score, total);
+        highlightMoveOnBoard(res.move);
+
+        const nextActor = (actorRole === "Opponent") ? "Tessera AI (2016 TPR)" : actorName;
+        statusMsgEl.innerHTML = `<strong>${actorName}</strong> played <code>${res.move.word}</code> for <strong>+${res.move.score} pts</strong> (${res.time_ms.toFixed(1)} ms). Next: <em>${nextActor}</em>`;
+    } else if (res.move.type === 1) {
+        const total = (actorRole === "Opponent") ? res.player_score : res.ai_score;
+        addHistoryRow(actorName, "(Exchanged Tiles)", "-", 0, total);
+        statusMsgEl.innerHTML = `<strong>${actorName}</strong> exchanged tiles. Next turn!`;
+    } else {
+        const total = (actorRole === "Opponent") ? res.player_score : res.ai_score;
+        addHistoryRow(actorName, "(Pass)", "-", 0, total);
+        statusMsgEl.innerHTML = `<strong>${actorName}</strong> passed. Next turn!`;
+    }
+
+    if (res.metrics) {
+        updateTelemetryMetrics(res.metrics);
+    }
+    if (res.phase) {
+        const elPhase = document.getElementById("telemetry-phase-bucket");
+        if (elPhase) elPhase.textContent = res.phase;
+    }
+    if (res.openness) {
+        const elOpen = document.getElementById("telemetry-openness");
+        if (elOpen) elOpen.textContent = res.openness;
+    }
+    if (res.endgame) {
+        statusMsgEl.innerHTML += ` &bull; <span style="color:#2ecc71;font-weight:bold;">👑 EXACT ENDGAME MINIMAX ACTIVE</span>`;
+    }
+
+    // Refresh state from engine
+    apiGetState().then(fresh => {
+        renderState(fresh);
+        if (fresh.game_over) {
+            declareGameOver(fresh);
+        }
+    });
+}
+
+// Step 1 Single Turn (For live teacher demonstration & walkthrough)
+async function stepSingleTurn() {
+    if (isAiVsAiRunning) {
+        toggleAiVsAi(); // Pause continuous loop if active
+    }
+    if (!gameState || gameState.game_over) {
+        statusMsgEl.textContent = "Match is over. Click 'Reset Match' to start a new match.";
+        return;
+    }
+
+    const prof = OPPONENT_PROFILES[selectedOpponentKey] || OPPONENT_PROFILES["6"];
+
+    if (gameState.turn === 0) {
+        // Opponent's turn
+        if (selectedOpponentKey === "human") {
+            statusMsgEl.textContent = "Human turn: Place your tiles and click 'Play Move' or 'Suggest Best Move'.";
+            return;
+        }
+
+        statusMsgEl.innerHTML = `<span class="spinner"></span> <strong>${prof.name}</strong> is calculating move...`;
+        const res = await apiOpponentMove(selectedOpponentKey);
+        handleMoveResult(res, prof.name, "Opponent");
+    } else {
+        // Tessera's turn
+        statusMsgEl.innerHTML = `<span class="spinner"></span> <strong>Tessera AI (2016 TPR)</strong> is searching Belief Lattice DAG...`;
+        const res = await apiAiMove();
+        handleMoveResult(res, "Tessera AI", "Tessera");
+    }
+}
+
+// Continuous AI vs AI Demonstration Mode
+async function toggleAiVsAi() {
+    const btn = document.getElementById("btn-ai-vs-ai");
+    if (isAiVsAiRunning) {
+        isAiVsAiRunning = false;
+        clearTimeout(aiVsAiTimer);
+        btn.textContent = "▶ Start AI Match";
+        btn.classList.remove("btn-accent");
+        btn.classList.add("btn-primary");
+        statusMsgEl.textContent = "AI match paused. Click 'Step 1 Turn' or '▶ Start AI Match' to continue.";
+    } else {
+        if (selectedOpponentKey === "human") {
+            alert("Please select an AI opponent archetype from the dropdown to run an AI vs AI match.");
+            return;
+        }
+        if (gameState && gameState.game_over) {
+            statusMsgEl.textContent = "Game is already over. Reset match first.";
+            return;
+        }
+        isAiVsAiRunning = true;
+        btn.textContent = "⏸ Pause AI Match";
+        btn.classList.remove("btn-primary");
+        btn.classList.add("btn-accent");
+
+        runAiVsAiStep();
+    }
+}
+
+async function runAiVsAiStep() {
+    if (!isAiVsAiRunning) return;
+    if (!gameState || gameState.game_over) {
+        isAiVsAiRunning = false;
+        const btn = document.getElementById("btn-ai-vs-ai");
+        btn.textContent = "▶ Start AI Match";
+        btn.classList.remove("btn-accent");
+        btn.classList.add("btn-primary");
+        return;
+    }
+
+    const prof = OPPONENT_PROFILES[selectedOpponentKey] || OPPONENT_PROFILES["6"];
+
+    if (gameState.turn === 0) {
+        statusMsgEl.innerHTML = `<span class="spinner"></span> <strong>${prof.name}</strong> is calculating move...`;
+        const res = await apiOpponentMove(selectedOpponentKey);
+        handleMoveResult(res, prof.name, "Opponent");
+    } else {
+        statusMsgEl.innerHTML = `<span class="spinner"></span> <strong>Tessera AI (2016 TPR)</strong> is searching Belief Lattice DAG...`;
+        const res = await apiAiMove();
+        handleMoveResult(res, "Tessera AI", "Tessera");
+    }
+
+    const fresh = await apiGetState();
+    if (fresh.game_over) {
+        isAiVsAiRunning = false;
+        const btn = document.getElementById("btn-ai-vs-ai");
+        btn.textContent = "▶ Start AI Match";
+        btn.classList.remove("btn-accent");
+        btn.classList.add("btn-primary");
+        declareGameOver(fresh);
+        return;
+    }
+
+    if (isAiVsAiRunning) {
+        aiVsAiTimer = setTimeout(runAiVsAiStep, 1300); // 1.3s cadence for smooth viewing & explanation
+    }
+}
+
+// Interactive Human Move Submission
 async function submitPlayMove() {
     if (pendingPlaced.length === 0) {
         alert("Please place at least one tile on the board.");
         return;
     }
 
-    // Determine orientation: all placed tiles must be in same row or col
     const rows = pendingPlaced.map(p => p.row);
     const cols = pendingPlaced.map(p => p.col);
     const sameRow = rows.every(r => r === rows[0]);
@@ -373,7 +755,6 @@ async function submitPlayMove() {
 
     let dir = sameRow ? "H" : "V";
     if (pendingPlaced.length === 1) {
-        // If 1 tile placed, check adjacent board tiles to determine direction
         const r = pendingPlaced[0].row;
         const c = pendingPlaced[0].col;
         const hasH = (c > 0 && gameState.board[r][c - 1].tile) || (c < 14 && gameState.board[r][c + 1].tile);
@@ -382,7 +763,6 @@ async function submitPlayMove() {
         else dir = "H";
     }
 
-    // Find bounding word
     let startR, startC, wordChars = [];
     if (dir === "H") {
         const r = rows[0];
@@ -430,38 +810,14 @@ async function submitPlayMove() {
     const res = await apiPlayMove(startR, startC, dir, fullWord);
     if (res.status === "ok") {
         pendingPlaced = [];
-        addHistoryRow("Player", fullWord, `${String.fromCharCode(65 + startC)}${startR + 1}`, res.score, res.player_score);
+        const pos = `${String.fromCharCode(65 + startC)}${startR + 1} (${dir})`;
+        addHistoryRow("Player", fullWord, pos, res.score, res.player_score);
+        highlightMoveOnBoard({ row: startR, col: startC, dir, word: fullWord, type: 0 });
         statusMsgEl.textContent = `Player scored ${res.score} points with ${fullWord}! AI is thinking...`;
-
-        if (res.metrics) {
-            const elNodes = document.getElementById("telemetry-nodes");
-            const elTrans = document.getElementById("telemetry-transpositions");
-            const elPasses = document.getElementById("telemetry-dirty-passes");
-            const elConf = document.getElementById("telemetry-court-conf");
-            const elPalimp = document.getElementById("telemetry-palimpsest");
-            if (elNodes) elNodes.textContent = res.metrics.nodes || 0;
-            if (elTrans) elTrans.textContent = res.metrics.transpositions || 0;
-            if (elPasses) elPasses.textContent = res.metrics.settle_passes || 0;
-            if (elConf) elConf.textContent = ((res.metrics.confidence || 0) * 100).toFixed(1) + "%";
-            if (elPalimp) elPalimp.textContent = (res.metrics.palimpsest_bias || 0).toFixed(2) + " pts";
-        }
-
-        if (res.phase) {
-            const elPhase = document.getElementById("telemetry-phase-bucket");
-            if (elPhase) elPhase.textContent = res.phase;
-        }
-        if (res.openness) {
-            const elOpen = document.getElementById("telemetry-openness");
-            if (elOpen) elOpen.textContent = res.openness;
-        }
-        if (res.endgame) {
-            statusMsgEl.innerHTML = `<span style="color:#2ecc71;font-weight:bold;">👑 EXACT ENDGAME MINIMAX ACTIVE</span>: AI played ${res.move.word} (Proven Spread: ${res.move.equity >= 0 ? '+' : ''}${res.move.equity.toFixed(0)} pts). Your turn!`;
-        }
 
         const freshState = await apiGetState();
         renderState(freshState);
 
-        // Trigger AI reply
         setTimeout(triggerAiTurn, 600);
     } else {
         alert("Move rejected: " + res.message);
@@ -470,134 +826,44 @@ async function submitPlayMove() {
 }
 
 async function triggerAiTurn() {
-    statusMsgEl.innerHTML = `<span class="spinner"></span> Tessera AI is calculating Monte Carlo simulations...`;
+    statusMsgEl.innerHTML = `<span class="spinner"></span> Tessera AI is searching Belief Lattice DAG...`;
     const res = await apiAiMove();
-
-    if (res.status === "ok") {
-        if (res.move.type === 0) { // MOVE_PLAY
-            const pos = `${String.fromCharCode(65 + res.move.col)}${res.move.row + 1}`;
-            addHistoryRow("Tessera AI", res.move.word, pos, res.move.score, res.ai_score);
-            statusMsgEl.textContent = `Tessera AI played ${res.move.word} for ${res.move.score} points (${res.time_ms.toFixed(1)} ms). Your turn!`;
-        } else if (res.move.type === 1) {
-            addHistoryRow("Tessera AI", "(Exchanged Tiles)", "-", 0, res.ai_score);
-            statusMsgEl.textContent = `Tessera AI exchanged tiles. Your turn!`;
-        } else {
-            addHistoryRow("Tessera AI", "(Pass)", "-", 0, res.ai_score);
-            statusMsgEl.textContent = `Tessera AI passed. Your turn!`;
-        }
-
-        if (res.metrics) {
-            const elNodes = document.getElementById("telemetry-nodes");
-            const elTrans = document.getElementById("telemetry-transpositions");
-            const elPasses = document.getElementById("telemetry-dirty-passes");
-            const elConf = document.getElementById("telemetry-court-conf");
-            const elPalimp = document.getElementById("telemetry-palimpsest");
-            if (elNodes) elNodes.textContent = res.metrics.nodes || 0;
-            if (elTrans) elTrans.textContent = res.metrics.transpositions || 0;
-            if (elPasses) elPasses.textContent = res.metrics.settle_passes || 0;
-            if (elConf) elConf.textContent = ((res.metrics.confidence || 0) * 100).toFixed(1) + "%";
-            if (elPalimp) elPalimp.textContent = (res.metrics.palimpsest_bias || 0).toFixed(2) + " pts";
-        }
-
-        if (res.phase) {
-            const elPhase = document.getElementById("telemetry-phase-bucket");
-            if (elPhase) elPhase.textContent = res.phase;
-        }
-        if (res.openness) {
-            const elOpen = document.getElementById("telemetry-openness");
-            if (elOpen) elOpen.textContent = res.openness;
-        }
-        if (res.endgame) {
-            statusMsgEl.innerHTML = `<span style="color:#2ecc71;font-weight:bold;">👑 EXACT ENDGAME MINIMAX ACTIVE</span>: AI played ${res.move.word} (Proven Spread: ${res.move.equity >= 0 ? '+' : ''}${res.move.equity.toFixed(0)} pts). Your turn!`;
-        }
-
-        const freshState = await apiGetState();
-        renderState(freshState);
-
-        if (freshState.game_over) {
-            statusMsgEl.textContent = `Game Over! Final: Player ${freshState.player_score} - AI ${freshState.ai_score}`;
-        }
-    } else {
-        statusMsgEl.textContent = res.message || "AI encountered an error.";
-    }
+    handleMoveResult(res, "Tessera AI", "Tessera");
 }
 
-function addHistoryRow(player, word, pos, score, total) {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-        <td>${moveHistory.length + 1}</td>
-        <td><strong>${player}</strong></td>
-        <td><code>${word}</code></td>
-        <td>${pos}</td>
-        <td>+${score}</td>
-        <td><strong>${total}</strong></td>
-    `;
-    if (historyTbodyEl.querySelector(".placeholder-text")) {
-        historyTbodyEl.innerHTML = "";
-    }
-    historyTbodyEl.prepend(tr);
-    moveHistory.push({ player, word, pos, score, total });
-}
-
-// AI vs AI Demonstration Mode
-async function toggleAiVsAi() {
-    const btn = document.getElementById("btn-ai-vs-ai");
-    if (isAiVsAiRunning) {
-        isAiVsAiRunning = false;
-        clearInterval(aiVsAiTimer);
-        btn.textContent = "⚡ AI vs AI Demo";
-        btn.classList.remove("btn-accent");
-        btn.classList.add("btn-primary");
-        statusMsgEl.textContent = "AI vs AI match paused.";
-    } else {
-        isAiVsAiRunning = true;
-        btn.textContent = "⏸ Pause AI Match";
-        btn.classList.remove("btn-primary");
-        btn.classList.add("btn-accent");
-
-        runAiVsAiStep();
-    }
-}
-
-async function runAiVsAiStep() {
-    if (!isAiVsAiRunning) return;
-
-    statusMsgEl.innerHTML = `<span class="spinner"></span> AI self-play thinking...`;
-    const res = await apiAiMove();
-
-    if (res.status === "ok") {
-        if (res.move.type === 0) {
-            const pos = `${String.fromCharCode(65 + res.move.col)}${res.move.row + 1}`;
-            addHistoryRow("Tessera AI", res.move.word, pos, res.move.score, res.ai_score);
-            statusMsgEl.textContent = `AI played ${res.move.word} for ${res.move.score} pts (${res.time_ms.toFixed(1)} ms).`;
-        }
-        const fresh = await apiGetState();
-        renderState(fresh);
-
-        if (fresh.game_over) {
-            isAiVsAiRunning = false;
-            document.getElementById("btn-ai-vs-ai").textContent = "⚡ AI vs AI Demo";
-            statusMsgEl.textContent = `Match Finished! Final Score: Player ${fresh.player_score} - AI ${fresh.ai_score}`;
-            return;
-        }
-
-        aiVsAiTimer = setTimeout(runAiVsAiStep, 1000);
-    }
-}
-
-// Event Listeners
+// Setup Event Listeners
 function setupEvents() {
+    // Opponent Selector
+    oppSelectEl.addEventListener("change", () => {
+        selectedOpponentKey = oppSelectEl.value;
+        updateOpponentHeader();
+        renderState(gameState);
+        const prof = OPPONENT_PROFILES[selectedOpponentKey] || OPPONENT_PROFILES["6"];
+        statusMsgEl.textContent = `Opponent profile switched to ${prof.name} ${prof.elo}.`;
+    });
+
+    // Reset Match
     document.getElementById("btn-new-game").addEventListener("click", async () => {
+        if (isAiVsAiRunning) {
+            toggleAiVsAi();
+        }
         pendingPlaced = [];
+        lastMoveCoords = [];
         moveHistory = [];
         historyTbodyEl.innerHTML = `<tr><td colspan="6" class="placeholder-text">No moves played yet.</td></tr>`;
         const state = await apiNewGame();
         renderState(state);
-        statusMsgEl.textContent = "New match started! Your turn.";
+        const prof = OPPONENT_PROFILES[selectedOpponentKey] || OPPONENT_PROFILES["6"];
+        statusMsgEl.textContent = `New match initialized. ${prof.name} vs Tessera AI. Click 'Step 1 Turn' or '▶ Start AI Match' to begin!`;
     });
 
+    // Step 1 Turn Button
+    document.getElementById("btn-step-turn").addEventListener("click", stepSingleTurn);
+
+    // AI vs AI Toggle Button
     document.getElementById("btn-ai-vs-ai").addEventListener("click", toggleAiVsAi);
 
+    // Human Controls
     document.getElementById("btn-recall-tiles").addEventListener("click", () => {
         pendingPlaced = [];
         selectedRackIndex = -1;
@@ -612,7 +878,7 @@ function setupEvents() {
             [arr[i], arr[j]] = [arr[j], arr[i]];
         }
         gameState.player_rack = arr.join("");
-        renderRack();
+        renderPlayerRack();
     });
 
     document.getElementById("btn-play-move").addEventListener("click", submitPlayMove);
@@ -627,11 +893,12 @@ function setupEvents() {
         }
     });
 
+    // Candidate Plays Hint
     document.getElementById("btn-get-hint").addEventListener("click", async () => {
         const loading = document.getElementById("engine-hint-loading");
-        loading.classList.remove("hidden");
+        if (loading) loading.classList.remove("hidden");
         const res = await apiGetHint();
-        loading.classList.add("hidden");
+        if (loading) loading.classList.add("hidden");
 
         if (res.status === "ok" && res.hints) {
             if (res.phase) {
@@ -652,13 +919,14 @@ function setupEvents() {
                     <td><strong>${h.word}</strong></td>
                     <td>${pos}</td>
                     <td>+${h.score}</td>
-                    <td>${h.leave || "—"}</td>
+                    <td>${h.leave || "\u2014"}</td>
                     <td>${h.equity.toFixed(1)}</td>
                 `;
                 hintsTbodyEl.appendChild(tr);
             });
-            // Switch to analysis tab
-            document.querySelector('[data-tab="tab-engine"]').click();
+            // Switch to Hints tab
+            const tabBtn = document.querySelector('[data-tab="tab-hints"]');
+            if (tabBtn) tabBtn.click();
         }
     });
 
@@ -714,10 +982,10 @@ function setupEvents() {
         card.classList.remove("hidden", "valid", "invalid");
         if (res.valid) {
             card.classList.add("valid");
-            card.textContent = `✓ "${val}" IS in the official SOWPODS tournament dictionary!`;
+            card.textContent = `\u2713 "${val}" IS in the official tournament lexicon (SOWPODS)!`;
         } else {
             card.classList.add("invalid");
-            card.textContent = `✗ "${val}" is NOT a valid Scrabble word.`;
+            card.textContent = `\u2717 "${val}" is NOT a valid Scrabble word.`;
         }
     });
 
@@ -728,7 +996,8 @@ function setupEvents() {
             document.querySelectorAll(".tab-pane").forEach(p => p.classList.remove("active"));
 
             btn.classList.add("active");
-            document.getElementById(btn.dataset.tab).classList.add("active");
+            const targetPane = document.getElementById(btn.dataset.tab);
+            if (targetPane) targetPane.classList.add("active");
         });
     });
 }
@@ -737,12 +1006,13 @@ function setupEvents() {
 async function startApp() {
     initBoardGrid();
     setupEvents();
+    updateOpponentHeader();
     try {
         const state = await apiGetState();
         renderState(state);
     } catch (e) {
-        console.error("Could not fetch state:", e);
-        statusMsgEl.textContent = "Connecting to native engine...";
+        console.error("Could not fetch initial engine state:", e);
+        statusMsgEl.textContent = "Connecting to native C11 Tessera engine...";
     }
 }
 

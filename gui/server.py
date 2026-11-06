@@ -92,6 +92,10 @@ class ScrabbleHTTPHandler(SimpleHTTPRequestHandler):
         elif path == "/api/ai_move":
             res = engine.send_command("AI_MOVE")
             self._send_json(res)
+        elif path == "/api/opponent_move":
+            bot_type = params.get("bot_type", ["6"])[0]
+            res = engine.send_command(f"OPPONENT_MOVE {bot_type}")
+            self._send_json(res)
         elif path == "/api/new_game":
             res = engine.send_command("NEW_GAME")
             self._send_json(res)
@@ -117,6 +121,10 @@ class ScrabbleHTTPHandler(SimpleHTTPRequestHandler):
             self._send_json(res)
         elif path == "/api/pass":
             res = engine.send_command("PASS")
+            self._send_json(res)
+        elif path == "/api/opponent_move":
+            bot_type = data.get("bot_type", 6)
+            res = engine.send_command(f"OPPONENT_MOVE {bot_type}")
             self._send_json(res)
         else:
             self.send_error(404, "API endpoint not found")

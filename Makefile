@@ -4,7 +4,7 @@ LDFLAGS = -flto -lm
 OMP_CFLAGS = -O3 -march=native -fopenmp -Wall -Wextra -std=c11 -Iinclude
 OMP_LDFLAGS = -fopenmp -lm
 
-SRCS = src/dict.c src/board.c src/movegen.c src/eval.c src/nnue.c src/zobrist.c src/palimpsest.c src/lattice.c src/settle.c src/broker.c src/court.c src/simulation.c src/protocol.c src/endgame.c src/bayes_rack.c
+SRCS = src/dict.c src/board.c src/movegen.c src/eval.c src/nnue.c src/zobrist.c src/palimpsest.c src/lattice.c src/settle.c src/broker.c src/court.c src/simulation.c src/protocol.c src/endgame.c src/bayes_rack.c src/bot_archetypes.c
 OBJS = $(SRCS:.c=.o)
 TARGET = tessera
 
