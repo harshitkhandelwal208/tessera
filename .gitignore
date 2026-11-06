@@ -17,4 +17,5 @@ data/train_data.bin
 data/test_data.bin
 data/nnue_backup.bin
 data/*.log
+*.tar.gz
 
