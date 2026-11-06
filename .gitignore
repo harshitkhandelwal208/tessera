@@ -1,5 +1,7 @@
+# Object files and build artifacts
 *.o
 src/*.o
+tessera
 tests/test_dict
 tests/test_eval
 tests/test_movegen
@@ -8,14 +10,28 @@ tests/test_endgame
 test_dict
 test_eval
 test_movegen
-tessera
 tools/match_benchmark
 tools/generate_dataset
 tools/train_nnue
+
+# Python & caches
 __pycache__/
+*.pyc
+
+# Local data caches & training scratch
 data/train_data.bin
 data/test_data.bin
 data/nnue_backup.bin
 data/*.log
+data/7bot_*.txt
+data/*_tournament.txt
+
+# Release archives
 *.tar.gz
 
+# Local presentation & viva materials (kept local for student defense)
+PRESENTATION_SCRIPT.md
+Tessera_Presentation_Script_CRCE.pdf
+readme_preview.html
+RELEASE_NOTES.md
+tools/generate_pdf_script.py
