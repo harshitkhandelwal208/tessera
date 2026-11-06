@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Tessera-Test Distributed Community Worker (Fishtest-Style)
-=========================================================
+Tessera-Test Distributed Community Worker
+=========================================
 Distributed worker client for contributing self-play training games
 and running Sequential Probability Ratio Test (SPRT) patch benchmarks
 for the Tessera Championship Scrabble Engine.
@@ -266,7 +266,7 @@ def run_bench(binary_path: Path):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Tessera-Test Distributed Community Worker (Fishtest-Style Client)",
+        description="Tessera-Test Distributed Community Worker",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

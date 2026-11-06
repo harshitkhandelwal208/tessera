@@ -52,7 +52,7 @@
             position: sticky;
             top: 0;
             z-index: 100;
-            background: rgba(15, 23, 42, 0.85);
+            background: rgba(15, 23, 42, 0.9);
             backdrop-filter: blur(12px);
             border-bottom: 1px solid var(--border);
         }
@@ -107,16 +107,17 @@
         .nav-links {
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 6px;
             list-style: none;
+            flex-wrap: wrap;
         }
 
         .nav-link {
-            padding: 8px 16px;
+            padding: 8px 14px;
             border-radius: 8px;
             color: var(--text-secondary);
             text-decoration: none;
-            font-size: 14px;
+            font-size: 13.5px;
             font-weight: 600;
             transition: all 0.2s ease;
             cursor: pointer;
@@ -181,7 +182,7 @@
         }
 
         .hero p {
-            max-width: 740px;
+            max-width: 760px;
             margin: 0 auto 36px;
             font-size: 18px;
             color: var(--text-secondary);
@@ -202,9 +203,9 @@
             align-items: center;
             justify-content: center;
             gap: 10px;
-            padding: 14px 28px;
+            padding: 13px 24px;
             border-radius: 10px;
-            font-size: 15px;
+            font-size: 14.5px;
             font-weight: 700;
             text-decoration: none;
             cursor: pointer;
@@ -323,8 +324,8 @@
             display: block;
         }
 
-        /* Fishtest Dashboard Style */
-        .fishtest-banner {
+        /* Testing Dashboard Style */
+        .testing-banner {
             background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(6, 182, 212, 0.1));
             border: 1px solid rgba(99, 102, 241, 0.3);
             border-radius: 16px;
@@ -337,20 +338,20 @@
             gap: 24px;
         }
 
-        .fishtest-info h3 {
+        .testing-info h3 {
             font-size: 22px;
             font-weight: 800;
             margin-bottom: 8px;
             color: var(--text-primary);
         }
 
-        .fishtest-info p {
+        .testing-info p {
             color: var(--text-secondary);
             max-width: 600px;
             font-size: 14px;
         }
 
-        .fishtest-stats-bar {
+        .testing-stats-bar {
             display: flex;
             gap: 28px;
             flex-wrap: wrap;
@@ -515,6 +516,8 @@
             border: 1px solid var(--border);
             border-radius: 12px;
             padding: 20px;
+            max-height: calc(100vh - 120px);
+            overflow-y: auto;
         }
 
         .wiki-sidebar h4 {
@@ -541,6 +544,7 @@
             font-size: 13px;
             font-weight: 500;
             transition: all 0.15s;
+            cursor: pointer;
         }
 
         .wiki-nav-item a:hover, .wiki-nav-item a.active {
@@ -596,6 +600,7 @@
             font-family: var(--font-mono);
             font-size: 14px;
             color: #e0e7ff;
+            line-height: 1.6;
         }
 
         /* Download Matrix Cards */
@@ -692,6 +697,7 @@
             }
             .wiki-sidebar {
                 position: static;
+                max-height: none;
             }
             .hero h1 {
                 font-size: 40px;
@@ -714,7 +720,8 @@
             <ul class="nav-links">
                 <li><a class="nav-link active" id="tab-btn-overview" onclick="switchTab('overview')">Overview</a></li>
                 <li><a class="nav-link" id="tab-btn-wiki" onclick="switchTab('wiki')">Wiki & Docs</a></li>
-                <li><a class="nav-link" id="tab-btn-fishtest" onclick="switchTab('fishtest')">Tessera-Test (Fishtest)</a></li>
+                <li><a class="nav-link" id="tab-btn-testing" onclick="switchTab('testing')">Distributed Testing</a></li>
+                <li><a class="nav-link" id="tab-btn-contributing" onclick="switchTab('contributing')">Contributing</a></li>
                 <li><a class="nav-link" id="tab-btn-downloads" onclick="switchTab('downloads')">Downloads</a></li>
                 <li><a class="nav-link" id="tab-btn-benchmarks" onclick="switchTab('benchmarks')">Benchmarks</a></li>
                 <li><a href="https://github.com/harshitkhandelwal208/tessera" target="_blank" class="btn-github">GitHub ↗</a></li>
@@ -739,8 +746,9 @@
                 </p>
                 <div class="hero-cta-group">
                     <button class="btn btn-primary" onclick="switchTab('downloads')">Download Multi-Platform Binaries (v1.0.0)</button>
-                    <button class="btn btn-secondary" onclick="switchTab('fishtest')">Contribute Compute (Tessera-Test)</button>
-                    <button class="btn btn-secondary" onclick="switchTab('wiki')">Read Technical Wiki</button>
+                    <button class="btn btn-secondary" onclick="switchTab('testing')">Tessera-Test Network</button>
+                    <button class="btn btn-secondary" onclick="switchTab('wiki')">Technical Documentation</button>
+                    <button class="btn btn-secondary" onclick="switchTab('contributing')">Contributing Guide</button>
                 </div>
 
                 <!-- Metrics Grid -->
@@ -796,25 +804,25 @@ make test
         </section>
     </div>
 
-    <!-- TAB 2: FISHTEST STYLE DISTRIBUTED TESTING & TRAINING NETWORK -->
-    <div id="tab-fishtest" class="tab-content">
+    <!-- TAB 2: DISTRIBUTED TESTING & TRAINING NETWORK -->
+    <div id="tab-testing" class="tab-content">
         <section class="section">
             <div class="container">
                 <div class="section-header">
                     <span class="section-tag">Tessera-Test</span>
-                    <h2 class="section-title">Distributed Training & Testing Network</h2>
+                    <h2 class="section-title">Distributed Testing & Training Network</h2>
                     <p class="section-subtitle">
-                        Inspired by Stockfish's Fishtest, Tessera-Test empowers community volunteers to donate spare CPU cores to train the dual-headed neural network and validate search/evaluation patches via Sequential Probability Ratio Tests (SPRT).
+                        Tessera-Test empowers community volunteers to donate spare CPU cores to train the dual-headed neural network and validate search/evaluation patches via Sequential Probability Ratio Tests (SPRT).
                     </p>
                 </div>
 
                 <!-- Live Network Stats Banner -->
-                <div class="fishtest-banner">
-                    <div class="fishtest-info">
+                <div class="testing-banner">
+                    <div class="testing-info">
                         <h3>🌐 Global Worker Fleet Status</h3>
                         <p>Self-play training game generation and SPRT patch regression tests are running live across volunteer nodes worldwide.</p>
                     </div>
-                    <div class="fishtest-stats-bar">
+                    <div class="testing-stats-bar">
                         <div class="stat-item">
                             <span class="stat-num" id="live-workers">28</span>
                             <span class="stat-lbl">Active Workers</span>
@@ -944,7 +952,7 @@ python3 worker.py --concurrency 4 --user "YourName"</code></pre>
                         <li>Fork the official repository on GitHub: <code>https://github.com/harshitkhandelwal208/tessera</code>.</li>
                         <li>Create a feature branch and implement your evaluation, search, or movegen modification.</li>
                         <li>Ensure all tests pass cleanly via <code>make test</code>.</li>
-                        <li>Submit a Pull Request labeled <code>sprt-request</code> specifying candidate bounds (e.g. <code>[0.0, 5.0]</code> Elo). The Tessera-Test coordinator will dispatch the patch to the volunteer worker fleet!</li>
+                        <li>Submit a Pull Request labeled <code>sprt-request</code> specifying candidate bounds (e.g. <code>[0.0, 5.0]</code> Elo). The coordinator will dispatch the patch to the volunteer worker fleet!</li>
                     </ol>
                 </div>
             </div>
@@ -958,26 +966,48 @@ python3 worker.py --concurrency 4 --user "YourName"</code></pre>
                 <div class="wiki-layout">
                     <!-- Wiki Sidebar -->
                     <div class="wiki-sidebar">
-                        <h4>Documentation Index</h4>
+                        <h4>Technical Reference</h4>
                         <ul class="wiki-nav-list">
-                            <li class="wiki-nav-item"><a href="#wiki-lexicon" class="active" onclick="switchWiki('wiki-lexicon')">1. Lexicon & DAWG</a></li>
-                            <li class="wiki-nav-item"><a href="#wiki-movegen" onclick="switchWiki('wiki-movegen')">2. Appel-Jacobson Movegen</a></li>
-                            <li class="wiki-nav-item"><a href="#wiki-eval" onclick="switchWiki('wiki-eval')">3. Dual-Accumulator Evaluator</a></li>
-                            <li class="wiki-nav-item"><a href="#wiki-nnue" onclick="switchWiki('wiki-nnue')">4. Dual-Headed NNUE</a></li>
-                            <li class="wiki-nav-item"><a href="#wiki-lattice" onclick="switchWiki('wiki-lattice')">5. Belief Lattice (Pure DAG)</a></li>
-                            <li class="wiki-nav-item"><a href="#wiki-settle" onclick="switchWiki('wiki-settle')">6. DirtyQueue Bellman Relaxation</a></li>
-                            <li class="wiki-nav-item"><a href="#wiki-bayes" onclick="switchWiki('wiki-bayes')">7. Bayesian Opponent Modeling</a></li>
-                            <li class="wiki-nav-item"><a href="#wiki-court" onclick="switchWiki('wiki-court')">8. Thompson Root Court</a></li>
-                            <li class="wiki-nav-item"><a href="#wiki-endgame" onclick="switchWiki('wiki-endgame')">9. Exact Transposition Endgame</a></li>
-                            <li class="wiki-nav-item"><a href="#wiki-protocol" onclick="switchWiki('wiki-protocol')">10. Protocol & CLI API</a></li>
+                            <li class="wiki-nav-item"><a class="active" onclick="switchWiki('wiki-foundations')">1. Foundations & Tree Elimination</a></li>
+                            <li class="wiki-nav-item"><a onclick="switchWiki('wiki-lexicon')">2. Lexicon & DAWG Compression</a></li>
+                            <li class="wiki-nav-item"><a onclick="switchWiki('wiki-movegen')">3. Appel-Jacobson Movegen</a></li>
+                            <li class="wiki-nav-item"><a onclick="switchWiki('wiki-eval')">4. Dual-Accumulator Evaluator</a></li>
+                            <li class="wiki-nav-item"><a onclick="switchWiki('wiki-nnue')">5. Dual-Headed NNUE</a></li>
+                            <li class="wiki-nav-item"><a onclick="switchWiki('wiki-lattice')">6. Belief Lattice (DAG Search)</a></li>
+                            <li class="wiki-nav-item"><a onclick="switchWiki('wiki-settle')">7. DirtyQueue Bellman Relaxation</a></li>
+                            <li class="wiki-nav-item"><a onclick="switchWiki('wiki-realization')">8. 2-Ply Realization & Rollout</a></li>
+                            <li class="wiki-nav-item"><a onclick="switchWiki('wiki-bayes')">9. Bayesian Opponent Modeling</a></li>
+                            <li class="wiki-nav-item"><a onclick="switchWiki('wiki-court')">10. Thompson Root Court</a></li>
+                            <li class="wiki-nav-item"><a onclick="switchWiki('wiki-endgame')">11. Exact Transposition Endgame</a></li>
+                            <li class="wiki-nav-item"><a onclick="switchWiki('wiki-palimpsest')">12. Meta-Learning (Palimpsest)</a></li>
+                            <li class="wiki-nav-item"><a onclick="switchWiki('wiki-protocol')">13. Protocol & Engine Interface</a></li>
+                            <li class="wiki-nav-item"><a onclick="switchWiki('wiki-sprt')">14. SPRT Statistical Testing</a></li>
                         </ul>
                     </div>
 
                     <!-- Wiki Content Area -->
                     <div class="wiki-article">
-                        <!-- 1. Lexicon -->
-                        <div id="wiki-lexicon" class="wiki-section">
-                            <h2>1. Lexicon & Minimal DAWG Compression</h2>
+                        <!-- 1. Foundations -->
+                        <div id="wiki-foundations" class="wiki-section">
+                            <h2>1. Theoretical Foundations: Eliminating Game Trees</h2>
+                            <p>
+                                In deterministic games with perfect information (Chess, Checkers, Go), game-tree search via Alpha-Beta minimax or Monte Carlo Tree Search (MCTS) has been the dominant paradigm for decades. However, Scrabble is an <strong>imperfect-information, stochastic tile-drawing game</strong> with severe asymmetric state spaces.
+                            </p>
+                            <p>
+                                Traditional tournament engines (Quackle, Maven) attempt to apply minimax or flat simulation over search trees. This approach suffers from two fundamental theoretical failures:
+                            </p>
+                            <ul>
+                                <li><strong>Combinatorial Path Explosion:</strong> The exact same board topology can be reached through tens of thousands of differing move permutations. A tree search treats each path as an isolated state, duplicating evaluation work exponentially.</li>
+                                <li><strong>Path-Dependent Belief Distortion:</strong> In an imperfect-information game, beliefs over tile probabilities must belong to the physical board position and the historical trajectory, not an arbitrary tree branch.</li>
+                            </ul>
+                            <p>
+                                <strong>Tessera completely eliminates search trees.</strong> Instead, all search occurs over a <strong>100% position-keyed Directed Acyclic Graph (Belief Lattice)</strong> indexed by 64-bit Zobrist hashes. Transpositions merge by mathematical construction.
+                            </p>
+                        </div>
+
+                        <!-- 2. Lexicon -->
+                        <div id="wiki-lexicon" class="wiki-section" style="display:none;">
+                            <h2>2. Lexicon & Minimal DAWG Compression</h2>
                             <p>
                                 Tournament Scrabble requires instant validation and prefix lookup over massive word lists. Tessera utilizes the complete <strong>SOWPODS 2019 lexicon (267,751 words)</strong>, compressed into a <strong>Minimal Directed Acyclic Word Graph (DAWG)</strong> containing only <strong>185,702 edges</strong>.
                             </p>
@@ -985,7 +1015,7 @@ python3 worker.py --concurrency 4 --user "YourName"</code></pre>
                             <p>Each edge in the graph is represented in a single 32-bit unsigned integer (`uint32_t`), eliminating 64-bit pointer overhead and cache-line fragmentation:</p>
                             <div class="formula-card">
                                 Bit 0..23 (24 bits): Child Edge Array Index (up to 16,777,216 nodes)<br>
-                                Bit 24..28 (5 bits):  Character code (A=0 ... Z=25)<br>
+                                Bit 24..28 (5 bits): Character code (A=0 ... Z=25)<br>
                                 Bit 29 (1 bit):      End of Word Flag (1 if edge completes valid word)<br>
                                 Bit 30 (1 bit):      End of Node Flag (1 if final sibling edge in node)
                             </div>
@@ -994,11 +1024,11 @@ python3 worker.py --concurrency 4 --user "YourName"</code></pre>
                             </p>
                         </div>
 
-                        <!-- 2. Movegen -->
+                        <!-- 3. Movegen -->
                         <div id="wiki-movegen" class="wiki-section" style="display:none;">
-                            <h2>2. Appel-Jacobson High-Throughput Move Generation</h2>
+                            <h2>3. Appel-Jacobson High-Throughput Move Generation</h2>
                             <p>
-                                Tessera implements the classic Appel & Jacobson (1988) algorithm with optimized 32-bit bitmask precomputation, reaching sustained throughput exceeding <strong>1,308,000 legal moves per second</strong>.
+                                Tessera implements the Appel & Jacobson (1988) generation algorithm augmented with precomputed 32-bit bitmasks, reaching sustained throughput exceeding <strong>1,308,000 legal moves per second</strong>.
                             </p>
                             <h3>Cross-Check Bitmasks</h3>
                             <p>
@@ -1010,11 +1040,15 @@ python3 worker.py --concurrency 4 --user "YourName"</code></pre>
                             <p>
                                 Vertical move generation uses a transposed board representation, allowing the exact same contiguous row-traversal cache lines to be utilized for column word plays without code duplication.
                             </p>
+                            <h3>Zero-Allocation In-Register Counterplay</h3>
+                            <p>
+                                <code>movegen_find_best_response_equity()</code> traverses the DAWG while keeping candidate move scores directly inside CPU registers, achieving zero heap allocations on the hot path.
+                            </p>
                         </div>
 
-                        <!-- 3. Dual-Accumulator Evaluator -->
+                        <!-- 4. Dual-Accumulator Evaluator -->
                         <div id="wiki-eval" class="wiki-section" style="display:none;">
-                            <h2>3. Dual-Accumulator Static Evaluator & 8 Game Phases</h2>
+                            <h2>4. Dual-Accumulator Static Evaluator & 8 Game Phases</h2>
                             <p>
                                 Move evaluation decouples the on-board positional gain from the off-board rack leave potential, parameterized across 8 discrete game phases determined by remaining bag tiles:
                             </p>
@@ -1031,11 +1065,15 @@ python3 worker.py --concurrency 4 --user "YourName"</code></pre>
                                 <li><strong>Exhaustion [1-9 tiles]:</strong> Bag-runout defense and initiative conservation.</li>
                                 <li><strong>Endgame [0 tiles]:</strong> Exact deterministic outplay calculation.</li>
                             </ul>
+                            <h3>Pairwise Synergy & Super-Leave Stems</h3>
+                            <p>
+                                The rack leave accumulator evaluates a full $27 \times 27$ synergy matrix, penalizing unplayable duplicates (`VV` -36.0, `WW` -20.0, `FF` -18.0) while boosting championship bingo leaves (`SATINE`, `RETINA`, `TISANE`, `AETINS`, `RETAINS`) with bonuses up to +30.5 pts.
+                            </p>
                         </div>
 
-                        <!-- 4. NNUE -->
+                        <!-- 5. NNUE -->
                         <div id="wiki-nnue" class="wiki-section" style="display:none;">
-                            <h2>4. Deep Dual-Headed NNUE Architecture</h2>
+                            <h2>5. Deep Dual-Headed NNUE Architecture</h2>
                             <p>
                                 Tessera employs an Efficiently Updatable Neural Network (NNUE) designed for non-uniform imperfect-information tile dynamics.
                             </p>
@@ -1049,26 +1087,30 @@ python3 worker.py --concurrency 4 --user "YourName"</code></pre>
                             <p>
                                 In standard x86-64 environments, inner loops execute via 256-bit AVX2 Fused Multiply-Add instructions (<code>_mm256_fmadd_ps</code>). A portable scalar fallback is automatically activated on ARM64 and non-AVX2 hosts.
                             </p>
+                            <h3>Hybrid Grandmaster Ensemble</h3>
+                            <p>
+                                The static engine combines 50% hand-crafted leave tables with 50% deep neural network predictions, capturing both discrete tactical rules and smooth non-linear positional factors.
+                            </p>
                         </div>
 
-                        <!-- 5. Belief Lattice -->
+                        <!-- 6. Belief Lattice -->
                         <div id="wiki-lattice" class="wiki-section" style="display:none;">
-                            <h2>5. Belief Lattice DAG (Zero Trees)</h2>
+                            <h2>6. Belief Lattice DAG (Zero Trees)</h2>
                             <p>
-                                Unlike traditional search algorithms that operate over trees and duplicate identical positions reached via transposed move orders, Tessera's search space is a <strong>100% position-keyed Directed Acyclic Graph (DAG)</strong>.
+                                The core search space is an open-addressing hash table of 16,384 buckets holding position-keyed DAG nodes. Transpositions merge 100% by mathematical construction.
                             </p>
-                            <h3>Zobrist Transposition Merging</h3>
-                            <p>
-                                Each board state is hashed into a 64-bit integer via precomputed pseudo-random Zobrist keys for all 225 squares and 27 tile types. Nodes are inserted into a 16,384-bucket open-addressing table. Transpositions collapse into unified graph nodes by mathematical construction.
-                            </p>
+                            <h3>Node Belief Representation</h3>
                             <div class="formula-card">
-                                Node Belief: B(v) = (μ_v, σ²_v, N_v)
+                                B(v) = (μ_v, σ²_v, N_v)<br>
+                                μ_v: Expected score spread margin<br>
+                                σ²_v: Empirical variance of belief<br>
+                                N_v: Effective visit / simulation count
                             </div>
                         </div>
 
-                        <!-- 6. DirtyQueue Bellman Settle -->
+                        <!-- 7. DirtyQueue Bellman Settle -->
                         <div id="wiki-settle" class="wiki-section" style="display:none;">
-                            <h2>6. Prioritized DirtyQueue Bellman Relaxation</h2>
+                            <h2>7. Prioritized DirtyQueue Bellman Relaxation</h2>
                             <p>
                                 When leaf evaluations or rollouts update node beliefs, new values propagate backward to ancestors using a binary max-heap prioritized queue:
                             </p>
@@ -1081,17 +1123,31 @@ python3 worker.py --concurrency 4 --user "YourName"</code></pre>
                             </p>
                         </div>
 
-                        <!-- 7. Bayesian Opponent Modeling -->
-                        <div id="wiki-bayes" class="wiki-section" style="display:none;">
-                            <h2>7. Persistent Bayesian Opponent Rack Modeling</h2>
+                        <!-- 8. Realization -->
+                        <div id="wiki-realization" class="wiki-section" style="display:none;">
+                            <h2>8. 2-Ply Realization & Relative Counterplay</h2>
                             <p>
-                                Tessera maintains dynamic unigram posterior likelihoods $P(t \in \text{OpponentRack} \mid \mathcal{H})$ across the entire game. Plays that score fewer points than available open stems cause the engine to downgrade opponent possession of power tiles (S, Z, X) and elevate stem likelihoods. Tile exchanges escalate weights for burdensome consonants (Q, V, W, J).
+                                Static leave heuristics assume a player will draw favorable tiles in a vacuum. Tessera pairs Monte Carlo deliberation with <strong>turn-2 draw realization</strong> against the live bag:
+                            </p>
+                            <div class="formula-card">
+                                Δ_combined(e) = clamp( (S_opp_mean - S_opp(e)) + 0.65 · (S_realized(e) - S_realized_mean), -12.0, +12.0 )
+                            </div>
+                            <p>
+                                Candidate plays are simulated against opponent replies and immediate rack refills, measuring actual realized board mobility rather than theoretical potentials.
                             </p>
                         </div>
 
-                        <!-- 8. Root Court -->
+                        <!-- 9. Bayesian Opponent Modeling -->
+                        <div id="wiki-bayes" class="wiki-section" style="display:none;">
+                            <h2>9. Persistent Bayesian Opponent Rack Modeling</h2>
+                            <p>
+                                Tessera maintains dynamic unigram posterior likelihoods $P(t \in \text{OpponentRack} \mid \mathcal{H})$ across the entire match. Plays that score fewer points than available open stems cause the engine to downgrade opponent possession of power tiles (S, Z, X) and elevate stem likelihoods. Tile exchanges escalate weights for burdensome consonants (Q, V, W, J).
+                            </p>
+                        </div>
+
+                        <!-- 10. Root Court -->
                         <div id="wiki-court" class="wiki-section" style="display:none;">
-                            <h2>8. The Root Court: Thompson Posterior Sampling</h2>
+                            <h2>10. The Root Court: Thompson Posterior Sampling</h2>
                             <p>
                                 Stopping deliberation is formulated as a rigorous Bayesian hypothesis test rather than a fixed depth or clock allocation:
                             </p>
@@ -1103,17 +1159,28 @@ python3 worker.py --concurrency 4 --user "YourName"</code></pre>
                             </p>
                         </div>
 
-                        <!-- 9. Endgame Solver -->
+                        <!-- 11. Endgame Solver -->
                         <div id="wiki-endgame" class="wiki-section" style="display:none;">
-                            <h2>9. Exact Transposition DAG Endgame Solver</h2>
+                            <h2>11. Exact Transposition DAG Endgame Solver</h2>
                             <p>
                                 When the tile bag is empty and the opponent holds $\le 7$ tiles, all remaining tile identities are known with 100% certainty. Tessera activates an exact negamax solver over a 32,768-entry Zobrist transposition table with depth-indexed static move pools. Complete 8-ply endgames are solved in under <strong>1.5 milliseconds</strong>.
                             </p>
+                            <div class="formula-card">
+                                Terminal Margin = 2 × Σ_{t ∈ OpponentRack} TileValue(t)
+                            </div>
                         </div>
 
-                        <!-- 10. Protocol API -->
+                        <!-- 12. Palimpsest -->
+                        <div id="wiki-palimpsest" class="wiki-section" style="display:none;">
+                            <h2>12. Online Meta-Evaluation (The Palimpsest)</h2>
+                            <p>
+                                The Palimpsest maintains conjugate Normal-Normal posterior distributions $\mathcal{N}(\mu_c, \sigma_c^2)$ over evaluation errors indexed by board topology classes. When lattice settling reveals divergence from static priors, correction factors are updated in closed mathematical form without requiring network retraining.
+                            </p>
+                        </div>
+
+                        <!-- 13. Protocol API -->
                         <div id="wiki-protocol" class="wiki-section" style="display:none;">
-                            <h2>10. Engine Protocol Specification</h2>
+                            <h2>13. Engine Protocol Specification</h2>
                             <p>Tessera provides a clean CLI and JSON protocol for interfacing with tournament harnesses, bots, and GUIs:</p>
                             <div class="code-box">
                                 <pre><code># Commands supported:
@@ -1123,13 +1190,87 @@ python3 worker.py --concurrency 4 --user "YourName"</code></pre>
 ./tessera test         # Subsystem regression test suite</code></pre>
                             </div>
                         </div>
+
+                        <!-- 14. SPRT Testing -->
+                        <div id="wiki-sprt" class="wiki-section" style="display:none;">
+                            <h2>14. SPRT Statistical Testing Methodology</h2>
+                            <p>
+                                Tessera uses Wald's Sequential Probability Ratio Test (SPRT) to accept or reject engine patches with statistical significance:
+                            </p>
+                            <div class="formula-card">
+                                H_0: Elo ≤ Elo_0 (e.g. 0.0 Elo)<br>
+                                H_1: Elo ≥ Elo_1 (e.g. +5.0 Elo)<br>
+                                LLR = Σ ln( P(outcome | H_1) / P(outcome | H_0) )
+                            </div>
+                            <p>
+                                With standard Type I and Type II error rates ($\alpha = 0.05, \beta = 0.05$), testing halts as soon as LLR crosses the upper boundary ($\ge +2.94$, accepted) or lower boundary ($\le -2.94$, rejected).
+                            </p>
+                        </div>
                     </div>
                 </div>
             </div>
         </section>
     </div>
 
-    <!-- TAB 4: DOWNLOADS -->
+    <!-- TAB 4: CONTRIBUTING GUIDE -->
+    <div id="tab-contributing" class="tab-content">
+        <section class="section">
+            <div class="container">
+                <div class="section-header">
+                    <span class="section-tag">Open Source</span>
+                    <h2 class="section-title">Contributing Guidelines</h2>
+                    <p class="section-subtitle">
+                        Like Stockfish and Reckless, Tessera follows a strict, data-driven development workflow where every code modification is evaluated through rigorous benchmarking and statistical testing.
+                    </p>
+                </div>
+
+                <div class="wiki-article" style="margin-bottom: 30px;">
+                    <h2>Core Development Tenets</h2>
+                    <ul>
+                        <li><strong>Standard ISO C11:</strong> All code must strictly conform to ISO C11 with zero external dependencies. Clean compilation with <code>-std=c11 -Wall -Wextra</code>.</li>
+                        <li><strong>Zero Dynamic Allocations on Hot Paths:</strong> Search, move generation, and evaluation routines must perform zero heap allocations (<code>malloc</code>/<code>free</code>) during deliberation.</li>
+                        <li><strong>Portability:</strong> Architecture-specific optimizations (AVX2 SIMD) must always include clean, portable scalar fallbacks for ARM64 and legacy platforms.</li>
+                        <li><strong>Statistical Proof:</strong> Any functional change to search or evaluation must prove its strength via SPRT testing or tournament matrix evaluation.</li>
+                    </ul>
+
+                    <h3>Testing Your Changes</h3>
+                    <div class="code-box">
+                        <button class="copy-btn" onclick="copyCode('contrib-test-cmd')">Copy</button>
+                        <pre id="contrib-test-cmd"><code># 1. Run unit test suite
+make clean && make -j$(nproc) && make test
+
+# 2. Verify throughput and bench signature
+./tessera bench
+
+# 3. Benchmark against 7-bot tournament field
+make tools/match_benchmark && ./tools/match_benchmark 10
+
+# 4. Run SPRT test via community worker
+python3 worker.py --mode sprt --games 70</code></pre>
+                    </div>
+
+                    <h3>Functional vs. Non-Functional Modifications</h3>
+                    <p>
+                        <strong>Functional Changes:</strong> Modifications that alter move decisions, leave weights, pruning thresholds, or neural network weights must be submitted with an SPRT request (typically $[0.0, 5.0]$ Elo).
+                    </p>
+                    <p>
+                        <strong>Non-Functional Changes:</strong> Code cleanups and refactorings must produce the exact same move count and bench signature on test positions and must not introduce speed regressions.
+                    </p>
+
+                    <h3>Submitting a Pull Request</h3>
+                    <ol>
+                        <li>Fork the repository on GitHub.</li>
+                        <li>Create a clean feature branch: <code>git checkout -b feat/my-improvement</code>.</li>
+                        <li>Follow semantic commit messages: <code>feat:</code>, <code>fix:</code>, <code>perf:</code>, <code>refactor:</code>, <code>docs:</code>, <code>test:</code>.</li>
+                        <li>Ensure <code>make test</code> passes cleanly with zero warnings.</li>
+                        <li>Open a Pull Request with benchmark numbers and rationale attached.</li>
+                    </ol>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <!-- TAB 5: DOWNLOADS -->
     <div id="tab-downloads" class="tab-content">
         <section class="section">
             <div class="container">
@@ -1251,7 +1392,7 @@ python3 worker.py --concurrency 4 --user "YourName"</code></pre>
         </section>
     </div>
 
-    <!-- TAB 5: BENCHMARKS -->
+    <!-- TAB 6: BENCHMARKS -->
     <div id="tab-benchmarks" class="tab-content">
         <section class="section">
             <div class="container">
@@ -1363,6 +1504,9 @@ python3 worker.py --concurrency 4 --user "YourName"</code></pre>
     <!-- Interactive Script -->
     <script>
         function switchTab(tabId) {
+            // Support backward-compat for legacy fishtest hash
+            if (tabId === 'fishtest') tabId = 'testing';
+
             // Update active content
             document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
             const target = document.getElementById('tab-' + tabId);
@@ -1383,7 +1527,7 @@ python3 worker.py --concurrency 4 --user "YourName"</code></pre>
             if (target) target.style.display = 'block';
 
             document.querySelectorAll('.wiki-nav-item a').forEach(el => el.classList.remove('active'));
-            event.target.classList.add('active');
+            if (event && event.target) event.target.classList.add('active');
         }
 
         function copyCode(elementId) {
@@ -1398,7 +1542,8 @@ python3 worker.py --concurrency 4 --user "YourName"</code></pre>
 
         // Handle initial hash routing
         window.addEventListener('DOMContentLoaded', () => {
-            const hash = window.location.hash.replace('#', '');
+            let hash = window.location.hash.replace('#', '');
+            if (hash === 'fishtest') hash = 'testing';
             if (hash && document.getElementById('tab-' + hash)) {
                 switchTab(hash);
             }
