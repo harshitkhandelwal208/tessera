@@ -134,6 +134,11 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
                 endgame_move.leave_equity = (float)net_margin;
                 endgame_move.sim_equity = (float)net_margin;
                 if (all_moves) {
+                    if (!all_moves->moves || all_moves->capacity < 1) {
+                        int cap = INITIAL_MOVE_CAPACITY;
+                        all_moves->moves = (Move*)realloc(all_moves->moves, sizeof(Move) * cap);
+                        all_moves->capacity = cap;
+                    }
                     all_moves->count = 1;
                     all_moves->moves[0] = endgame_move;
                 }
@@ -267,7 +272,7 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
                 leaf->belief.variance = fmaxf(4.0f, var_reduction);
 
                 for (int p = 0; p < leaf->num_parents; p++) {
-                    dirty_queue_push(&dq, leaf->parent_indices[p], fmaxf(1.0f, fabsf(combined_delta)));
+                    dirty_queue_push_unique(&dq, lat, leaf->parent_indices[p], fmaxf(1.0f, fabsf(combined_delta)), 1);
                 }
                 root->edges[k].visits++;
             }
@@ -297,6 +302,11 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
 
     /* 4. Extract candidates into all_moves */
     if (all_moves) {
+        if (!all_moves->moves || all_moves->capacity < root->num_edges) {
+            int new_cap = root->num_edges > INITIAL_MOVE_CAPACITY ? root->num_edges : INITIAL_MOVE_CAPACITY;
+            all_moves->moves = (Move*)realloc(all_moves->moves, sizeof(Move) * new_cap);
+            all_moves->capacity = new_cap;
+        }
         all_moves->count = root->num_edges;
         for (int i = 0; i < root->num_edges; i++) {
             all_moves->moves[i] = root->edges[i].move;

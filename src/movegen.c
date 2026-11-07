@@ -6,7 +6,22 @@
 #include <ctype.h>
 
 void move_list_init(MoveList *list) {
+    if (!list) return;
     list->count = 0;
+    if (!list->moves || list->capacity == 0) {
+        list->capacity = INITIAL_MOVE_CAPACITY;
+        list->moves = (Move*)malloc(sizeof(Move) * list->capacity);
+    }
+}
+
+void move_list_destroy(MoveList *list) {
+    if (!list) return;
+    if (list->moves) {
+        free(list->moves);
+        list->moves = NULL;
+    }
+    list->count = 0;
+    list->capacity = 0;
 }
 
 void board_transpose(Board *dst, const Board *src) {
@@ -105,7 +120,14 @@ static inline void record_move(GenContext *ctx, int row, int start_col, const ch
         return;
     }
 
-    if (ctx->list->count >= MAX_MOVES) return;
+    /* Dynamically grow move list when needed so moves are never capped */
+    if (ctx->list->count >= ctx->list->capacity) {
+        int new_cap = ctx->list->capacity > 0 ? ctx->list->capacity * 2 : INITIAL_MOVE_CAPACITY;
+        Move *new_moves = (Move*)realloc(ctx->list->moves, sizeof(Move) * new_cap);
+        if (!new_moves) return;
+        ctx->list->moves = new_moves;
+        ctx->list->capacity = new_cap;
+    }
 
     Move *m = &ctx->list->moves[ctx->list->count];
     m->type = MOVE_PLAY;
@@ -377,7 +399,12 @@ static void generate_row_moves(GenContext *ctx) {
 }
 
 int movegen_generate_all(const Board *board, const Dawg *dawg, const Rack *rack, MoveList *list) {
-    move_list_init(list);
+    if (!list) return 0;
+    if (!list->moves || list->capacity == 0) {
+        move_list_init(list);
+    } else {
+        list->count = 0;
+    }
 
     GenContext ctx;
     ctx.orig_board = board;

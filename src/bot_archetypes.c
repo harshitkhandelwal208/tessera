@@ -63,9 +63,10 @@ static void bot_shuffle_tiles(char *arr, int n) {
 
 /* 1. Greedy Bot */
 static Move select_greedy_move(const Board *board, const Dawg *dawg, const Rack *rack) {
-    MoveList moves;
+    MoveList moves = {0};
     movegen_generate_all(board, dawg, rack, &moves);
     if (moves.count == 0) {
+        move_list_destroy(&moves);
         Move pass_move;
         memset(&pass_move, 0, sizeof(Move));
         pass_move.type = MOVE_PASS;
@@ -79,14 +80,17 @@ static Move select_greedy_move(const Board *board, const Dawg *dawg, const Rack 
             best_idx = i;
         }
     }
-    return moves.moves[best_idx];
+    Move result = moves.moves[best_idx];
+    move_list_destroy(&moves);
+    return result;
 }
 
 /* 2. Defensive Turtler Bot */
 static Move select_defensive_move(const Board *board, const Dawg *dawg, const Rack *rack) {
-    MoveList moves;
+    MoveList moves = {0};
     movegen_generate_all(board, dawg, rack, &moves);
     if (moves.count == 0) {
+        move_list_destroy(&moves);
         Move pass_move;
         memset(&pass_move, 0, sizeof(Move));
         pass_move.type = MOVE_PASS;
@@ -103,14 +107,17 @@ static Move select_defensive_move(const Board *board, const Dawg *dawg, const Ra
             best_idx = i;
         }
     }
-    return moves.moves[best_idx];
+    Move result = moves.moves[best_idx];
+    move_list_destroy(&moves);
+    return result;
 }
 
 /* 3. Bingo Hunter Bot */
 static Move select_bingo_hunter_move(const Board *board, const Dawg *dawg, const Rack *rack) {
-    MoveList moves;
+    MoveList moves = {0};
     movegen_generate_all(board, dawg, rack, &moves);
     if (moves.count == 0) {
+        move_list_destroy(&moves);
         Move pass_move;
         memset(&pass_move, 0, sizeof(Move));
         pass_move.type = MOVE_PASS;
@@ -132,14 +139,17 @@ static Move select_bingo_hunter_move(const Board *board, const Dawg *dawg, const
             best_idx = i;
         }
     }
-    return moves.moves[best_idx];
+    Move result = moves.moves[best_idx];
+    move_list_destroy(&moves);
+    return result;
 }
 
 /* 4. Heuristic Grandmaster Bot (8-phase rack leave table) */
 static Move select_heuristic_move(const Board *board, const Dawg *dawg, const Rack *rack, int bag_count) {
-    MoveList moves;
+    MoveList moves = {0};
     movegen_generate_all(board, dawg, rack, &moves);
     if (moves.count == 0) {
+        move_list_destroy(&moves);
         Move pass_move;
         memset(&pass_move, 0, sizeof(Move));
         pass_move.type = MOVE_PASS;
@@ -154,14 +164,17 @@ static Move select_heuristic_move(const Board *board, const Dawg *dawg, const Ra
             best_idx = i;
         }
     }
-    return moves.moves[best_idx];
+    Move result = moves.moves[best_idx];
+    move_list_destroy(&moves);
+    return result;
 }
 
 /* 5. Neural Static Bot (Raw 448-dim NNUE 1-ply) */
 static Move select_neural_static_move(const Board *board, const Dawg *dawg, const Rack *rack, int bag_count) {
-    MoveList moves;
+    MoveList moves = {0};
     movegen_generate_all(board, dawg, rack, &moves);
     if (moves.count == 0) {
+        move_list_destroy(&moves);
         Move pass_move;
         memset(&pass_move, 0, sizeof(Move));
         pass_move.type = MOVE_PASS;
@@ -176,14 +189,17 @@ static Move select_neural_static_move(const Board *board, const Dawg *dawg, cons
             best_idx = i;
         }
     }
-    return moves.moves[best_idx];
+    Move result = moves.moves[best_idx];
+    move_list_destroy(&moves);
+    return result;
 }
 
 /* 6. Championship Simulation Bot (Quackle emulation: paired Monte Carlo lookahead) */
 static Move select_quackle_sim_move(const Board *board, const Dawg *dawg, const Rack *rack, int bag_count) {
-    MoveList moves;
+    MoveList moves = {0};
     movegen_generate_all(board, dawg, rack, &moves);
     if (moves.count == 0) {
+        move_list_destroy(&moves);
         Move pass_move;
         memset(&pass_move, 0, sizeof(Move));
         pass_move.type = MOVE_PASS;
@@ -196,13 +212,18 @@ static Move select_quackle_sim_move(const Board *board, const Dawg *dawg, const 
     eval_sort_moves(&moves);
 
     int beam = moves.count < 5 ? moves.count : 5;
-    if (beam <= 1) return moves.moves[0];
+    if (beam <= 1) {
+        Move result = moves.moves[0];
+        move_list_destroy(&moves);
+        return result;
+    }
 
     char unseen[100];
     int unseen_count = sim_get_unseen_tiles(board, rack, unseen);
 
     float opp_totals[5] = {0};
     int N_SIMS = 10;
+    MoveList om = {0};
 
     for (int s = 0; s < N_SIMS; s++) {
         Rack opp_r;
@@ -216,7 +237,6 @@ static Move select_quackle_sim_move(const Board *board, const Dawg *dawg, const 
             board_copy(&spec, board);
             board_apply_move(&spec, &moves.moves[k]);
 
-            MoveList om;
             movegen_generate_all(&spec, dawg, &opp_r, &om);
             float max_opp = 0.0f;
             for (int r = 0; r < om.count; r++) {
@@ -226,6 +246,7 @@ static Move select_quackle_sim_move(const Board *board, const Dawg *dawg, const 
             opp_totals[k] += max_opp;
         }
     }
+    move_list_destroy(&om);
 
     int best_k = 0;
     float best_net = -10000.0f;
@@ -237,14 +258,17 @@ static Move select_quackle_sim_move(const Board *board, const Dawg *dawg, const 
             best_k = k;
         }
     }
-    return moves.moves[best_k];
+    Move result = moves.moves[best_k];
+    move_list_destroy(&moves);
+    return result;
 }
 
 /* 7. MAGPIE / Woogles Champion Bot (2-Ply Realized Equity Lookahead Simulation) */
 static Move select_magpie_sim_move(const Board *board, const Dawg *dawg, const Rack *rack, int bag_count) {
-    MoveList moves;
+    MoveList moves = {0};
     movegen_generate_all(board, dawg, rack, &moves);
     if (moves.count == 0) {
+        move_list_destroy(&moves);
         Move pass_move;
         memset(&pass_move, 0, sizeof(Move));
         pass_move.type = MOVE_PASS;
@@ -257,7 +281,11 @@ static Move select_magpie_sim_move(const Board *board, const Dawg *dawg, const R
     eval_sort_moves(&moves);
 
     int beam = moves.count < 5 ? moves.count : 5;
-    if (beam <= 1) return moves.moves[0];
+    if (beam <= 1) {
+        Move result = moves.moves[0];
+        move_list_destroy(&moves);
+        return result;
+    }
 
     char unseen[100];
     int unseen_count = sim_get_unseen_tiles(board, rack, unseen);
@@ -312,7 +340,9 @@ static Move select_magpie_sim_move(const Board *board, const Dawg *dawg, const R
             best_k = k;
         }
     }
-    return moves.moves[best_k];
+    Move result = moves.moves[best_k];
+    move_list_destroy(&moves);
+    return result;
 }
 
 Move bot_archetype_select_move(BotType type, const Board *board, const Dawg *dawg, const Rack *rack, int bag_count) {

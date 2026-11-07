@@ -10,6 +10,7 @@
 #define RACK_CAPACITY 7
 #define MAX_WORD_LEN BOARD_SIZE
 #define MAX_MOVES 8192
+#define INITIAL_MOVE_CAPACITY 8192
 #define NUM_LETTERS 26
 
 /* Multiplier types */
@@ -70,10 +71,11 @@ typedef struct {
     float sim_equity;   /* Monte Carlo simulated net equity */
 } Move;
 
-/* Move list */
+/* Dynamic move list (moves are never capped; dynamically resized if needed) */
 typedef struct {
-    Move moves[MAX_MOVES];
+    Move *moves;
     int count;
+    int capacity;
 } MoveList;
 
 /* Bag of tiles */

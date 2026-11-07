@@ -49,7 +49,7 @@ int main(void) {
     engine_config_default(&config);
     config.max_deliberation_steps = 25;
 
-    MoveList moves;
+    MoveList moves = {0};
     EngineMetrics metrics;
     clock_t start = clock();
     Move best = lattice_search(&board, dawg, &ai_rack, &bag, &config, &moves, &metrics);
@@ -66,6 +66,7 @@ int main(void) {
 
     assert(best.score > 0 || best.type == MOVE_EXCHANGE);
 
+    move_list_destroy(&moves);
     dawg_free(dawg);
     printf("[TEST] Evaluation & simulation tests PASSED flawlessly!\n");
     return 0;

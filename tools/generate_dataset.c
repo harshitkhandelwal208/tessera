@@ -29,10 +29,11 @@ typedef struct {
 
 static Move pick_selfplay_move(const Board *board, const Dawg *dawg, const Rack *rack,
                                int bag_count, unsigned int *seed) {
-    MoveList moves;
+    MoveList moves = {0};
     movegen_generate_all(board, dawg, rack, &moves);
 
     if (moves.count == 0) {
+        move_list_destroy(&moves);
         Move pass;
         memset(&pass, 0, sizeof(Move));
         pass.type = MOVE_PASS;
@@ -47,30 +48,34 @@ static Move pick_selfplay_move(const Board *board, const Dawg *dawg, const Rack 
 
     /* Epsilon-softmax exploration over top 6 candidate moves */
     int num_cands = moves.count < 6 ? moves.count : 6;
-    if (num_cands == 1) return moves.moves[0];
+    Move chosen = moves.moves[0];
 
-    float r = (float)rand_r(seed) / (float)RAND_MAX;
-    if (r < 0.70f) {
-        return moves.moves[0]; /* 70% greedy GM play */
+    if (num_cands > 1) {
+        float r = (float)rand_r(seed) / (float)RAND_MAX;
+        if (r >= 0.70f) {
+            /* 30% temperature exploration over top candidates */
+            float best_eq = moves.moves[0].leave_equity;
+            float probs[6];
+            float sum_p = 0.0f;
+            for (int i = 0; i < num_cands; i++) {
+                probs[i] = expf((moves.moves[i].leave_equity - best_eq) / 3.0f);
+                sum_p += probs[i];
+            }
+
+            float pick_val = ((float)rand_r(seed) / (float)RAND_MAX) * sum_p;
+            float accum = 0.0f;
+            for (int i = 0; i < num_cands; i++) {
+                accum += probs[i];
+                if (accum >= pick_val) {
+                    chosen = moves.moves[i];
+                    break;
+                }
+            }
+        }
     }
 
-    /* 30% temperature exploration over top candidates */
-    float best_eq = moves.moves[0].leave_equity;
-    float probs[6];
-    float sum_p = 0.0f;
-    for (int i = 0; i < num_cands; i++) {
-        probs[i] = expf((moves.moves[i].leave_equity - best_eq) / 3.0f);
-        sum_p += probs[i];
-    }
-
-    float pick_val = ((float)rand_r(seed) / (float)RAND_MAX) * sum_p;
-    float accum = 0.0f;
-    for (int i = 0; i < num_cands; i++) {
-        accum += probs[i];
-        if (accum >= pick_val) return moves.moves[i];
-    }
-
-    return moves.moves[0];
+    move_list_destroy(&moves);
+    return chosen;
 }
 
 int main(int argc, char *argv[]) {
@@ -184,9 +189,11 @@ int main(int argc, char *argv[]) {
                 if (c >= 'A' && c <= 'Z') p1_pen += TILE_VALUES[c - 'A'];
             }
             if (racks[0].count == 0 && bag.count == 0) {
-                p0_score += 2 * p1_pen;
+                p0_score += p1_pen;
+                p1_score -= p1_pen;
             } else if (racks[1].count == 0 && bag.count == 0) {
-                p1_score += 2 * p0_pen;
+                p1_score += p0_pen;
+                p0_score -= p0_pen;
             } else {
                 p0_score -= p0_pen;
                 p1_score -= p1_pen;

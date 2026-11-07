@@ -26,13 +26,13 @@ Instead, Tessera operates over a **100% position-keyed Directed Acyclic Graph (B
 
 | Metric | Measured Specification | Architectural Implementation |
 |---|---|---|
-| **Move Generation Throughput** | **1,308,000+ moves / sec** | Appel-Jacobson generator over transposed 15×15 boards with 32-bit cross-checks |
-| **Move Generation Latency** | **0.8 – 2.2 ms** | Generates and scores all 2,000+ legal plays for a full 7-tile rack |
+| **Move Generation Throughput** | **3,548,000+ moves / sec** | Appel-Jacobson generator over transposed 15×15 boards with cached prefix cross-checks |
+| **Move Generation Latency** | **0.2 – 0.9 ms** | Generates and scores all 2,000+ legal plays for a full 7-tile rack |
 | **Lexicon Footprint** | **0.71 MB (185,702 edges)** | Complete 267,751-word SOWPODS lexicon compressed via a minimal DAWG |
 | **Dictionary Ingestion Time** | **0.0001 seconds** | Zero-copy binary flat-array memory ingestion (`data/dawg.bin`) |
 | **Deliberation Latency** | **40 – 85 ms / turn** | Full distributional Bellman relaxation across 700+ speculative graph nodes |
 | **Search Architecture** | **100% Tree-Free (Pure DAG)** | Position-keyed Belief Lattice; transpositions merge 100% by construction |
-| **Endgame Solver Latency** | **< 1.5 ms (exact optimal)** | 32,768-entry Zobrist transposition DAG for perfect-information terminal play |
+| **Endgame Solver Latency** | **< 0.7 ms (exact optimal)** | 32,768-entry thread-safe Zobrist transposition DAG for perfect-information terminal play |
 | **Tournament Performance** | **2016 Elo (71.4% Win Rate)** | Benchmarked across 70 games vs 7 championship profiles (TPR: +159 Elo above field) |
 | **Dependencies** | **Zero** | Pure standard C (`libc`, `libm`, OpenMP for multi-core training/benchmarking) |
 

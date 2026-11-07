@@ -5,8 +5,9 @@
 #include "board.h"
 #include "dict.h"
 
-/* Initialize a move list */
+/* Initialize and destroy a move list */
 void move_list_init(MoveList *list);
+void move_list_destroy(MoveList *list);
 
 /*
  * Generate all legal moves for the given rack on the board.

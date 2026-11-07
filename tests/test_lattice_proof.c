@@ -43,7 +43,7 @@ int main(void) {
     EngineConfig cfg;
     engine_config_default(&cfg);
 
-    MoveList all_moves;
+    MoveList all_moves = {0};
     EngineMetrics metrics;
     memset(&metrics, 0, sizeof(EngineMetrics));
     Move best = lattice_search(&board, dawg, &ai_rack, &bag, &cfg, &all_moves, &metrics);
@@ -58,6 +58,7 @@ int main(void) {
     assert(best.num_placed == 2);
     assert(metrics.court_confidence >= 0.98f);
 
+    move_list_destroy(&all_moves);
     dawg_free(dawg);
     printf("[TEST] Pure Graph-Based Proof Propagation test PASSED flawlessly!\n");
     return 0;

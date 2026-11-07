@@ -23,6 +23,7 @@ typedef struct {
 
 void dirty_queue_init(DirtyQueue *dq);
 bool dirty_queue_push(DirtyQueue *dq, uint32_t node_idx, float priority);
+bool dirty_queue_push_unique(DirtyQueue *dq, Lattice *lat, uint32_t node_idx, float priority, uint32_t gen);
 bool dirty_queue_pop(DirtyQueue *dq, uint32_t *out_node_idx, float *out_priority);
 bool dirty_queue_is_empty(const DirtyQueue *dq);
 

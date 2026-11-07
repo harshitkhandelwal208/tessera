@@ -16,4 +16,9 @@ bool endgame_solve_exact(const Board *board, const Dawg *dawg,
                          const Rack *my_rack, const Rack *opp_rack,
                          Move *out_best_move, int *out_net_margin);
 
+/*
+ * Release thread-local memory pools allocated during endgame search.
+ */
+void endgame_cleanup(void);
+
 #endif /* ENDGAME_H */

@@ -38,6 +38,16 @@ bool dirty_queue_push(DirtyQueue *dq, uint32_t node_idx, float priority) {
     return true;
 }
 
+bool dirty_queue_push_unique(DirtyQueue *dq, Lattice *lat, uint32_t node_idx, float priority, uint32_t gen) {
+    if (!dq || !lat || node_idx == 0 || node_idx >= lat->num_nodes) return false;
+    if (lat->nodes[node_idx].settle_generation == gen) return false;
+    if (dirty_queue_push(dq, node_idx, priority)) {
+        lat->nodes[node_idx].settle_generation = gen;
+        return true;
+    }
+    return false;
+}
+
 bool dirty_queue_pop(DirtyQueue *dq, uint32_t *out_node_idx, float *out_priority) {
     if (dq->count == 0) return false;
 
@@ -167,21 +177,28 @@ float settle_node_backup(Lattice *lat, uint32_t node_idx, Palimpsest *palimpsest
 
 uint32_t settle_lattice(Lattice *lat, DirtyQueue *dq, Palimpsest *palimpsest, uint32_t max_passes) {
     uint32_t passes = 0;
+    static uint32_t global_settle_gen = 1;
+    uint32_t current_gen = ++global_settle_gen;
+    if (current_gen == 0) current_gen = ++global_settle_gen;
 
     while (!dirty_queue_is_empty(dq) && passes < max_passes) {
         uint32_t node_idx = 0;
         float priority = 0.0f;
         if (!dirty_queue_pop(dq, &node_idx, &priority)) break;
 
+        if (node_idx > 0 && node_idx < lat->num_nodes) {
+            lat->nodes[node_idx].settle_generation = 0;
+        }
+
         passes++;
         float delta = settle_node_backup(lat, node_idx, palimpsest);
 
-        /* If this node's belief moved significantly, enqueue all its parents! */
+        /* If this node's belief moved significantly, enqueue all its parents uniquely! */
         if (delta > SETTLE_EPS) {
             LatticeNode *n = &lat->nodes[node_idx];
             for (int p = 0; p < n->num_parents; p++) {
                 uint32_t parent_idx = n->parent_indices[p];
-                dirty_queue_push(dq, parent_idx, delta);
+                dirty_queue_push_unique(dq, lat, parent_idx, delta, current_gen);
             }
         }
     }

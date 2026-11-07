@@ -23,13 +23,18 @@ typedef struct {
     Move best_move;
 } EndgameTTEntry;
 
-static EndgameTTEntry g_endgame_tt[ENDGAME_TT_SIZE];
-static bool g_tt_initialized = false;
-static MoveList g_endgame_moves_pool[MAX_ENDGAME_DEPTH + 2];
+typedef struct {
+    EndgameTTEntry tt[ENDGAME_TT_SIZE];
+    bool initialized;
+    MoveList moves_pool[MAX_ENDGAME_DEPTH + 2];
+    int solve_count;
+} EndgameThreadContext;
+
+static _Thread_local EndgameThreadContext g_endgame_ctx;
 
 static void endgame_tt_clear(void) {
-    memset(g_endgame_tt, 0, sizeof(g_endgame_tt));
-    g_tt_initialized = true;
+    memset(g_endgame_ctx.tt, 0, sizeof(g_endgame_ctx.tt));
+    g_endgame_ctx.initialized = true;
 }
 
 static uint64_t compute_endgame_key(const Board *board, const Rack *r1, const Rack *r2, int turn) {
@@ -50,6 +55,12 @@ static int rack_total_points(const Rack *rack) {
         if (t >= 'A' && t <= 'Z') sum += TILE_VALUES[t - 'A'];
     }
     return sum;
+}
+
+static int compare_moves_desc(const void *a, const void *b) {
+    const Move *ma = (const Move *)a;
+    const Move *mb = (const Move *)b;
+    return mb->score - ma->score;
 }
 
 /*
@@ -83,7 +94,7 @@ static int negamax_dag(const Board *board, const Dawg *dawg,
 
     uint64_t key = compute_endgame_key(board, my_rack, opp_rack, depth % 2);
     uint32_t tt_idx = (uint32_t)(key & (ENDGAME_TT_SIZE - 1));
-    EndgameTTEntry *entry = &g_endgame_tt[tt_idx];
+    EndgameTTEntry *entry = &g_endgame_ctx.tt[tt_idx];
 
     if (entry->key == key && entry->depth >= (MAX_ENDGAME_DEPTH - depth)) {
         if (entry->flag == TT_EXACT) {
@@ -96,7 +107,7 @@ static int negamax_dag(const Board *board, const Dawg *dawg,
         }
     }
 
-    MoveList *moves = &g_endgame_moves_pool[depth];
+    MoveList *moves = &g_endgame_ctx.moves_pool[depth];
     move_list_init(moves);
     movegen_generate_all(board, dawg, my_rack, moves);
 
@@ -111,15 +122,9 @@ static int negamax_dag(const Board *board, const Dawg *dawg,
         return score;
     }
 
-    /* Simple insertion sort by score descending for move ordering */
-    for (int i = 0; i < moves->count - 1; i++) {
-        for (int j = i + 1; j < moves->count; j++) {
-            if (moves->moves[j].score > moves->moves[i].score) {
-                Move tmp = moves->moves[i];
-                moves->moves[i] = moves->moves[j];
-                moves->moves[j] = tmp;
-            }
-        }
+    /* Sort moves by score descending for optimal alpha-beta pruning */
+    if (moves->count > 1) {
+        qsort(moves->moves, moves->count, sizeof(Move), compare_moves_desc);
     }
 
     int best_score = -ENDGAME_INF;
@@ -190,13 +195,13 @@ static int negamax_dag(const Board *board, const Dawg *dawg,
 bool endgame_solve_exact(const Board *board, const Dawg *dawg,
                          const Rack *my_rack, const Rack *opp_rack,
                          Move *out_best_move, int *out_net_margin) {
-    if (!g_tt_initialized) endgame_tt_clear();
-    else {
+    if (!g_endgame_ctx.initialized) {
+        endgame_tt_clear();
+    } else {
         /* Fast clear every 20 games */
-        static int solve_count = 0;
-        if (++solve_count > 20) {
+        if (++g_endgame_ctx.solve_count > 20) {
             endgame_tt_clear();
-            solve_count = 0;
+            g_endgame_ctx.solve_count = 0;
         }
     }
 
@@ -208,4 +213,11 @@ bool endgame_solve_exact(const Board *board, const Dawg *dawg,
     if (out_best_move) *out_best_move = best;
     if (out_net_margin) *out_net_margin = margin;
     return true;
+}
+
+void endgame_cleanup(void) {
+    for (int d = 0; d < MAX_ENDGAME_DEPTH + 2; d++) {
+        move_list_destroy(&g_endgame_ctx.moves_pool[d]);
+    }
+    endgame_tt_clear();
 }

@@ -27,12 +27,13 @@ int main(void) {
     /* Play initial opening word: "RETINA" at (7, 7) horizontal */
     Rack init_rack;
     init_rack_str(&init_rack, "RETINA");
-    MoveList opening_moves;
+    MoveList opening_moves = {0};
     movegen_generate_all(&board, dawg, &init_rack, &opening_moves);
     assert(opening_moves.count > 0);
 
     /* Apply opening move */
     board_apply_move(&board, &opening_moves.moves[0]);
+    move_list_destroy(&opening_moves);
 
     /* Set up endgame: Player 1 has 3 tiles: "OUT", Opponent has 2 tiles: "QI" */
     Rack my_rack;
@@ -61,6 +62,7 @@ int main(void) {
 
     printf("[TEST] Endgame DAG solver test PASSED flawlessly!\n");
 
+    endgame_cleanup();
     dawg_free(dawg);
     return 0;
 }

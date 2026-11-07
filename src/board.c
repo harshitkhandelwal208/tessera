@@ -175,21 +175,49 @@ void board_compute_horizontal_cross_checks(const Board *b, const Dawg *dawg,
             else if (m == MULT_DW) word_mult = 2;
             else if (m == MULT_TW) word_mult = 3;
 
+            /* Step upward prefix once if present */
+            uint32_t prefix_node = dawg->root_index;
+            bool prefix_valid = true;
+            for (int k = up_start; k < r; k++) {
+                bool term = false;
+                prefix_node = dawg_step(dawg, prefix_node, b->cells[k][c].tile, &term);
+                if (prefix_node == 0) {
+                    prefix_valid = false;
+                    break;
+                }
+            }
+
+            if (!prefix_valid) {
+                continue;
+            }
+
+            bool has_down_suffix = (r < down_end);
+
             /* Test each candidate letter A-Z */
-            char candidate[MAX_WORD_LEN + 1];
             for (int l = 0; l < NUM_LETTERS; l++) {
                 char let = (char)('A' + l);
-                int idx = 0;
-                for (int k = up_start; k < r; k++) {
-                    candidate[idx++] = b->cells[k][c].tile;
-                }
-                candidate[idx++] = let;
-                for (int k = r + 1; k <= down_end; k++) {
-                    candidate[idx++] = b->cells[k][c].tile;
-                }
-                candidate[idx] = '\0';
+                bool is_term = false;
+                uint32_t mid_node = dawg_step(dawg, prefix_node, let, &is_term);
 
-                if (dawg_contains(dawg, candidate)) {
+                bool word_valid = false;
+                if (!has_down_suffix) {
+                    word_valid = is_term;
+                } else if (mid_node != 0) {
+                    /* Step downward suffix */
+                    uint32_t suf_node = mid_node;
+                    bool suf_valid = true;
+                    for (int k = r + 1; k <= down_end; k++) {
+                        is_term = false;
+                        suf_node = dawg_step(dawg, suf_node, b->cells[k][c].tile, &is_term);
+                        if (suf_node == 0 && k < down_end) {
+                            suf_valid = false;
+                            break;
+                        }
+                    }
+                    word_valid = (suf_valid && is_term);
+                }
+
+                if (word_valid) {
                     cross_checks[r][c].valid_letters_mask |= (1U << l);
                     int placed_letter_val = TILE_VALUES[l] * letter_mult;
                     cross_checks[r][c].cross_scores[l] = (prefix_score + suffix_score + placed_letter_val) * word_mult;
@@ -260,20 +288,48 @@ void board_compute_vertical_cross_checks(const Board *b, const Dawg *dawg,
             else if (m == MULT_DW) word_mult = 2;
             else if (m == MULT_TW) word_mult = 3;
 
-            char candidate[MAX_WORD_LEN + 1];
+            /* Step left prefix once if present */
+            uint32_t prefix_node = dawg->root_index;
+            bool prefix_valid = true;
+            for (int k = left_start; k < c; k++) {
+                bool term = false;
+                prefix_node = dawg_step(dawg, prefix_node, b->cells[r][k].tile, &term);
+                if (prefix_node == 0) {
+                    prefix_valid = false;
+                    break;
+                }
+            }
+
+            if (!prefix_valid) {
+                continue;
+            }
+
+            bool has_right_suffix = (c < right_end);
+
+            /* Test each candidate letter A-Z */
             for (int l = 0; l < NUM_LETTERS; l++) {
                 char let = (char)('A' + l);
-                int idx = 0;
-                for (int k = left_start; k < c; k++) {
-                    candidate[idx++] = b->cells[r][k].tile;
-                }
-                candidate[idx++] = let;
-                for (int k = c + 1; k <= right_end; k++) {
-                    candidate[idx++] = b->cells[r][k].tile;
-                }
-                candidate[idx] = '\0';
+                bool is_term = false;
+                uint32_t mid_node = dawg_step(dawg, prefix_node, let, &is_term);
 
-                if (dawg_contains(dawg, candidate)) {
+                bool word_valid = false;
+                if (!has_right_suffix) {
+                    word_valid = is_term;
+                } else if (mid_node != 0) {
+                    uint32_t suf_node = mid_node;
+                    bool suf_valid = true;
+                    for (int k = c + 1; k <= right_end; k++) {
+                        is_term = false;
+                        suf_node = dawg_step(dawg, suf_node, b->cells[r][k].tile, &is_term);
+                        if (suf_node == 0 && k < right_end) {
+                            suf_valid = false;
+                            break;
+                        }
+                    }
+                    word_valid = (suf_valid && is_term);
+                }
+
+                if (word_valid) {
                     cross_checks[r][c].valid_letters_mask |= (1U << l);
                     int placed_letter_val = TILE_VALUES[l] * letter_mult;
                     cross_checks[r][c].cross_scores[l] = (prefix_score + suffix_score + placed_letter_val) * word_mult;

@@ -71,104 +71,96 @@ static const float PHASE_TILE_EQUITY[8][27] = {
 };
 
 /* 27x27 Pairwise Letter Synergy Matrix (Upper Triangular + Diagonal) */
-static float PAIRWISE_SYNERGY[27][27];
-static bool synergy_matrix_initialized = false;
-
-static void init_synergy_matrix(void) {
-    if (synergy_matrix_initialized) return;
-    memset(PAIRWISE_SYNERGY, 0, sizeof(PAIRWISE_SYNERGY));
-
+static const float PAIRWISE_SYNERGY[27][27] = {
     /* QU synergy */
-    PAIRWISE_SYNERGY['Q' - 'A']['U' - 'A'] = 10.0f;
-    PAIRWISE_SYNERGY['U' - 'A']['Q' - 'A'] = 10.0f;
+    ['Q' - 'A']['U' - 'A'] = 10.0f,
+    ['U' - 'A']['Q' - 'A'] = 10.0f,
 
     /* Blank + S & Blank + Key Consonants */
-    PAIRWISE_SYNERGY[26]['S' - 'A'] = 4.5f;
-    PAIRWISE_SYNERGY['S' - 'A'][26] = 4.5f;
-    PAIRWISE_SYNERGY[26]['R' - 'A'] = 2.5f;
-    PAIRWISE_SYNERGY['R' - 'A'][26] = 2.5f;
-    PAIRWISE_SYNERGY[26]['T' - 'A'] = 2.2f;
-    PAIRWISE_SYNERGY['T' - 'A'][26] = 2.2f;
-    PAIRWISE_SYNERGY[26][26]        = 3.0f; /* Double blank retains incredible bingo power */
+    [26]['S' - 'A'] = 4.5f,
+    ['S' - 'A'][26] = 4.5f,
+    [26]['R' - 'A'] = 2.5f,
+    ['R' - 'A'][26] = 2.5f,
+    [26]['T' - 'A'] = 2.2f,
+    ['T' - 'A'][26] = 2.2f,
+    [26][26]        = 3.0f, /* Double blank retains incredible bingo power */
 
     /* High synergy bigrams (common prefixes, suffixes, digraphs) */
-    PAIRWISE_SYNERGY['I' - 'A']['N' - 'A'] = 2.5f;
-    PAIRWISE_SYNERGY['N' - 'A']['I' - 'A'] = 2.5f;
-    PAIRWISE_SYNERGY['N' - 'A']['G' - 'A'] = 3.0f;
-    PAIRWISE_SYNERGY['G' - 'A']['N' - 'A'] = 3.0f;
-    PAIRWISE_SYNERGY['E' - 'A']['R' - 'A'] = 2.8f;
-    PAIRWISE_SYNERGY['R' - 'A']['E' - 'A'] = 2.8f;
-    PAIRWISE_SYNERGY['E' - 'A']['D' - 'A'] = 2.2f;
-    PAIRWISE_SYNERGY['D' - 'A']['E' - 'A'] = 2.2f;
-    PAIRWISE_SYNERGY['E' - 'A']['S' - 'A'] = 2.5f;
-    PAIRWISE_SYNERGY['S' - 'A']['E' - 'A'] = 2.5f;
-    PAIRWISE_SYNERGY['S' - 'A']['T' - 'A'] = 2.2f;
-    PAIRWISE_SYNERGY['T' - 'A']['S' - 'A'] = 2.2f;
-    PAIRWISE_SYNERGY['R' - 'A']['T' - 'A'] = 2.0f;
-    PAIRWISE_SYNERGY['T' - 'A']['R' - 'A'] = 2.0f;
-    PAIRWISE_SYNERGY['C' - 'A']['H' - 'A'] = 2.5f;
-    PAIRWISE_SYNERGY['H' - 'A']['C' - 'A'] = 2.5f;
-    PAIRWISE_SYNERGY['S' - 'A']['H' - 'A'] = 2.2f;
-    PAIRWISE_SYNERGY['H' - 'A']['S' - 'A'] = 2.2f;
-    PAIRWISE_SYNERGY['T' - 'A']['H' - 'A'] = 2.0f;
-    PAIRWISE_SYNERGY['H' - 'A']['T' - 'A'] = 2.0f;
-    PAIRWISE_SYNERGY['P' - 'A']['H' - 'A'] = 1.8f;
-    PAIRWISE_SYNERGY['H' - 'A']['P' - 'A'] = 1.8f;
+    ['I' - 'A']['N' - 'A'] = 2.5f,
+    ['N' - 'A']['I' - 'A'] = 2.5f,
+    ['N' - 'A']['G' - 'A'] = 3.0f,
+    ['G' - 'A']['N' - 'A'] = 3.0f,
+    ['E' - 'A']['R' - 'A'] = 2.8f,
+    ['R' - 'A']['E' - 'A'] = 2.8f,
+    ['E' - 'A']['D' - 'A'] = 2.2f,
+    ['D' - 'A']['E' - 'A'] = 2.2f,
+    ['E' - 'A']['S' - 'A'] = 2.5f,
+    ['S' - 'A']['E' - 'A'] = 2.5f,
+    ['S' - 'A']['T' - 'A'] = 2.2f,
+    ['T' - 'A']['S' - 'A'] = 2.2f,
+    ['R' - 'A']['T' - 'A'] = 2.0f,
+    ['T' - 'A']['R' - 'A'] = 2.0f,
+    ['C' - 'A']['H' - 'A'] = 2.5f,
+    ['H' - 'A']['C' - 'A'] = 2.5f,
+    ['S' - 'A']['H' - 'A'] = 2.2f,
+    ['H' - 'A']['S' - 'A'] = 2.2f,
+    ['T' - 'A']['H' - 'A'] = 2.0f,
+    ['H' - 'A']['T' - 'A'] = 2.0f,
+    ['P' - 'A']['H' - 'A'] = 1.8f,
+    ['H' - 'A']['P' - 'A'] = 1.8f,
 
     /* Toxic consonant clash pairs (severely clunky together) */
-    PAIRWISE_SYNERGY['V' - 'A']['W' - 'A'] = -8.5f;
-    PAIRWISE_SYNERGY['W' - 'A']['V' - 'A'] = -8.5f;
-    PAIRWISE_SYNERGY['V' - 'A']['Q' - 'A'] = -9.0f;
-    PAIRWISE_SYNERGY['Q' - 'A']['V' - 'A'] = -9.0f;
-    PAIRWISE_SYNERGY['V' - 'A']['Z' - 'A'] = -6.5f;
-    PAIRWISE_SYNERGY['Z' - 'A']['V' - 'A'] = -6.5f;
-    PAIRWISE_SYNERGY['V' - 'A']['J' - 'A'] = -7.0f;
-    PAIRWISE_SYNERGY['J' - 'A']['V' - 'A'] = -7.0f;
-    PAIRWISE_SYNERGY['W' - 'A']['Q' - 'A'] = -8.0f;
-    PAIRWISE_SYNERGY['Q' - 'A']['W' - 'A'] = -8.0f;
-    PAIRWISE_SYNERGY['J' - 'A']['Q' - 'A'] = -9.0f;
-    PAIRWISE_SYNERGY['Q' - 'A']['J' - 'A'] = -9.0f;
-    PAIRWISE_SYNERGY['Q' - 'A']['Z' - 'A'] = -10.0f;
-    PAIRWISE_SYNERGY['Z' - 'A']['Q' - 'A'] = -10.0f;
-    PAIRWISE_SYNERGY['K' - 'A']['Q' - 'A'] = -7.0f;
-    PAIRWISE_SYNERGY['Q' - 'A']['K' - 'A'] = -7.0f;
-    PAIRWISE_SYNERGY['B' - 'A']['V' - 'A'] = -4.5f;
-    PAIRWISE_SYNERGY['V' - 'A']['B' - 'A'] = -4.5f;
-    PAIRWISE_SYNERGY['F' - 'A']['V' - 'A'] = -6.0f;
-    PAIRWISE_SYNERGY['V' - 'A']['F' - 'A'] = -6.0f;
-    PAIRWISE_SYNERGY['F' - 'A']['W' - 'A'] = -5.5f;
-    PAIRWISE_SYNERGY['W' - 'A']['F' - 'A'] = -5.5f;
+    ['V' - 'A']['W' - 'A'] = -8.5f,
+    ['W' - 'A']['V' - 'A'] = -8.5f,
+    ['V' - 'A']['Q' - 'A'] = -9.0f,
+    ['Q' - 'A']['V' - 'A'] = -9.0f,
+    ['V' - 'A']['Z' - 'A'] = -6.5f,
+    ['Z' - 'A']['V' - 'A'] = -6.5f,
+    ['V' - 'A']['J' - 'A'] = -7.0f,
+    ['J' - 'A']['V' - 'A'] = -7.0f,
+    ['W' - 'A']['Q' - 'A'] = -8.0f,
+    ['Q' - 'A']['W' - 'A'] = -8.0f,
+    ['J' - 'A']['Q' - 'A'] = -9.0f,
+    ['Q' - 'A']['J' - 'A'] = -9.0f,
+    ['Q' - 'A']['Z' - 'A'] = -10.0f,
+    ['Z' - 'A']['Q' - 'A'] = -10.0f,
+    ['K' - 'A']['Q' - 'A'] = -7.0f,
+    ['Q' - 'A']['K' - 'A'] = -7.0f,
+    ['B' - 'A']['V' - 'A'] = -4.5f,
+    ['V' - 'A']['B' - 'A'] = -4.5f,
+    ['F' - 'A']['V' - 'A'] = -6.0f,
+    ['V' - 'A']['F' - 'A'] = -6.0f,
+    ['F' - 'A']['W' - 'A'] = -5.5f,
+    ['W' - 'A']['F' - 'A'] = -5.5f,
 
     /* Duplicate penalties (Diagonal) */
-    PAIRWISE_SYNERGY['A' - 'A']['A' - 'A'] = -3.0f;
-    PAIRWISE_SYNERGY['B' - 'A']['B' - 'A'] = -4.5f;
-    PAIRWISE_SYNERGY['C' - 'A']['C' - 'A'] = -4.5f;
-    PAIRWISE_SYNERGY['D' - 'A']['D' - 'A'] = -3.0f;
-    PAIRWISE_SYNERGY['E' - 'A']['E' - 'A'] = -1.2f;
-    PAIRWISE_SYNERGY['F' - 'A']['F' - 'A'] = -6.0f;
-    PAIRWISE_SYNERGY['G' - 'A']['G' - 'A'] = -4.5f;
-    PAIRWISE_SYNERGY['H' - 'A']['H' - 'A'] = -4.0f;
-    PAIRWISE_SYNERGY['I' - 'A']['I' - 'A'] = -4.5f;
-    PAIRWISE_SYNERGY['J' - 'A']['J' - 'A'] = -8.0f;
-    PAIRWISE_SYNERGY['K' - 'A']['K' - 'A'] = -7.0f;
-    PAIRWISE_SYNERGY['L' - 'A']['L' - 'A'] = -2.5f;
-    PAIRWISE_SYNERGY['M' - 'A']['M' - 'A'] = -3.5f;
-    PAIRWISE_SYNERGY['N' - 'A']['N' - 'A'] = -2.0f;
-    PAIRWISE_SYNERGY['O' - 'A']['O' - 'A'] = -4.5f;
-    PAIRWISE_SYNERGY['P' - 'A']['P' - 'A'] = -4.0f;
-    PAIRWISE_SYNERGY['Q' - 'A']['Q' - 'A'] = -12.0f;
-    PAIRWISE_SYNERGY['R' - 'A']['R' - 'A'] = -2.0f;
-    PAIRWISE_SYNERGY['S' - 'A']['S' - 'A'] = -1.5f; /* Second S is still good, just less unique */
-    PAIRWISE_SYNERGY['T' - 'A']['T' - 'A'] = -2.0f;
-    PAIRWISE_SYNERGY['U' - 'A']['U' - 'A'] = -6.0f;
-    PAIRWISE_SYNERGY['V' - 'A']['V' - 'A'] = -12.0f; /* VV is devastating */
-    PAIRWISE_SYNERGY['W' - 'A']['W' - 'A'] = -8.0f;
-    PAIRWISE_SYNERGY['X' - 'A']['X' - 'A'] = -8.0f;
-    PAIRWISE_SYNERGY['Y' - 'A']['Y' - 'A'] = -4.5f;
-    PAIRWISE_SYNERGY['Z' - 'A']['Z' - 'A'] = -6.0f;
-
-    synergy_matrix_initialized = true;
-}
+    ['A' - 'A']['A' - 'A'] = -3.0f,
+    ['B' - 'A']['B' - 'A'] = -4.5f,
+    ['C' - 'A']['C' - 'A'] = -4.5f,
+    ['D' - 'A']['D' - 'A'] = -3.0f,
+    ['E' - 'A']['E' - 'A'] = -1.2f,
+    ['F' - 'A']['F' - 'A'] = -6.0f,
+    ['G' - 'A']['G' - 'A'] = -4.5f,
+    ['H' - 'A']['H' - 'A'] = -4.0f,
+    ['I' - 'A']['I' - 'A'] = -4.5f,
+    ['J' - 'A']['J' - 'A'] = -8.0f,
+    ['K' - 'A']['K' - 'A'] = -7.0f,
+    ['L' - 'A']['L' - 'A'] = -2.5f,
+    ['M' - 'A']['M' - 'A'] = -3.5f,
+    ['N' - 'A']['N' - 'A'] = -2.0f,
+    ['O' - 'A']['O' - 'A'] = -4.5f,
+    ['P' - 'A']['P' - 'A'] = -4.0f,
+    ['Q' - 'A']['Q' - 'A'] = -12.0f,
+    ['R' - 'A']['R' - 'A'] = -2.0f,
+    ['S' - 'A']['S' - 'A'] = -1.5f, /* Second S is still good, just less unique */
+    ['T' - 'A']['T' - 'A'] = -2.0f,
+    ['U' - 'A']['U' - 'A'] = -6.0f,
+    ['V' - 'A']['V' - 'A'] = -12.0f, /* VV is devastating */
+    ['W' - 'A']['W' - 'A'] = -8.0f,
+    ['X' - 'A']['X' - 'A'] = -8.0f,
+    ['Y' - 'A']['Y' - 'A'] = -4.5f,
+    ['Z' - 'A']['Z' - 'A'] = -6.0f,
+};
 
 PhaseBucket eval_classify_phase(int bag_count) {
     if (bag_count >= 80) return PHASE_BUCKET_OPENING;
@@ -280,8 +272,6 @@ float eval_rack_leave_bucketed(const char *leave, PhaseBucket phase) {
     if (!leave) return 0.0f;
     int len = (int)strlen(leave);
     if (len == 0) return 0.0f;
-
-    if (!synergy_matrix_initialized) init_synergy_matrix();
 
     int p_idx = (int)phase;
     if (p_idx < 0) p_idx = 0;

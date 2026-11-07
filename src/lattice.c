@@ -138,10 +138,11 @@ void lattice_expand_node(Lattice *lat, uint32_t node_idx, const Dawg *dawg,
     float palimpsest_bias = palimpsest ? palimpsest_get_correction(palimpsest, node->context_id) : 0.0f;
 
     /* Generate all legal moves */
-    MoveList all_moves;
+    MoveList all_moves = {0};
     movegen_generate_all(&node->board, dawg, rack, &all_moves);
 
     if (all_moves.count == 0) {
+        move_list_destroy(&all_moves);
         node->is_expanded = true;
         node->num_edges = 0;
         node->belief.is_proven = true;
@@ -230,57 +231,11 @@ void lattice_expand_node(Lattice *lat, uint32_t node_idx, const Dawg *dawg,
         }
     }
 
+    move_list_destroy(&all_moves);
+
     node->raw_prior_mean = best_q;
     node->belief.mean = best_q;
     node->belief.variance = 20.0f;
     node->belief.samples = 1;
     node->is_expanded = true;
-}
-
-/*
- * Sample an adversarial opponent counter on a child node using Welford's algorithm.
- * Returns the change in node belief mean for dirty queue prioritization.
- */
-float lattice_sample_adversarial_counter(Lattice *lat, uint32_t node_idx, const Dawg *dawg,
-                                        const Rack *opp_rack, const Palimpsest *palimpsest,
-                                        int bag_count) {
-    if (node_idx == 0 || node_idx >= lat->num_nodes) return 0.0f;
-    LatticeNode *node = &lat->nodes[node_idx];
-
-    /* Generate opponent responses on this board */
-    MoveList opp_moves;
-    movegen_generate_all(&node->board, dawg, opp_rack, &opp_moves);
-
-    float best_opp_equity = 0.0f;
-    if (opp_moves.count > 0) {
-        float max_eq = -10000.0f;
-        int best_i = 0;
-        for (int i = 0; i < opp_moves.count; i++) {
-            float eq = eval_move_heuristic_fast(&node->board, &opp_moves.moves[i], bag_count);
-            if (eq > max_eq) {
-                max_eq = eq;
-                best_i = i;
-            }
-        }
-        /* The damage to active player's margin is the score of the opponent's best response */
-        best_opp_equity = (float)opp_moves.moves[best_i].score;
-    }
-
-    if (palimpsest) {
-        int ctx = palimpsest_classify(opp_rack, &node->board);
-        best_opp_equity += palimpsest_get_correction(palimpsest, ctx);
-    }
-
-    float old_mean = node->belief.mean;
-
-    /* Bayesian posterior update with prior weight */
-    node->belief.samples++;
-    float prior_weight = 4.0f;
-    float sum_samples = (node->belief.mean * (node->belief.samples - 1 + prior_weight)) - (prior_weight * BASELINE_OPP_SCORE) + best_opp_equity;
-    node->belief.mean = (prior_weight * BASELINE_OPP_SCORE + sum_samples) / (prior_weight + (float)node->belief.samples);
-
-    float var_reduction = 36.0f / (1.0f + 0.3f * (float)node->belief.samples);
-    node->belief.variance = fmaxf(4.0f, var_reduction);
-
-    return fabsf(node->belief.mean - old_mean);
 }

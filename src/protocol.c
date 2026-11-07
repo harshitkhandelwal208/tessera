@@ -11,6 +11,31 @@
 #include <ctype.h>
 #include <time.h>
 
+static void resolve_endgame_scores(GameState *game) {
+    if (!game->game_over) return;
+    int p_unplayed = 0;
+    for (int i = 0; i < game->player_rack.count; i++) {
+        char c = game->player_rack.tiles[i];
+        if (c >= 'A' && c <= 'Z') p_unplayed += TILE_VALUES[c - 'A'];
+    }
+    int a_unplayed = 0;
+    for (int i = 0; i < game->ai_rack.count; i++) {
+        char c = game->ai_rack.tiles[i];
+        if (c >= 'A' && c <= 'Z') a_unplayed += TILE_VALUES[c - 'A'];
+    }
+
+    if (game->player_rack.count == 0 && game->bag.count == 0) {
+        game->player_score += a_unplayed;
+        game->ai_score -= a_unplayed;
+    } else if (game->ai_rack.count == 0 && game->bag.count == 0) {
+        game->ai_score += p_unplayed;
+        game->player_score -= p_unplayed;
+    } else {
+        game->player_score -= p_unplayed;
+        game->ai_score -= a_unplayed;
+    }
+}
+
 static void print_state_json(const GameState *game) {
     printf("{\"status\":\"ok\",\"bag_count\":%d,\"player_score\":%d,\"ai_score\":%d,\"turn\":%d,\"game_over\":%s,",
            game->bag.count, game->player_score, game->ai_score, game->turn,
@@ -96,7 +121,7 @@ void protocol_run_server_loop(const Dawg *dawg) {
                 fflush(stdout);
             }
         } else if (strcmp(cmd, "HINT") == 0) {
-            MoveList moves;
+            MoveList moves = {0};
             movegen_generate_all(&current_board, dawg, &game.player_rack, &moves);
             for (int i = 0; i < moves.count; i++) {
                 moves.moves[i].leave_equity = eval_move_static_bucketed(&current_board, &moves.moves[i], game.bag.count);
@@ -117,6 +142,7 @@ void protocol_run_server_loop(const Dawg *dawg) {
                        i < count - 1 ? "," : "");
             }
             printf("]}\n");
+            move_list_destroy(&moves);
             fflush(stdout);
         } else if (strcmp(cmd, "OPPONENT_MOVE") == 0) {
             int bot_type_int = 6; /* Default to MAGPIE 2-Ply Realization */
@@ -161,6 +187,7 @@ void protocol_run_server_loop(const Dawg *dawg) {
 
             if (game.pass_count >= 2 || (game.player_rack.count == 0 && game.bag.count == 0)) {
                 game.game_over = true;
+                resolve_endgame_scores(&game);
             }
             game.turn = 1; /* Now Tessera's turn */
 
@@ -191,8 +218,9 @@ void protocol_run_server_loop(const Dawg *dawg) {
             engine_config_default(&cfg);
             EngineMetrics metrics;
 
-            MoveList moves;
+            MoveList moves = {0};
             Move best = lattice_search(&current_board, dawg, &game.ai_rack, &game.bag, &cfg, &moves, &metrics);
+            move_list_destroy(&moves);
 
             if (best.type == MOVE_PLAY) {
                 board_apply_move(&current_board, &best);
@@ -220,6 +248,7 @@ void protocol_run_server_loop(const Dawg *dawg) {
 
             if (game.pass_count >= 2 || (game.ai_rack.count == 0 && game.bag.count == 0)) {
                 game.game_over = true;
+                resolve_endgame_scores(&game);
             }
             game.turn = 0;
 
@@ -244,11 +273,12 @@ void protocol_run_server_loop(const Dawg *dawg) {
             /* Format: PLAY_MOVE row col dir word blank_mask */
             int r, c;
             char dir_str[4], word[64], blanks[64] = "";
-            if (sscanf(line, "%*s %d %d %3s %63s %63s", &r, &c, dir_str, word, blanks) >= 4) {
+            int args = sscanf(line, "%*s %d %d %3s %63s %63s", &r, &c, dir_str, word, blanks);
+            if (args >= 4) {
                 Direction dir = (toupper((unsigned char)dir_str[0]) == 'V') ? DIR_VERTICAL : DIR_HORIZONTAL;
 
                 /* Validate with move generator */
-                MoveList moves;
+                MoveList moves = {0};
                 movegen_generate_all(&current_board, dawg, &game.player_rack, &moves);
 
                 int match_idx = -1;
@@ -256,12 +286,27 @@ void protocol_run_server_loop(const Dawg *dawg) {
                     if (moves.moves[i].row == r && moves.moves[i].col == c &&
                         moves.moves[i].dir == dir &&
                         strcasecmp(moves.moves[i].word, word) == 0) {
+                        
+                        /* If blank mask provided, verify matching blank assignments */
+                        if (args >= 5 && blanks[0] != '\0') {
+                            bool blank_match = true;
+                            for (int p = 0; p < moves.moves[i].num_placed; p++) {
+                                bool expected_blank = (p < (int)strlen(blanks) && blanks[p] == '1');
+                                if (moves.moves[i].placed[p].is_blank != expected_blank) {
+                                    blank_match = false;
+                                    break;
+                                }
+                            }
+                            if (!blank_match) continue;
+                        }
+
                         match_idx = i;
                         break;
                     }
                 }
 
                 if (match_idx < 0) {
+                    move_list_destroy(&moves);
                     printf("{\"status\":\"error\",\"message\":\"Illegal move. Word not in dictionary or placement invalid.\"}\n");
                     fflush(stdout);
                     continue;
@@ -282,6 +327,7 @@ void protocol_run_server_loop(const Dawg *dawg) {
                 game.turn = 1;
                 if (game.player_rack.count == 0 && game.bag.count == 0) {
                     game.game_over = true;
+                    resolve_endgame_scores(&game);
                 }
 
                 printf("{\"status\":\"ok\",\"score\":%d,\"player_score\":%d,\"ai_score\":%d,\"bag_count\":%d,\"game_over\":%s,",
@@ -290,6 +336,7 @@ void protocol_run_server_loop(const Dawg *dawg) {
                 char p_rack[RACK_CAPACITY + 1];
                 rack_to_string(&game.player_rack, p_rack);
                 printf("\"player_rack\":\"%s\"}\n", p_rack);
+                move_list_destroy(&moves);
                 fflush(stdout);
             } else {
                 printf("{\"status\":\"error\",\"message\":\"Malformed PLAY_MOVE command\"}\n");
@@ -298,7 +345,10 @@ void protocol_run_server_loop(const Dawg *dawg) {
         } else if (strcmp(cmd, "PASS") == 0) {
             game.pass_count++;
             game.turn = 1;
-            if (game.pass_count >= 2) game.game_over = true;
+            if (game.pass_count >= 2) {
+                game.game_over = true;
+                resolve_endgame_scores(&game);
+            }
             printf("{\"status\":\"ok\",\"pass_count\":%d,\"game_over\":%s}\n",
                    game.pass_count, game.game_over ? "true" : "false");
             fflush(stdout);
@@ -311,11 +361,26 @@ void protocol_run_server_loop(const Dawg *dawg) {
                     fflush(stdout);
                     continue;
                 }
+
+                /* Validate all requested tiles are present in player rack before removal */
+                Rack temp_rack = game.player_rack;
+                bool valid = true;
+                for (int i = 0; i < ex_len; i++) {
+                    if (!rack_remove_tile(&temp_rack, exchange_tiles[i])) {
+                        valid = false;
+                        break;
+                    }
+                }
+                if (!valid) {
+                    printf("{\"status\":\"error\",\"message\":\"Illegal exchange: tiles not on rack\"}\n");
+                    fflush(stdout);
+                    continue;
+                }
+
                 for (int i = 0; i < ex_len; i++) {
                     char t = exchange_tiles[i];
-                    if (rack_remove_tile(&game.player_rack, t)) {
-                        game.bag.tiles[game.bag.count++] = t;
-                    }
+                    rack_remove_tile(&game.player_rack, t);
+                    game.bag.tiles[game.bag.count++] = t;
                 }
                 bag_shuffle(&game.bag);
                 bag_draw_tiles(&game.bag, &game.player_rack, ex_len);
@@ -375,11 +440,12 @@ void protocol_run_terminal_game(const Dawg *dawg, bool ai_vs_ai) {
 
         if (turn == 0 || ai_vs_ai) {
             printf("AI is thinking...\n");
-            MoveList moves;
+            MoveList moves = {0};
             clock_t start = clock();
             Move best = sim_find_best_move(&board, dawg, cur_rack, &bag, &cfg, &moves);
             clock_t end = clock();
             double ms = ((double)(end - start) / CLOCKS_PER_SEC) * 1000.0;
+            move_list_destroy(&moves);
 
             if (best.type == MOVE_PLAY) {
                 printf("AI plays: %s at (%d, %d) dir=%s for %d points! (%.1f ms)\n",
@@ -407,7 +473,7 @@ void protocol_run_terminal_game(const Dawg *dawg, bool ai_vs_ai) {
             if (!fgets(user_line, sizeof(user_line), stdin)) break;
 
             if (strncmp(user_line, "HINT", 4) == 0) {
-                MoveList moves;
+                MoveList moves = {0};
                 movegen_generate_all(&board, dawg, cur_rack, &moves);
                 for (int i = 0; i < moves.count; i++) {
                     moves.moves[i].leave_equity = eval_move_static(&board, &moves.moves[i]);
@@ -421,6 +487,7 @@ void protocol_run_terminal_game(const Dawg *dawg, bool ai_vs_ai) {
                            moves.moves[i].dir == DIR_HORIZONTAL ? "H" : "V",
                            moves.moves[i].score, moves.moves[i].leave);
                 }
+                move_list_destroy(&moves);
                 continue;
             } else if (strncmp(user_line, "PASS", 4) == 0) {
                 pass_count++;
@@ -428,7 +495,7 @@ void protocol_run_terminal_game(const Dawg *dawg, bool ai_vs_ai) {
                 int r, c;
                 char d_str[4], w[64];
                 if (sscanf(user_line, "PLAY %d %d %3s %63s", &r, &c, d_str, w) >= 4) {
-                    MoveList moves;
+                    MoveList moves = {0};
                     movegen_generate_all(&board, dawg, cur_rack, &moves);
                     Direction d = (toupper((unsigned char)d_str[0]) == 'V') ? DIR_VERTICAL : DIR_HORIZONTAL;
                     int match = -1;
@@ -449,7 +516,9 @@ void protocol_run_terminal_game(const Dawg *dawg, bool ai_vs_ai) {
                         }
                         bag_draw_tiles(&bag, cur_rack, m->num_placed);
                         pass_count = 0;
+                        move_list_destroy(&moves);
                     } else {
+                        move_list_destroy(&moves);
                         printf("Invalid move! Try again.\n");
                         continue;
                     }
@@ -466,6 +535,25 @@ void protocol_run_terminal_game(const Dawg *dawg, bool ai_vs_ai) {
         }
 
         turn = 1 - turn;
+    }
+
+    /* Apply official WESPA/NASPA endgame tile adjustments */
+    int p1_pen = 0, p2_pen = 0;
+    for (int i = 0; i < p1_rack.count; i++) {
+        if (p1_rack.tiles[i] >= 'A' && p1_rack.tiles[i] <= 'Z') p1_pen += TILE_VALUES[p1_rack.tiles[i] - 'A'];
+    }
+    for (int i = 0; i < p2_rack.count; i++) {
+        if (p2_rack.tiles[i] >= 'A' && p2_rack.tiles[i] <= 'Z') p2_pen += TILE_VALUES[p2_rack.tiles[i] - 'A'];
+    }
+    if (p1_rack.count == 0 && bag.count == 0) {
+        p1_score += p2_pen;
+        p2_score -= p2_pen;
+    } else if (p2_rack.count == 0 && bag.count == 0) {
+        p2_score += p1_pen;
+        p1_score -= p1_pen;
+    } else {
+        p1_score -= p1_pen;
+        p2_score -= p2_pen;
     }
 
     printf("\n================ GAME OVER ================\n");
@@ -501,13 +589,14 @@ void protocol_run_benchmark(const Dawg *dawg) {
 
     int total_moves_gen = 0;
     clock_t start = clock();
+    MoveList ml = {0};
 
     for (int rep = 0; rep < 5; rep++) {
         for (int i = 0; i < 5; i++) {
-            MoveList ml;
             total_moves_gen += movegen_generate_all(&board, dawg, &racks[i], &ml);
         }
     }
+    move_list_destroy(&ml);
 
     clock_t end = clock();
     double elapsed_s = (double)(end - start) / CLOCKS_PER_SEC;
@@ -516,14 +605,15 @@ void protocol_run_benchmark(const Dawg *dawg) {
 
     printf("Lattice Belief-Settling Benchmark...\n");
     start = clock();
-    MoveList ml;
+    MoveList sml = {0};
     EngineConfig scfg;
     engine_config_default(&scfg);
     scfg.max_deliberation_steps = 50;
     EngineMetrics smetrics;
-    Move m = lattice_search(&board, dawg, &racks[0], &bag, &scfg, &ml, &smetrics);
+    Move m = lattice_search(&board, dawg, &racks[0], &bag, &scfg, &sml, &smetrics);
     end = clock();
     double sim_ms = ((double)(end - start) / CLOCKS_PER_SEC) * 1000.0;
+    move_list_destroy(&sml);
     printf("Decision resolved in %.2f ms!\n", sim_ms);
     printf("  Best Play: %s, Score: %d, Settled Q-value: %.2f\n", m.word, m.score, m.sim_equity);
     printf("  Lattice Nodes: %u, Transpositions Merged: %u\n", smetrics.nodes_in_lattice, smetrics.transpositions_merged);

@@ -209,21 +209,15 @@ void nnue_extract_features(const Board *board, const Move *move, const Rack *rac
         "AEIN",   "AEIR",   "AEIS",   "AEIT"
     };
 
-    char sorted_leave[8];
-    strncpy(sorted_leave, move->leave, 7);
-    sorted_leave[leave_len < 7 ? leave_len : 7] = '\0';
-    for (int i = 0; i < leave_len - 1; i++) {
-        for (int j = i + 1; j < leave_len; j++) {
-            if (sorted_leave[i] > sorted_leave[j]) {
-                char tmp = sorted_leave[i];
-                sorted_leave[i] = sorted_leave[j];
-                sorted_leave[j] = tmp;
+    for (int s = 0; s < 16; s++) {
+        bool match = true;
+        for (const char *p = stems[s]; *p; p++) {
+            if (leave_counts[*p - 'A'] < 1) {
+                match = false;
+                break;
             }
         }
-    }
-
-    for (int s = 0; s < 16; s++) {
-        if (strstr(sorted_leave, stems[s]) != NULL) {
+        if (match) {
             out_features[417 + s] = 1.0f;
         }
     }
@@ -282,6 +276,22 @@ void nnue_extract_features(const Board *board, const Move *move, const Rack *rac
     out_features[447] = (bag_count <= 14) ? 1.0f : 0.0f;
 }
 
+#if defined(__AVX2__)
+static inline float hsum128(__m128 v) {
+    __m128 shuf = _mm_movehdup_ps(v);
+    __m128 sums = _mm_add_ps(v, shuf);
+    shuf        = _mm_movehl_ps(shuf, sums);
+    sums        = _mm_add_ss(sums, shuf);
+    return _mm_cvtss_f32(sums);
+}
+
+static inline float hsum256(__m256 v) {
+    __m128 v_hi = _mm256_extractf128_ps(v, 1);
+    __m128 v_lo = _mm256_castps256_ps128(v);
+    return hsum128(_mm_add_ps(v_lo, v_hi));
+}
+#endif
+
 /*
  * AVX2 Vectorized Dot Product + Bias with ClippedReLU activation (with scalar fallback for portability).
  */
@@ -299,14 +309,7 @@ static inline void avx2_linear_crelu(const float *weights, const float *biases,
             v_acc = _mm256_fmadd_ps(v_w, v_x, v_acc);
         }
 
-        /* Horizontal sum across 8 lanes */
-        __m128 v_hi = _mm256_extractf128_ps(v_acc, 1);
-        __m128 v_lo = _mm256_castps256_ps128(v_acc);
-        __m128 v_sum128 = _mm_add_ps(v_lo, v_hi);
-        v_sum128 = _mm_hadd_ps(v_sum128, v_sum128);
-        v_sum128 = _mm_hadd_ps(v_sum128, v_sum128);
-
-        float sum = _mm_cvtss_f32(v_sum128) + biases[o];
+        float sum = hsum256(v_acc) + biases[o];
 
         /* ClippedReLU: clamp(sum, 0.0f, 1.0f) */
         sum = fminf(fmaxf(sum, 0.0f), 1.0f);
@@ -344,13 +347,7 @@ float nnue_forward(const NNUEModel *model, const float *features) {
         v_acc = _mm256_fmadd_ps(v_w, v_x, v_acc);
     }
 
-    __m128 v_hi = _mm256_extractf128_ps(v_acc, 1);
-    __m128 v_lo = _mm256_castps256_ps128(v_acc);
-    __m128 v_sum128 = _mm_add_ps(v_lo, v_hi);
-    v_sum128 = _mm_hadd_ps(v_sum128, v_sum128);
-    v_sum128 = _mm_hadd_ps(v_sum128, v_sum128);
-
-    float raw_equity = _mm_cvtss_f32(v_sum128) + model->b3;
+    float raw_equity = hsum256(v_acc) + model->b3;
 #else
     float raw_equity = model->b3;
     for (int i = 0; i < NNUE_L2_DIM; i++) {
@@ -389,20 +386,10 @@ NNUEResult nnue_forward_dual(const NNUEModel *model, const float *features) {
         v_acc2 = _mm256_fmadd_ps(v_w2, v_x, v_acc2);
     }
 
-    __m128 v_hi1 = _mm256_extractf128_ps(v_acc1, 1);
-    __m128 v_lo1 = _mm256_castps256_ps128(v_acc1);
-    __m128 v_sum1 = _mm_add_ps(v_lo1, v_hi1);
-    v_sum1 = _mm_hadd_ps(v_sum1, v_sum1);
-    v_sum1 = _mm_hadd_ps(v_sum1, v_sum1);
-    float raw_equity = _mm_cvtss_f32(v_sum1) + model->b3;
+    float raw_equity = hsum256(v_acc1) + model->b3;
     res.net_spread = raw_equity * 50.0f;
 
-    __m128 v_hi2 = _mm256_extractf128_ps(v_acc2, 1);
-    __m128 v_lo2 = _mm256_castps256_ps128(v_acc2);
-    __m128 v_sum2 = _mm_add_ps(v_lo2, v_hi2);
-    v_sum2 = _mm_hadd_ps(v_sum2, v_sum2);
-    v_sum2 = _mm_hadd_ps(v_sum2, v_sum2);
-    float raw_win = _mm_cvtss_f32(v_sum2) + model->b_win;
+    float raw_win = hsum256(v_acc2) + model->b_win;
     res.win_probability = 1.0f / (1.0f + expf(-raw_win * 3.0f));
 #else
     float raw_equity = model->b3;

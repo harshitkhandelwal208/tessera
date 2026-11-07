@@ -26,7 +26,7 @@ int main(void) {
     rack_add_tile(&rack, 'S');
 
     printf("[TEST] Generating opening moves with rack RETAINS...\n");
-    MoveList moves;
+    MoveList moves = {0};
     clock_t start = clock();
     int count = movegen_generate_all(&board, dawg, &rack, &moves);
     clock_t end = clock();
@@ -98,6 +98,7 @@ int main(void) {
     printf("[TEST] Board after response:\n");
     board_print(&board);
 
+    move_list_destroy(&moves);
     dawg_free(dawg);
     printf("[TEST] Move generation tests PASSED flawlessly!\n");
     return 0;
