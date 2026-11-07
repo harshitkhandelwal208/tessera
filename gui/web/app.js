@@ -591,9 +591,9 @@ async function apiCheckWord(word) {
 }
 
 // Centralized Move Result Processor
-function handleMoveResult(res, actorName, actorRole) {
+async function handleMoveResult(res, actorName, actorRole) {
     if (res.status !== "ok") {
-        statusMsgEl.textContent = `${actorName} error: ${res.message || "Move failed"}`;
+        if (statusMsgEl) statusMsgEl.textContent = `${actorName} error: ${res.message || "Move failed"}`;
         return;
     }
 
@@ -604,15 +604,15 @@ function handleMoveResult(res, actorName, actorRole) {
         highlightMoveOnBoard(res.move);
 
         const nextActor = (actorRole === "Opponent") ? "Tessera AI (2016 TPR)" : actorName;
-        statusMsgEl.innerHTML = `<strong>${actorName}</strong> played <code>${res.move.word}</code> for <strong>+${res.move.score} pts</strong> (${res.time_ms.toFixed(1)} ms). Next: <em>${nextActor}</em>`;
+        if (statusMsgEl) statusMsgEl.innerHTML = `<strong>${actorName}</strong> played <code>${res.move.word}</code> for <strong>+${res.move.score} pts</strong> (${res.time_ms.toFixed(1)} ms). Next: <em>${nextActor}</em>`;
     } else if (res.move.type === 1) {
         const total = (actorRole === "Opponent") ? res.player_score : res.ai_score;
         addHistoryRow(actorName, "(Exchanged Tiles)", "-", 0, total);
-        statusMsgEl.innerHTML = `<strong>${actorName}</strong> exchanged tiles. Next turn!`;
+        if (statusMsgEl) statusMsgEl.innerHTML = `<strong>${actorName}</strong> exchanged tiles. Next turn!`;
     } else {
         const total = (actorRole === "Opponent") ? res.player_score : res.ai_score;
         addHistoryRow(actorName, "(Pass)", "-", 0, total);
-        statusMsgEl.innerHTML = `<strong>${actorName}</strong> passed. Next turn!`;
+        if (statusMsgEl) statusMsgEl.innerHTML = `<strong>${actorName}</strong> passed. Next turn!`;
     }
 
     if (res.metrics) {
@@ -627,16 +627,15 @@ function handleMoveResult(res, actorName, actorRole) {
         if (elOpen) elOpen.textContent = res.openness;
     }
     if (res.endgame) {
-        statusMsgEl.innerHTML += ` &bull; <span style="color:#2ecc71;font-weight:bold;">👑 EXACT ENDGAME MINIMAX ACTIVE</span>`;
+        if (statusMsgEl) statusMsgEl.innerHTML += ` &bull; <span style="color:#2ecc71;font-weight:bold;">👑 EXACT ENDGAME MINIMAX ACTIVE</span>`;
     }
 
     // Refresh state from engine
-    apiGetState().then(fresh => {
-        renderState(fresh);
-        if (fresh.game_over) {
-            declareGameOver(fresh);
-        }
-    });
+    const fresh = await apiGetState();
+    renderState(fresh);
+    if (fresh.game_over) {
+        declareGameOver(fresh);
+    }
 }
 
 // Step 1 Single Turn (For live teacher demonstration & walkthrough)
@@ -645,7 +644,7 @@ async function stepSingleTurn() {
         toggleAiVsAi(); // Pause continuous loop if active
     }
     if (!gameState || gameState.game_over) {
-        statusMsgEl.textContent = "Match is over. Click 'Reset Match' to start a new match.";
+        if (statusMsgEl) statusMsgEl.textContent = "Match is over. Click 'Reset Match' to start a new match.";
         return;
     }
 
@@ -654,18 +653,18 @@ async function stepSingleTurn() {
     if (gameState.turn === 0) {
         // Opponent's turn
         if (selectedOpponentKey === "human") {
-            statusMsgEl.textContent = "Human turn: Place your tiles and click 'Play Move' or 'Suggest Best Move'.";
+            if (statusMsgEl) statusMsgEl.textContent = "Human turn: Place your tiles and click 'Play Move' or 'Suggest Best Move'.";
             return;
         }
 
-        statusMsgEl.innerHTML = `<span class="spinner"></span> <strong>${prof.name}</strong> is calculating move...`;
+        if (statusMsgEl) statusMsgEl.innerHTML = `<span class="spinner"></span> <strong>${prof.name}</strong> is calculating move...`;
         const res = await apiOpponentMove(selectedOpponentKey);
-        handleMoveResult(res, prof.name, "Opponent");
+        await handleMoveResult(res, prof.name, "Opponent");
     } else {
         // Tessera's turn
-        statusMsgEl.innerHTML = `<span class="spinner"></span> <strong>Tessera AI (2016 TPR)</strong> is searching Belief Lattice DAG...`;
+        if (statusMsgEl) statusMsgEl.innerHTML = `<span class="spinner"></span> <strong>Tessera AI (2016 TPR)</strong> is searching Belief Lattice DAG...`;
         const res = await apiAiMove();
-        handleMoveResult(res, "Tessera AI", "Tessera");
+        await handleMoveResult(res, "Tessera AI", "Tessera");
     }
 }
 
@@ -675,23 +674,27 @@ async function toggleAiVsAi() {
     if (isAiVsAiRunning) {
         isAiVsAiRunning = false;
         clearTimeout(aiVsAiTimer);
-        btn.textContent = "▶ Start AI Match";
-        btn.classList.remove("btn-accent");
-        btn.classList.add("btn-primary");
-        statusMsgEl.textContent = "AI match paused. Click 'Step 1 Turn' or '▶ Start AI Match' to continue.";
+        if (btn) {
+            btn.textContent = "▶ Start AI Match";
+            btn.classList.remove("btn-accent");
+            btn.classList.add("btn-primary");
+        }
+        if (statusMsgEl) statusMsgEl.textContent = "AI match paused. Click 'Step 1 Turn' or '▶ Start AI Match' to continue.";
     } else {
         if (selectedOpponentKey === "human") {
             alert("Please select an AI opponent archetype from the dropdown to run an AI vs AI match.");
             return;
         }
         if (gameState && gameState.game_over) {
-            statusMsgEl.textContent = "Game is already over. Reset match first.";
+            if (statusMsgEl) statusMsgEl.textContent = "Game is already over. Reset match first.";
             return;
         }
         isAiVsAiRunning = true;
-        btn.textContent = "⏸ Pause AI Match";
-        btn.classList.remove("btn-primary");
-        btn.classList.add("btn-accent");
+        if (btn) {
+            btn.textContent = "⏸ Pause AI Match";
+            btn.classList.remove("btn-primary");
+            btn.classList.add("btn-accent");
+        }
 
         runAiVsAiStep();
     }
@@ -702,32 +705,35 @@ async function runAiVsAiStep() {
     if (!gameState || gameState.game_over) {
         isAiVsAiRunning = false;
         const btn = document.getElementById("btn-ai-vs-ai");
-        btn.textContent = "▶ Start AI Match";
-        btn.classList.remove("btn-accent");
-        btn.classList.add("btn-primary");
+        if (btn) {
+            btn.textContent = "▶ Start AI Match";
+            btn.classList.remove("btn-accent");
+            btn.classList.add("btn-primary");
+        }
         return;
     }
 
     const prof = OPPONENT_PROFILES[selectedOpponentKey] || OPPONENT_PROFILES["6"];
 
     if (gameState.turn === 0) {
-        statusMsgEl.innerHTML = `<span class="spinner"></span> <strong>${prof.name}</strong> is calculating move...`;
+        if (statusMsgEl) statusMsgEl.innerHTML = `<span class="spinner"></span> <strong>${prof.name}</strong> is calculating move...`;
         const res = await apiOpponentMove(selectedOpponentKey);
-        handleMoveResult(res, prof.name, "Opponent");
+        await handleMoveResult(res, prof.name, "Opponent");
     } else {
-        statusMsgEl.innerHTML = `<span class="spinner"></span> <strong>Tessera AI (2016 TPR)</strong> is searching Belief Lattice DAG...`;
+        if (statusMsgEl) statusMsgEl.innerHTML = `<span class="spinner"></span> <strong>Tessera AI (2016 TPR)</strong> is searching Belief Lattice DAG...`;
         const res = await apiAiMove();
-        handleMoveResult(res, "Tessera AI", "Tessera");
+        await handleMoveResult(res, "Tessera AI", "Tessera");
     }
 
-    const fresh = await apiGetState();
-    if (fresh.game_over) {
+    if (gameState && gameState.game_over) {
         isAiVsAiRunning = false;
         const btn = document.getElementById("btn-ai-vs-ai");
-        btn.textContent = "▶ Start AI Match";
-        btn.classList.remove("btn-accent");
-        btn.classList.add("btn-primary");
-        declareGameOver(fresh);
+        if (btn) {
+            btn.textContent = "▶ Start AI Match";
+            btn.classList.remove("btn-accent");
+            btn.classList.add("btn-primary");
+        }
+        declareGameOver(gameState);
         return;
     }
 
@@ -834,160 +840,205 @@ async function triggerAiTurn() {
 // Setup Event Listeners
 function setupEvents() {
     // Opponent Selector
-    oppSelectEl.addEventListener("change", () => {
-        selectedOpponentKey = oppSelectEl.value;
-        updateOpponentHeader();
-        renderState(gameState);
-        const prof = OPPONENT_PROFILES[selectedOpponentKey] || OPPONENT_PROFILES["6"];
-        statusMsgEl.textContent = `Opponent profile switched to ${prof.name} ${prof.elo}.`;
-    });
+    if (oppSelectEl) {
+        oppSelectEl.addEventListener("change", () => {
+            selectedOpponentKey = oppSelectEl.value;
+            updateOpponentHeader();
+            renderState(gameState);
+            const prof = OPPONENT_PROFILES[selectedOpponentKey] || OPPONENT_PROFILES["6"];
+            if (statusMsgEl) statusMsgEl.textContent = `Opponent profile switched to ${prof.name} ${prof.elo}.`;
+        });
+    }
 
     // Reset Match
-    document.getElementById("btn-new-game").addEventListener("click", async () => {
-        if (isAiVsAiRunning) {
-            toggleAiVsAi();
-        }
-        pendingPlaced = [];
-        lastMoveCoords = [];
-        moveHistory = [];
-        historyTbodyEl.innerHTML = `<tr><td colspan="6" class="placeholder-text">No moves played yet.</td></tr>`;
-        const state = await apiNewGame();
-        renderState(state);
-        const prof = OPPONENT_PROFILES[selectedOpponentKey] || OPPONENT_PROFILES["6"];
-        statusMsgEl.textContent = `New match initialized. ${prof.name} vs Tessera AI. Click 'Step 1 Turn' or '▶ Start AI Match' to begin!`;
-    });
+    const btnNew = document.getElementById("btn-new-game");
+    if (btnNew) {
+        btnNew.addEventListener("click", async () => {
+            if (isAiVsAiRunning) {
+                toggleAiVsAi();
+            }
+            pendingPlaced = [];
+            lastMoveCoords = [];
+            moveHistory = [];
+            if (historyTbodyEl) historyTbodyEl.innerHTML = `<tr><td colspan="6" class="placeholder-text">No moves played yet.</td></tr>`;
+            const state = await apiNewGame();
+            renderState(state);
+            const prof = OPPONENT_PROFILES[selectedOpponentKey] || OPPONENT_PROFILES["6"];
+            if (statusMsgEl) statusMsgEl.textContent = `New match initialized. ${prof.name} vs Tessera AI. Click 'Step 1 Turn' or '▶ Start AI Match' to begin!`;
+        });
+    }
 
     // Step 1 Turn Button
-    document.getElementById("btn-step-turn").addEventListener("click", stepSingleTurn);
+    const btnStep = document.getElementById("btn-step-turn");
+    if (btnStep) {
+        btnStep.addEventListener("click", stepSingleTurn);
+    }
 
     // AI vs AI Toggle Button
-    document.getElementById("btn-ai-vs-ai").addEventListener("click", toggleAiVsAi);
+    const btnAi = document.getElementById("btn-ai-vs-ai");
+    if (btnAi) {
+        btnAi.addEventListener("click", toggleAiVsAi);
+    }
 
     // Human Controls
-    document.getElementById("btn-recall-tiles").addEventListener("click", () => {
-        pendingPlaced = [];
-        selectedRackIndex = -1;
-        renderState(gameState);
-    });
+    const btnRecall = document.getElementById("btn-recall-tiles");
+    if (btnRecall) {
+        btnRecall.addEventListener("click", () => {
+            pendingPlaced = [];
+            selectedRackIndex = -1;
+            renderState(gameState);
+        });
+    }
 
-    document.getElementById("btn-shuffle-rack").addEventListener("click", () => {
-        if (!gameState || !gameState.player_rack) return;
-        const arr = gameState.player_rack.split("");
-        for (let i = arr.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [arr[i], arr[j]] = [arr[j], arr[i]];
-        }
-        gameState.player_rack = arr.join("");
-        renderPlayerRack();
-    });
+    const btnShuffle = document.getElementById("btn-shuffle-rack");
+    if (btnShuffle) {
+        btnShuffle.addEventListener("click", () => {
+            if (!gameState || !gameState.player_rack) return;
+            const arr = gameState.player_rack.split("");
+            for (let i = arr.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [arr[i], arr[j]] = [arr[j], arr[i]];
+            }
+            gameState.player_rack = arr.join("");
+            renderPlayerRack();
+        });
+    }
 
-    document.getElementById("btn-play-move").addEventListener("click", submitPlayMove);
-    document.getElementById("btn-ai-play").addEventListener("click", triggerAiTurn);
+    const btnPlay = document.getElementById("btn-play-move");
+    if (btnPlay) {
+        btnPlay.addEventListener("click", submitPlayMove);
+    }
 
-    document.getElementById("btn-pass").addEventListener("click", async () => {
-        if (confirm("Are you sure you want to pass your turn?")) {
-            await apiPass();
-            addHistoryRow("Player", "(Pass)", "-", 0, gameState.player_score);
-            statusMsgEl.textContent = "Player passed. AI is thinking...";
-            setTimeout(triggerAiTurn, 500);
-        }
-    });
+    const btnAiPlay = document.getElementById("btn-ai-play");
+    if (btnAiPlay) {
+        btnAiPlay.addEventListener("click", triggerAiTurn);
+    }
+
+    const btnPass = document.getElementById("btn-pass");
+    if (btnPass) {
+        btnPass.addEventListener("click", async () => {
+            if (confirm("Are you sure you want to pass your turn?")) {
+                await apiPass();
+                addHistoryRow("Player", "(Pass)", "-", 0, gameState.player_score);
+                if (statusMsgEl) statusMsgEl.textContent = "Player passed. AI is thinking...";
+                setTimeout(triggerAiTurn, 500);
+            }
+        });
+    }
 
     // Candidate Plays Hint
-    document.getElementById("btn-get-hint").addEventListener("click", async () => {
-        const loading = document.getElementById("engine-hint-loading");
-        if (loading) loading.classList.remove("hidden");
-        const res = await apiGetHint();
-        if (loading) loading.classList.add("hidden");
+    const btnHint = document.getElementById("btn-get-hint");
+    if (btnHint) {
+        btnHint.addEventListener("click", async () => {
+            const loading = document.getElementById("engine-hint-loading");
+            if (loading) loading.classList.remove("hidden");
+            const res = await apiGetHint();
+            if (loading) loading.classList.add("hidden");
 
-        if (res.status === "ok" && res.hints) {
-            if (res.phase) {
-                const elPhase = document.getElementById("telemetry-phase-bucket");
-                if (elPhase) elPhase.textContent = res.phase;
+            if (res.status === "ok" && res.hints) {
+                if (res.phase) {
+                    const elPhase = document.getElementById("telemetry-phase-bucket");
+                    if (elPhase) elPhase.textContent = res.phase;
+                }
+                if (res.openness) {
+                    const elOpen = document.getElementById("telemetry-openness");
+                    if (elOpen) elOpen.textContent = res.openness;
+                }
+                if (hintsTbodyEl) {
+                    hintsTbodyEl.innerHTML = "";
+                    res.hints.forEach((h, idx) => {
+                        const tr = document.createElement("tr");
+                        if (idx === 0) tr.classList.add("top-candidate");
+                        const pos = `${String.fromCharCode(65 + h.col)}${h.row + 1} (${h.dir})`;
+                        tr.innerHTML = `
+                            <td>#${idx + 1}</td>
+                            <td><strong>${h.word}</strong></td>
+                            <td>${pos}</td>
+                            <td>+${h.score}</td>
+                            <td>${h.leave || "\u2014"}</td>
+                            <td>${h.equity.toFixed(1)}</td>
+                        `;
+                        hintsTbodyEl.appendChild(tr);
+                    });
+                }
+                const tabBtn = document.querySelector('[data-tab="tab-hints"]');
+                if (tabBtn) tabBtn.click();
             }
-            if (res.openness) {
-                const elOpen = document.getElementById("telemetry-openness");
-                if (elOpen) elOpen.textContent = res.openness;
-            }
-            hintsTbodyEl.innerHTML = "";
-            res.hints.forEach((h, idx) => {
-                const tr = document.createElement("tr");
-                if (idx === 0) tr.classList.add("top-candidate");
-                const pos = `${String.fromCharCode(65 + h.col)}${h.row + 1} (${h.dir})`;
-                tr.innerHTML = `
-                    <td>#${idx + 1}</td>
-                    <td><strong>${h.word}</strong></td>
-                    <td>${pos}</td>
-                    <td>+${h.score}</td>
-                    <td>${h.leave || "\u2014"}</td>
-                    <td>${h.equity.toFixed(1)}</td>
-                `;
-                hintsTbodyEl.appendChild(tr);
-            });
-            // Switch to Hints tab
-            const tabBtn = document.querySelector('[data-tab="tab-hints"]');
-            if (tabBtn) tabBtn.click();
-        }
-    });
+        });
+    }
 
     // Exchange Modal
     const modalEx = document.getElementById("modal-exchange");
     const modalRackEl = document.getElementById("modal-exchange-rack");
-    document.getElementById("btn-exchange").addEventListener("click", () => {
-        if (gameState.bag_count < 7) {
-            alert("Cannot exchange tiles when bag has fewer than 7 tiles.");
-            return;
-        }
-        modalRackEl.innerHTML = "";
-        for (let i = 0; i < gameState.player_rack.length; i++) {
-            const ch = gameState.player_rack[i];
-            const tile = createTileElement(ch, ch === '?');
-            tile.dataset.char = ch;
-            tile.addEventListener("click", () => tile.classList.toggle("selected"));
-            modalRackEl.appendChild(tile);
-        }
-        modalEx.classList.remove("hidden");
-    });
+    const btnExchange = document.getElementById("btn-exchange");
+    if (btnExchange && modalEx && modalRackEl) {
+        btnExchange.addEventListener("click", () => {
+            if (gameState.bag_count < 7) {
+                alert("Cannot exchange tiles when bag has fewer than 7 tiles.");
+                return;
+            }
+            modalRackEl.innerHTML = "";
+            for (let i = 0; i < gameState.player_rack.length; i++) {
+                const ch = gameState.player_rack[i];
+                const tile = createTileElement(ch, ch === '?');
+                tile.dataset.char = ch;
+                tile.addEventListener("click", () => tile.classList.toggle("selected"));
+                modalRackEl.appendChild(tile);
+            }
+            modalEx.classList.remove("hidden");
+        });
+    }
 
-    document.getElementById("btn-exchange-cancel").addEventListener("click", () => {
-        modalEx.classList.add("hidden");
-    });
+    const btnExchangeCancel = document.getElementById("btn-exchange-cancel");
+    if (btnExchangeCancel && modalEx) {
+        btnExchangeCancel.addEventListener("click", () => {
+            modalEx.classList.add("hidden");
+        });
+    }
 
-    document.getElementById("btn-exchange-confirm").addEventListener("click", async () => {
-        const selectedTiles = modalRackEl.querySelectorAll(".tile.selected");
-        if (selectedTiles.length === 0) {
-            alert("Please select at least one tile to exchange.");
-            return;
-        }
-        const discard = Array.from(selectedTiles).map(t => t.dataset.char).join("");
-        modalEx.classList.add("hidden");
+    const btnExchangeConfirm = document.getElementById("btn-exchange-confirm");
+    if (btnExchangeConfirm && modalEx && modalRackEl) {
+        btnExchangeConfirm.addEventListener("click", async () => {
+            const selectedTiles = modalRackEl.querySelectorAll(".tile.selected");
+            if (selectedTiles.length === 0) {
+                alert("Please select at least one tile to exchange.");
+                return;
+            }
+            const discard = Array.from(selectedTiles).map(t => t.dataset.char).join("");
+            modalEx.classList.add("hidden");
 
-        const res = await apiExchange(discard);
-        if (res.status === "ok") {
-            addHistoryRow("Player", `(Exchanged ${discard})`, "-", 0, gameState.player_score);
-            const fresh = await apiGetState();
-            renderState(fresh);
-            setTimeout(triggerAiTurn, 500);
-        }
-    });
+            const res = await apiExchange(discard);
+            if (res.status === "ok") {
+                addHistoryRow("Player", `(Exchanged ${discard})`, "-", 0, gameState.player_score);
+                const fresh = await apiGetState();
+                renderState(fresh);
+                setTimeout(triggerAiTurn, 500);
+            }
+        });
+    }
 
-    // Dictionary Lookup
-    document.getElementById("btn-dict-check").addEventListener("click", async () => {
-        const input = document.getElementById("dict-input");
-        const val = input.value.trim().toUpperCase();
-        if (!val) return;
+    // Dictionary Lookup (guarded)
+    const btnDict = document.getElementById("btn-dict-check");
+    if (btnDict) {
+        btnDict.addEventListener("click", async () => {
+            const input = document.getElementById("dict-input");
+            const val = input ? input.value.trim().toUpperCase() : "";
+            if (!val) return;
 
-        const res = await apiCheckWord(val);
-        const card = document.getElementById("dict-result");
-        card.classList.remove("hidden", "valid", "invalid");
-        if (res.valid) {
-            card.classList.add("valid");
-            card.textContent = `\u2713 "${val}" IS in the official tournament lexicon (SOWPODS)!`;
-        } else {
-            card.classList.add("invalid");
-            card.textContent = `\u2717 "${val}" is NOT a valid Scrabble word.`;
-        }
-    });
+            const res = await apiCheckWord(val);
+            const card = document.getElementById("dict-result");
+            if (card) {
+                card.classList.remove("hidden", "valid", "invalid");
+                if (res.valid) {
+                    card.classList.add("valid");
+                    card.textContent = `\u2713 "${val}" IS in the official tournament lexicon (SOWPODS)!`;
+                } else {
+                    card.classList.add("invalid");
+                    card.textContent = `\u2717 "${val}" is NOT a valid Scrabble word.`;
+                }
+            }
+        });
+    }
 
     // Tab Navigation
     document.querySelectorAll(".tab-btn").forEach(btn => {
@@ -1004,16 +1055,25 @@ function setupEvents() {
 
 // App Boot
 async function startApp() {
-    initBoardGrid();
-    setupEvents();
-    updateOpponentHeader();
+    try {
+        initBoardGrid();
+        setupEvents();
+        updateOpponentHeader();
+    } catch (err) {
+        console.error("UI setup error:", err);
+    }
+
     try {
         const state = await apiGetState();
         renderState(state);
     } catch (e) {
         console.error("Could not fetch initial engine state:", e);
-        statusMsgEl.textContent = "Connecting to native C11 Tessera engine...";
+        if (statusMsgEl) statusMsgEl.textContent = "Connecting to native C11 Tessera engine...";
     }
 }
 
-window.addEventListener("DOMContentLoaded", startApp);
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", startApp);
+} else {
+    startApp();
+}
