@@ -29,3 +29,8 @@ data/*_tournament.txt
 # Release archives
 *.tar.gz
 *.zip
+
+# Zig build cache & output
+.zig-cache/
+zig-out/
+dist/

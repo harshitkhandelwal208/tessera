@@ -302,21 +302,36 @@ Official precompiled tournament binaries and full source archives are available 
 ## Build, Test & Run Instructions
 
 ### 1. Prerequisites
-- Linux x86-64 with standard build tools (`gcc`, `make`).
+- Standard C build tools: GCC/Clang with Make, **OR** the Zig toolchain (`zig >= 0.13`).
 - CPU supporting AVX2 vector instructions (all modern x86-64 CPUs since 2013).
 
 ### 2. Compilation
 Compile all engine targets with full optimization:
+
+#### Option A: GNU Make (Default)
 ```bash
 make clean
 make -j$(nproc)
 ```
 *Compiler Flags: `-std=c11 -O3 -flto -march=native -Wall -Wextra -pthread -lm`*
 
+#### Option B: Zig Build System
+```bash
+zig build -Doptimize=ReleaseFast
+# Or via Makefile alias:
+make zig
+```
+
 ### 3. Run Unit Test Suite
 Execute the 5 core subsystem verification suites:
 ```bash
+# Via Make:
 make test
+
+# Via Zig (parallel multi-threaded execution):
+zig build test -Doptimize=ReleaseFast
+# Or via Makefile alias:
+make zig-test
 ```
 *Tests pass DAWG loading, movegen throughput, evaluation heuristics, proof propagation, and exact endgame solving in under 2 seconds.*
 
@@ -337,6 +352,20 @@ Benchmark Tessera against the 7-bot championship field:
 ```bash
 make tools/match_benchmark
 ./tools/match_benchmark 10   # Plays 70 tournament matches (10 per bot archetype)
+```
+
+### 6. Multi-Platform Cross-Compilation (Zig Toolchain)
+Cross-compile release binaries for Linux (x86_64, ARM64), Windows (`.exe`), and macOS (Apple Silicon, Intel) directly from a single machine without Docker or virtual machines:
+```bash
+# Cross-compile and package all 5 platforms into dist/packages/ with SHA-256 sums:
+./tools/cross_compile.sh
+# Or via Makefile alias:
+make zig-cross
+
+# Or cross-compile a specific target directly with Zig:
+zig build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseFast
+zig build -Dtarget=aarch64-linux-musl -Doptimize=ReleaseFast
+zig build -Dtarget=aarch64-macos -Doptimize=ReleaseFast
 ```
 
 ---
@@ -389,12 +418,15 @@ make tools/match_benchmark
 │   ├── match_benchmark.c   # 7-bot championship tournament matrix (Elo estimation)
 │   ├── generate_dataset.c  # Multi-threaded OpenMP self-play dataset generator
 │   ├── train_nnue.c        # AVX2 Adam trainer with cosine annealing learning rate
-│   └── run_training.sh     # Self-play generation & training orchestration script
+│   ├── run_training.sh     # Self-play generation & training orchestration script
+│   └── cross_compile.sh    # Multi-platform release packaging pipeline via Zig
 ├── data/
 │   ├── dictionary.txt  # SOWPODS 2019 lexicon (267,751 words)
 │   ├── dawg.bin        # Compiled minimal DAWG binary (742 KB)
 │   └── nnue.bin        # Pre-trained deep dual-headed NNUE weights
-├── Makefile            # High-performance C11 compilation rules (-O3 -flto)
+├── build.zig           # Native Zig build specification & parallel test runner
+├── build.zig.zon       # Zig package manifest and fingerprint
+├── Makefile            # Standard C11 compilation rules (-O3 -flto)
 ├── LICENSE             # MIT License
 └── README.md           # Engine documentation & technical reference
 ```

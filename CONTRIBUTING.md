@@ -60,9 +60,13 @@ Before opening a pull request, verify that your changes pass all testing tiers:
 ### Unit Test Suite
 Verify that all core subsystems (DAWG lexicon, Appel-Jacobson generator, leave evaluations, proof propagation, and exact endgame solver) pass cleanly:
 ```bash
+# Using GNU Make:
 make clean
 make -j$(nproc)
 make test
+
+# Or using the Zig toolchain:
+zig build test -Doptimize=ReleaseFast
 ```
 *All tests must pass with zero assertions or errors.*
 

@@ -11,7 +11,7 @@ TARGET = tessera
 TEST_SRCS = $(wildcard tests/*.c)
 TEST_BINS = $(TEST_SRCS:.c=)
 
-.PHONY: all clean test bench match-bench dataset train
+.PHONY: all clean test bench match-bench dataset train zig zig-test zig-bench zig-cross
 
 all: $(TARGET)
 
@@ -54,5 +54,17 @@ dataset: tools/generate_dataset
 train: tools/train_nnue
 	@./tools/train_nnue data/train_data.bin data/nnue.bin 25
 
+zig:
+	zig build -Doptimize=ReleaseFast
+
+zig-test:
+	zig build test -Doptimize=ReleaseFast
+
+zig-bench:
+	zig build bench -Doptimize=ReleaseFast
+
+zig-cross:
+	@./tools/cross_compile.sh
+
 clean:
-	rm -f src/*.o tests/*.o tools/match_benchmark tools/generate_dataset tools/train_nnue $(TARGET) tests/test_dict tests/test_movegen tests/test_eval tests/test_lattice_proof tests/test_endgame
+	rm -rf src/*.o tests/*.o tools/match_benchmark tools/generate_dataset tools/train_nnue $(TARGET) tests/test_dict tests/test_movegen tests/test_eval tests/test_lattice_proof tests/test_endgame .zig-cache zig-out dist
