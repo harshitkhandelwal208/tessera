@@ -304,7 +304,6 @@ Official precompiled tournament binaries and full source archives are available 
 ### 1. Prerequisites
 - Linux x86-64 with standard build tools (`gcc`, `make`).
 - CPU supporting AVX2 vector instructions (all modern x86-64 CPUs since 2013).
-- Optional: Python 3 for the Web GUI server.
 
 ### 2. Compilation
 Compile all engine targets with full optimization:
@@ -339,13 +338,6 @@ Benchmark Tessera against the 7-bot championship field:
 make tools/match_benchmark
 ./tools/match_benchmark 10   # Plays 70 tournament matches (10 per bot archetype)
 ```
-
-### 6. Interactive Tournament Web GUI
-Launch the browser GUI with real-time board rendering and telemetry:
-```bash
-./run_demo.sh
-```
-Navigate to **`http://localhost:8080`** in any web browser.
 
 ---
 
@@ -398,9 +390,6 @@ Navigate to **`http://localhost:8080`** in any web browser.
 │   ├── generate_dataset.c  # Multi-threaded OpenMP self-play dataset generator
 │   ├── train_nnue.c        # AVX2 Adam trainer with cosine annealing learning rate
 │   └── run_training.sh     # Self-play generation & training orchestration script
-├── gui/
-│   ├── server.py       # Zero-dependency Python HTTP & WebSocket bridge
-│   └── web/            # Luxury tournament Web GUI & live telemetry dashboard
 ├── data/
 │   ├── dictionary.txt  # SOWPODS 2019 lexicon (267,751 words)
 │   ├── dawg.bin        # Compiled minimal DAWG binary (742 KB)
@@ -412,12 +401,8 @@ Navigate to **`http://localhost:8080`** in any web browser.
 
 ---
 
-## Authors & License
+## Author & License
 
-Tessera is developed by:
-* **Harshit Khandelwal**
-* **Prem**
-* **Ashley**
-* **Aaryan**
+Tessera is developed by **Harshit Khandelwal**.
 
 Released under the **[MIT License](LICENSE)**.

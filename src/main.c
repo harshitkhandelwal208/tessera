@@ -67,7 +67,7 @@ int main(int argc, char *argv[]) {
         printf("Usage:\n");
         printf("  %s play            Play Human vs AI in terminal\n", argv[0]);
         printf("  %s ai-vs-ai        Watch AI vs AI game simulation\n", argv[0]);
-        printf("  %s server          Run JSON protocol server over stdin/stdout for GUI\n", argv[0]);
+        printf("  %s server          Run JSON protocol server over stdin/stdout for external clients\n", argv[0]);
         printf("  %s bench           Run engine speed benchmarks\n", argv[0]);
         printf("  %s build-dict      Rebuild binary DAWG from text dictionary\n", argv[0]);
         printf("\nStarting interactive game by default...\n\n");

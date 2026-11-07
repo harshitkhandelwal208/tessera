@@ -14,7 +14,7 @@
 void protocol_run_terminal_game(const Dawg *dawg, bool ai_vs_ai);
 
 /*
- * Runs the JSON/line protocol loop over stdin/stdout for GUI / external clients.
+ * Runs the JSON/line protocol loop over stdin/stdout for external clients.
  */
 void protocol_run_server_loop(const Dawg *dawg);
 
