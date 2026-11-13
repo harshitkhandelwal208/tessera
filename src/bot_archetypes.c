@@ -298,6 +298,14 @@ static Move select_magpie_sim_move(const Board *board, const Dawg *dawg, const R
     float net_totals[5] = {0};
     int N_SIMS = 8;
 
+    Board spec_boards[5];
+    BoardCrossCache spec_caches[5];
+    for (int k = 0; k < beam; k++) {
+        board_copy(&spec_boards[k], board);
+        board_apply_move(&spec_boards[k], &moves.moves[k]);
+        board_cross_cache_init(&spec_caches[k], &spec_boards[k], dawg);
+    }
+
     for (int s = 0; s < N_SIMS; s++) {
         char sim_unseen[100];
         memcpy(sim_unseen, unseen, unseen_count);
@@ -309,12 +317,8 @@ static Move select_magpie_sim_move(const Board *board, const Dawg *dawg, const R
         for (int i = 0; i < d; i++) rack_add_tile(&opp_r, sim_unseen[i]);
 
         for (int k = 0; k < beam; k++) {
-            Board spec;
-            board_copy(&spec, board);
-            board_apply_move(&spec, &moves.moves[k]);
-
             /* 1. Opponent best reply on spec board */
-            float opp_equity = movegen_find_best_response_equity(&spec, dawg, &opp_r, bag_count > 0 ? bag_count - 1 : 0);
+            float opp_equity = movegen_find_best_response_equity_cached(&spec_boards[k], &spec_caches[k], dawg, &opp_r, bag_count > 0 ? bag_count - 1 : 0);
 
             /* 2. Active player's turn-2 realization of leave */
             Rack my_realized_rack;
@@ -329,7 +333,7 @@ static Move select_magpie_sim_move(const Board *board, const Dawg *dawg, const R
                 rack_add_tile(&my_realized_rack, sim_unseen[d + r]);
             }
 
-            float my_realized_equity = movegen_find_best_response_equity(&spec, dawg, &my_realized_rack, bag_count > 0 ? bag_count - 1 : 0);
+            float my_realized_equity = movegen_find_best_response_equity_cached(&spec_boards[k], &spec_caches[k], dawg, &my_realized_rack, bag_count > 0 ? bag_count - 1 : 0);
 
             float net_turn = (float)moves.moves[k].score - (0.75f * opp_equity) + (0.45f * my_realized_equity);
             net_totals[k] += net_turn;

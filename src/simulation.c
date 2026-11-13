@@ -196,6 +196,15 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
         real_weight = 1.00f;
     }
 
+    /* Precompute BoardCrossCache for all top candidate leaf boards (eliminates thousands of redundant transpositions and cross-checks) */
+    static _Thread_local BoardCrossCache s_cand_caches[MAX_LATTICE_EDGES];
+    for (int k = 0; k < top_k; k++) {
+        uint32_t c_idx = root->edges[k].target_node_idx;
+        if (c_idx > 0 && c_idx < lat->num_nodes) {
+            board_cross_cache_init(&s_cand_caches[k], &lat->nodes[c_idx].board, dawg);
+        }
+    }
+
     for (int step = 0; step < max_steps && (step < 10 || !verdict.should_adjourn); step++) {
         /* Dynamically extend deliberation up to 15 steps if decision is closely contested */
         if (step == max_steps - 1 && verdict.confidence < 0.70f && max_steps < 60) {
@@ -247,7 +256,7 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
                 LatticeNode *leaf = &lat->nodes[c_idx];
 
                 /* 1. Opponent counterplay response on leaf board */
-                float best_opp = movegen_find_best_response_equity(&leaf->board, dawg, &sim_opp_rack, bag_remaining);
+                float best_opp = movegen_find_best_response_equity_cached(&leaf->board, &s_cand_caches[k], dawg, &sim_opp_rack, bag_remaining);
                 if (cfg.use_palimpsest) {
                     int ctx = palimpsest_classify(&sim_opp_rack, &leaf->board);
                     best_opp += palimpsest_get_correction(&palimpsest, ctx);
@@ -267,8 +276,8 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
                 for (int i = 0; i < actual_draw; i++) {
                     rack_add_tile(&my_realized_rack, rem_bag[i]);
                 }
-                float my_realized = movegen_find_best_response_equity(&leaf->board, dawg, &my_realized_rack,
-                                                                      bag_remaining > 0 ? bag_remaining - 1 : 0);
+                float my_realized = movegen_find_best_response_equity_cached(&leaf->board, &s_cand_caches[k], dawg, &my_realized_rack,
+                                                                             bag_remaining > 0 ? bag_remaining - 1 : 0);
                 realized_scores[k] = my_realized;
                 sum_realized += my_realized;
             }

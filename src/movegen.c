@@ -92,7 +92,7 @@ typedef struct {
     const Rack *orig_rack;
     MoveList *list;
     bool is_transposed;
-    CrossCheck cross_checks[BOARD_SIZE][BOARD_SIZE];
+    const CrossCheck (*cross_checks)[BOARD_SIZE];
     int rack_counts[27];
     uint32_t rack_mask;
     int tiles_left;
@@ -230,7 +230,16 @@ static inline void record_move(GenContext *ctx, int row, int start_col, const ch
         m->score = board_score_move(ctx->orig_board, ctx->dawg, m);
     }
 
-    compute_leave(ctx->orig_rack, m->placed, num_placed, m->leave);
+    int lcnt = 0;
+    for (int l = 0; l < 26; l++) {
+        for (int c = 0; c < ctx->rack_counts[l]; c++) {
+            m->leave[lcnt++] = (char)('A' + l);
+        }
+    }
+    for (int c = 0; c < ctx->rack_counts[26]; c++) {
+        m->leave[lcnt++] = '?';
+    }
+    m->leave[lcnt] = '\0';
     m->leave_equity = 0.0f;
     m->sim_equity = 0.0f;
 
@@ -422,8 +431,6 @@ static void left_part(GenContext *ctx, int row, int anchor_col, uint32_t node, i
 }
 
 static void generate_row_moves(GenContext *ctx) {
-    board_compute_horizontal_cross_checks(ctx->board, ctx->dawg, ctx->cross_checks);
-
     for (int w = 0; w < 4; w++) {
         uint64_t mask = ctx->board->anchors.b[w];
         while (mask) {
@@ -486,7 +493,15 @@ static void generate_row_moves(GenContext *ctx) {
     }
 }
 
-int movegen_generate_all(const Board *board, const Dawg *dawg, const Rack *rack, MoveList *list) {
+void board_cross_cache_init(BoardCrossCache *cache, const Board *board, const Dawg *dawg) {
+    if (!cache || !board || !dawg) return;
+    board_compute_horizontal_cross_checks(board, dawg, cache->h_checks);
+    board_transpose(&cache->transposed, board);
+    board_compute_horizontal_cross_checks(&cache->transposed, dawg, cache->v_checks);
+}
+
+int movegen_generate_all_cached(const Board *board, const BoardCrossCache *cache,
+                                const Dawg *dawg, const Rack *rack, MoveList *list) {
     if (!list) return 0;
     if (!list->moves || list->capacity == 0) {
         move_list_init(list);
@@ -499,25 +514,36 @@ int movegen_generate_all(const Board *board, const Dawg *dawg, const Rack *rack,
     ctx.dawg = dawg;
     ctx.orig_rack = rack;
     ctx.list = list;
+    ctx.best_score = 0;
+    ctx.best_equity = 0.0f;
+    ctx.bag_count = 50;
+    ctx.track_equity = false;
 
-    /* 1. Generate Horizontal Moves */
+    /* 1. Generate Horizontal Moves with precomputed h_checks */
     ctx.board = board;
     ctx.is_transposed = false;
+    ctx.cross_checks = (const CrossCheck (*)[BOARD_SIZE])cache->h_checks;
     init_context_rack(&ctx, rack);
     generate_row_moves(&ctx);
 
-    /* 2. Generate Vertical Moves via Transposed Board */
-    Board transposed;
-    board_transpose(&transposed, board);
-    ctx.board = &transposed;
+    /* 2. Generate Vertical Moves with precomputed transposed board and v_checks */
+    ctx.board = &cache->transposed;
     ctx.is_transposed = true;
+    ctx.cross_checks = (const CrossCheck (*)[BOARD_SIZE])cache->v_checks;
     init_context_rack(&ctx, rack);
     generate_row_moves(&ctx);
 
     return list->count;
 }
 
-int movegen_find_best_response_score(const Board *board, const Dawg *dawg, const Rack *rack) {
+int movegen_generate_all(const Board *board, const Dawg *dawg, const Rack *rack, MoveList *list) {
+    BoardCrossCache cache;
+    board_cross_cache_init(&cache, board, dawg);
+    return movegen_generate_all_cached(board, &cache, dawg, rack, list);
+}
+
+int movegen_find_best_response_score_cached(const Board *board, const BoardCrossCache *cache,
+                                            const Dawg *dawg, const Rack *rack) {
     GenContext ctx;
     ctx.orig_board = board;
     ctx.dawg = dawg;
@@ -531,21 +557,28 @@ int movegen_find_best_response_score(const Board *board, const Dawg *dawg, const
     /* 1. Generate Horizontal Moves */
     ctx.board = board;
     ctx.is_transposed = false;
+    ctx.cross_checks = (const CrossCheck (*)[BOARD_SIZE])cache->h_checks;
     init_context_rack(&ctx, rack);
     generate_row_moves(&ctx);
 
-    /* 2. Generate Vertical Moves via Transposed Board */
-    Board transposed;
-    board_transpose(&transposed, board);
-    ctx.board = &transposed;
+    /* 2. Generate Vertical Moves */
+    ctx.board = &cache->transposed;
     ctx.is_transposed = true;
+    ctx.cross_checks = (const CrossCheck (*)[BOARD_SIZE])cache->v_checks;
     init_context_rack(&ctx, rack);
     generate_row_moves(&ctx);
 
     return ctx.best_score;
 }
 
-float movegen_find_best_response_equity(const Board *board, const Dawg *dawg, const Rack *rack, int bag_count) {
+int movegen_find_best_response_score(const Board *board, const Dawg *dawg, const Rack *rack) {
+    BoardCrossCache cache;
+    board_cross_cache_init(&cache, board, dawg);
+    return movegen_find_best_response_score_cached(board, &cache, dawg, rack);
+}
+
+float movegen_find_best_response_equity_cached(const Board *board, const BoardCrossCache *cache,
+                                               const Dawg *dawg, const Rack *rack, int bag_count) {
     GenContext ctx;
     ctx.orig_board = board;
     ctx.dawg = dawg;
@@ -556,20 +589,26 @@ float movegen_find_best_response_equity(const Board *board, const Dawg *dawg, co
     ctx.bag_count = bag_count;
     ctx.track_equity = true;
 
-    /* 1. Generate Horizontal Moves */
+    /* 1. Generate Horizontal Moves with precomputed h_checks */
     ctx.board = board;
     ctx.is_transposed = false;
+    ctx.cross_checks = (const CrossCheck (*)[BOARD_SIZE])cache->h_checks;
     init_context_rack(&ctx, rack);
     generate_row_moves(&ctx);
 
-    /* 2. Generate Vertical Moves via Transposed Board */
-    Board transposed;
-    board_transpose(&transposed, board);
-    ctx.board = &transposed;
+    /* 2. Generate Vertical Moves with precomputed transposed board and v_checks */
+    ctx.board = &cache->transposed;
     ctx.is_transposed = true;
+    ctx.cross_checks = (const CrossCheck (*)[BOARD_SIZE])cache->v_checks;
     init_context_rack(&ctx, rack);
     generate_row_moves(&ctx);
 
     if (ctx.best_equity < -500.0f) return 0.0f;
     return ctx.best_equity;
+}
+
+float movegen_find_best_response_equity(const Board *board, const Dawg *dawg, const Rack *rack, int bag_count) {
+    BoardCrossCache cache;
+    board_cross_cache_init(&cache, board, dawg);
+    return movegen_find_best_response_equity_cached(board, &cache, dawg, rack, bag_count);
 }
