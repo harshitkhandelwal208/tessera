@@ -10,6 +10,7 @@ tests/test_movegen
 tests/test_lattice_proof
 tests/test_endgame
 tests/test_incremental_nnue
+tests/test_quackle_bridge
 test_dict
 test_eval
 test_movegen

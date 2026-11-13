@@ -17,6 +17,7 @@ const engine_sources = [_][]const u8{
     "src/endgame.c",
     "src/bayes_rack.c",
     "src/bot_archetypes.c",
+    "src/quackle_bridge.c",
 };
 
 const c_flags = [_][]const u8{
@@ -53,6 +54,25 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(exe);
 
+    // 1b. Shared Library (libtessera)
+    const lib_mod = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .pic = true,
+    });
+    lib_mod.addIncludePath(b.path("include"));
+    lib_mod.addCSourceFiles(.{
+        .files = &engine_sources,
+        .flags = &c_flags,
+    });
+    const lib = b.addLibrary(.{
+        .name = "tessera",
+        .root_module = lib_mod,
+        .linkage = .dynamic,
+    });
+    b.installArtifact(lib);
+
     // 2. 'run' step
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
@@ -74,8 +94,10 @@ pub fn build(b: *std.Build) void {
         .{ .name = "test_dict", .file = "tests/test_dict.c" },
         .{ .name = "test_movegen", .file = "tests/test_movegen.c" },
         .{ .name = "test_eval", .file = "tests/test_eval.c" },
+        .{ .name = "test_incremental_nnue", .file = "tests/test_incremental_nnue.c" },
         .{ .name = "test_lattice_proof", .file = "tests/test_lattice_proof.c" },
         .{ .name = "test_endgame", .file = "tests/test_endgame.c" },
+        .{ .name = "test_quackle_bridge", .file = "tests/test_quackle_bridge.c" },
     };
 
     for (tests) |t| {

@@ -1,8 +1,26 @@
 #include "bayes_rack.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <math.h>
+
+static _Thread_local uint64_t s_bayes_prng = 0x9e3779b97f4a7c15ULL;
+
+static inline float fast_bayes_uniform(void) {
+    s_bayes_prng ^= s_bayes_prng >> 12;
+    s_bayes_prng ^= s_bayes_prng << 25;
+    s_bayes_prng ^= s_bayes_prng >> 27;
+    uint64_t x = s_bayes_prng * 0x2545F4914F6CDD1DULL;
+    return (float)(x >> 40) / 16777216.0f;
+}
+
+static inline uint32_t fast_bayes_rand(void) {
+    s_bayes_prng ^= s_bayes_prng >> 12;
+    s_bayes_prng ^= s_bayes_prng << 25;
+    s_bayes_prng ^= s_bayes_prng >> 27;
+    return (uint32_t)(s_bayes_prng * 0x2545F4914F6CDD1DULL);
+}
 
 static const int ENGLISH_BAG_DISTRIBUTION[NUM_DISTINCT_TILES] = {
     9, 2, 2, 4, 12, 2, 3, 2, 9, 1, 1, 4, 2, 6, 8, 2, 1, 6, 4, 6, 4, 2, 2, 1, 2, 1, 2
@@ -127,7 +145,7 @@ void bayes_rack_sample_with_bag(const BayesRackTracker *tracker, Rack *out_opp_r
         if (total_prob <= 0.0f) break;
 
         /* Spin roulette wheel */
-        float r = ((float)rand() / (float)RAND_MAX) * total_prob;
+        float r = fast_bayes_uniform() * total_prob;
         float accum = 0.0f;
         int chosen_idx = -1;
 
@@ -166,7 +184,7 @@ void bayes_rack_sample_with_bag(const BayesRackTracker *tracker, Rack *out_opp_r
         }
         /* Fisher-Yates shuffle remaining tiles */
         for (int i = rem_cnt - 1; i > 0; i--) {
-            int j = rand() % (i + 1);
+            int j = (int)(fast_bayes_rand() % (uint32_t)(i + 1));
             char tmp = out_remaining_bag[i];
             out_remaining_bag[i] = out_remaining_bag[j];
             out_remaining_bag[j] = tmp;

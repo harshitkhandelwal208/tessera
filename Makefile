@@ -15,9 +15,11 @@ TARGET = tessera
 TEST_SRCS = $(wildcard tests/*.c)
 TEST_BINS = $(TEST_SRCS:.c=)
 
-.PHONY: all clean test bench match-bench dataset train zig zig-test zig-bench zig-cross lib
+.PHONY: all clean test bench match-bench dataset train zig zig-test zig-bench zig-cross lib tools
 
 all: $(TARGET) lib
+
+tools: tools/match_benchmark tools/generate_dataset tools/train_nnue
 
 lib: libtessera.so
 
@@ -40,6 +42,7 @@ test: $(TARGET) $(TEST_BINS)
 	@./tests/test_incremental_nnue
 	@./tests/test_lattice_proof
 	@./tests/test_endgame
+	@./tests/test_quackle_bridge
 	@echo "All tests passed successfully!"
 
 tests/%: tests/%.c $(OBJS)

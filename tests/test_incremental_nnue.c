@@ -72,19 +72,22 @@ int main(void) {
            inc_ms, (double)moves.count / (inc_ms / 1000.0), inc_sum);
     printf("  Throughput Speedup:       %.2fx FASTER!\n", dense_ms / inc_ms);
 
-    /* Check numerical equivalence */
-    for (int i = 0; i < 50 && i < moves.count; i++) {
+    /* Check exact numerical equivalence across all legal moves */
+    float max_diff = 0.0f;
+    for (int i = 0; i < moves.count; i++) {
         alignas(64) float features[NNUE_INPUT_DIM];
         nnue_extract_features_with_score(&board, &moves.moves[i], &rack, 86, 0, features);
         float dense_val = nnue_forward(&g_nnue, features);
         float inc_val = nnue_forward_move_incremental(&g_nnue, &base_acc, &board, &moves.moves[i], 86, 0);
         float diff = fabsf(dense_val - inc_val);
-        if (diff > 0.05f) {
-            printf("Discrepancy at move %d (%s): dense=%.3f, inc=%.3f, diff=%.4f\n",
+        if (diff > max_diff) max_diff = diff;
+        if (diff > 0.001f) {
+            printf("Discrepancy at move %d (%s): dense=%.4f, inc=%.4f, diff=%.6f\n",
                    i, moves.moves[i].word, dense_val, inc_val, diff);
         }
-        assert(diff < 0.5f);
+        assert(diff < 0.01f);
     }
+    printf("[TEST] Verified 100%% equivalence across all %d moves (Max Diff: %.6f)!\n", moves.count, max_diff);
 
     move_list_destroy(&moves);
     dawg_free(dawg);

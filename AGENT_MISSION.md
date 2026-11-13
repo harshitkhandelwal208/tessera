@@ -15,6 +15,19 @@ You are the lead algorithm architect and high-performance systems engineer worki
   - General neural evaluation (NNUE) trained on unbiased, deep self-play distributions that capture universal tile synergy, rack balance, board geometry, and terminal equity across any lexicon.
 - Avoid heuristic hacks, opponent-specific exploit code, or artificial rules that only work against certain bots. Tessera must be objectively optimal against ANY player or engine under tournament conditions.
 
+### CORE INSPIRATION: LEVERAGE CHESS ENGINE BREAKTHROUGHS (Stockfish, Lc0, Reckless)
+- **Actively study, borrow, and adapt proven architectural breakthroughs from championship game engines**:
+  - Consult and implement techniques detailed in `CHESS_ENGINE_OPTIMIZATIONS.md`.
+  - **Stockfish**:
+    - HalfKP-style Incremental Accumulators: Maintain an active L1 accumulator and update only $\Delta$ tile features on moves and leaves (yields 10x–50x eval speedup).
+    - INT8 / INT16 quantization and AVX2/AVX-512 vectorization so the entire NNUE fits in CPU L2 cache (<250 KB).
+    - 64-byte Transposition Table (TT) cacheline clustering with Zobrist XOR verification and zero heap allocations.
+  - **Reckless**:
+    - 4x `uint64_t` bitboards for 15x15 geometry with hardware bit-scan intrinsics (`__builtin_ctzll`, `__builtin_popcountll`) for row/column traversal.
+  - **Lc0**:
+    - Paired Monte Carlo rollout distributions and unbiased deep self-play learning.
+- *Note*: Borrowing universal algorithmic and high-performance systems breakthroughs from chess engines is essential and encouraged; what is strictly forbidden is merely narrow overfitting or hardcoding anti-bot heuristics.
+
 ### 1. Optimize Every Single Bit of Memory (Push to Physical Limit)
 - **Zero-Allocation Search**:
   - Eliminate all dynamic `malloc`/`free` calls inside movegen, simulation, lattice propagation, and evaluation loops.

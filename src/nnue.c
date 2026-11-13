@@ -821,12 +821,10 @@ int nnue_extract_move_sparse_features(const Board *board, const Move *move,
             count++;
         }
     }
-    for (int i = 537; i <= 541; i++) {
-        if (features[i] != 0.0f) {
-            out_sparse[count].index = (uint16_t)i;
-            out_sparse[count].value = features[i];
-            count++;
-        }
+    if (features[541] != 0.0f) {
+        out_sparse[count].index = 541;
+        out_sparse[count].value = features[541];
+        count++;
     }
     if (features[557] != 0.0f) {
         out_sparse[count].index = 557;

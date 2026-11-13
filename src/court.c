@@ -1,13 +1,35 @@
 #include "court.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
+#include <stdbool.h>
 #include <math.h>
 
-/* Box-Muller transform for standard normal random variable */
-static float sample_standard_normal(void) {
-    float u1 = ((float)rand() + 1.0f) / ((float)RAND_MAX + 2.0f);
-    float u2 = ((float)rand() + 1.0f) / ((float)RAND_MAX + 2.0f);
-    return sqrtf(-2.0f * logf(u1)) * cosf(2.0f * 3.1415926535f * u2);
+static _Thread_local uint64_t s_court_prng = 0x853c49e6748fea9bULL;
+static _Thread_local float s_cached_normal = 0.0f;
+static _Thread_local bool s_has_cached_normal = false;
+
+static inline float fast_court_uniform(void) {
+    s_court_prng ^= s_court_prng >> 12;
+    s_court_prng ^= s_court_prng << 25;
+    s_court_prng ^= s_court_prng >> 27;
+    uint64_t x = s_court_prng * 0x2545F4914F6CDD1DULL;
+    return ((float)(x >> 40) + 1.0f) / 16777218.0f;
+}
+
+/* Fast Box-Muller transform with paired normal caching */
+static inline float sample_standard_normal(void) {
+    if (s_has_cached_normal) {
+        s_has_cached_normal = false;
+        return s_cached_normal;
+    }
+    float u1 = fast_court_uniform();
+    float u2 = fast_court_uniform();
+    float r = sqrtf(-2.0f * logf(u1));
+    float theta = 6.28318530718f * u2;
+    s_cached_normal = r * sinf(theta);
+    s_has_cached_normal = true;
+    return r * cosf(theta);
 }
 
 CourtVerdict court_deliberate(const Lattice *lat, uint32_t root_idx) {
@@ -85,12 +107,33 @@ CourtVerdict court_deliberate(const Lattice *lat, uint32_t root_idx) {
         std_devs[i] = sqrtf(fmaxf(0.01f, var));
     }
 
-    for (int s = 0; s < COURT_SAMPLES; s++) {
-        int best_sample_idx = 0;
-        float best_sample_val = -100000.0f;
+    /* Statistical Dominance Check: if argmax's lower bound dominates all rival upper bounds */
+    float argmax_lower = root->edges[argmax_idx].q_value - (3.5f * std_devs[argmax_idx]);
+    int contenders[MAX_LATTICE_EDGES];
+    int num_contenders = 0;
 
-        for (int i = 0; i < n_edges; i++) {
-            if (root->edges[i].visits == 0) continue;
+    for (int i = 0; i < n_edges; i++) {
+        if (i == argmax_idx) continue;
+        if (root->edges[i].visits == 0) continue;
+        float upper = root->edges[i].q_value + (3.5f * std_devs[i]);
+        if (upper >= argmax_lower) {
+            contenders[num_contenders++] = i;
+        }
+    }
+
+    if (num_contenders == 0) {
+        /* No other candidate has non-negligible probability of exceeding argmax: instant 100% confidence */
+        v.confidence = 1.0f;
+        v.should_adjourn = true;
+        return v;
+    }
+
+    for (int s = 0; s < COURT_SAMPLES; s++) {
+        int best_sample_idx = argmax_idx;
+        float best_sample_val = root->edges[argmax_idx].q_value + (std_devs[argmax_idx] * sample_standard_normal());
+
+        for (int c = 0; c < num_contenders; c++) {
+            int i = contenders[c];
             float sample = root->edges[i].q_value + (std_devs[i] * sample_standard_normal());
             if (sample > best_sample_val) {
                 best_sample_val = sample;

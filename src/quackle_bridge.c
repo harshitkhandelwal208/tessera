@@ -57,14 +57,21 @@ BridgeMove tessera_compute_move(void *engine,
     bool has_any = false;
     for (int r = 0; r < 15; r++) {
         for (int c = 0; c < 15; c++) {
-            if (board_tiles[r][c] != 0) {
+            char t = board_tiles[r][c];
+            if (t != 0 && t != ' ' && t != '.') {
                 has_any = true;
-                tb.cells[r][c].tile = board_tiles[r][c];
-                tb.cells[r][c].is_blank = board_is_blank[r][c];
+                bool is_blank = board_is_blank ? board_is_blank[r][c] : false;
+                if (t >= 'a' && t <= 'z') {
+                    t = (char)(t - 'a' + 'A');
+                    is_blank = true;
+                }
+                tb.cells[r][c].tile = t;
+                tb.cells[r][c].is_blank = is_blank;
             }
         }
     }
     tb.is_empty = !has_any;
+    board_recompute_bitboards(&tb);
 
     /* 2. Build Tessera Rack */
     Rack tr;
