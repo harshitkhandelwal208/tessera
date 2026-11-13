@@ -94,6 +94,7 @@ typedef struct {
     bool is_transposed;
     CrossCheck cross_checks[BOARD_SIZE][BOARD_SIZE];
     int rack_counts[27];
+    uint32_t rack_mask;
     int tiles_left;
     int best_score;
     float best_equity;
@@ -103,12 +104,16 @@ typedef struct {
 
 static inline void init_context_rack(GenContext *ctx, const Rack *rack) {
     memset(ctx->rack_counts, 0, sizeof(ctx->rack_counts));
+    ctx->rack_mask = 0;
     ctx->tiles_left = rack->count;
     for (int i = 0; i < rack->count; i++) {
         char t = rack->tiles[i];
         int idx = (t == '?') ? 26 : (t - 'A');
-        if (idx >= 0 && idx <= 26) {
+        if (idx >= 0 && idx < 26) {
             ctx->rack_counts[idx]++;
+            ctx->rack_mask |= (1U << idx);
+        } else if (idx == 26) {
+            ctx->rack_counts[26]++;
         }
     }
 }
@@ -263,6 +268,9 @@ static void extend_right(GenContext *ctx, int row, int col, uint32_t node, DawgE
         uint32_t mask = ctx->cross_checks[row][col].valid_letters_mask;
         if (mask == 0) return;
 
+        uint32_t avail_mask = (ctx->rack_counts[26] > 0) ? mask : (mask & ctx->rack_mask);
+        if (avail_mask == 0) return;
+
         /* Iterate through available DAWG transitions */
         uint32_t edge_idx = node;
         while (1) {
@@ -270,10 +278,11 @@ static void extend_right(GenContext *ctx, int row, int col, uint32_t node, DawgE
             char let = dawg_letter(edge);
             int let_idx = let - 'A';
 
-            if ((mask & (1U << let_idx)) != 0) {
+            if ((avail_mask & (1U << let_idx)) != 0) {
                 /* Check regular letter in rack */
                 if (ctx->rack_counts[let_idx] > 0) {
                     ctx->rack_counts[let_idx]--;
+                    if (ctx->rack_counts[let_idx] == 0) ctx->rack_mask &= ~(1U << let_idx);
                     ctx->tiles_left--;
                     placed[num_placed].row = row;
                     placed[num_placed].col = col;
@@ -286,6 +295,7 @@ static void extend_right(GenContext *ctx, int row, int col, uint32_t node, DawgE
                                  placed, num_placed + 1);
 
                     ctx->rack_counts[let_idx]++;
+                    ctx->rack_mask |= (1U << let_idx);
                     ctx->tiles_left++;
                 }
 
@@ -352,30 +362,32 @@ static void left_part(GenContext *ctx, int row, int anchor_col, uint32_t node, i
     uint32_t mask = ctx->cross_checks[row][cur_col].valid_letters_mask;
     if (mask == 0) return;
 
-    /* 1. Try regular letters present in rack */
-    for (int t_idx = 0; t_idx < 26; t_idx++) {
-        if (ctx->rack_counts[t_idx] > 0) {
-            if ((mask & (1U << t_idx)) == 0) continue;
+    /* 1. Try regular letters present in rack via hardware bit-scan */
+    uint32_t pmask = mask & ctx->rack_mask;
+    while (pmask) {
+        int t_idx = __builtin_ctz(pmask);
+        pmask &= pmask - 1;
 
-            char t = (char)('A' + t_idx);
-            bool is_term = false;
-            uint32_t next_node = dawg_step(ctx->dawg, node, t, &is_term);
-            if (next_node != 0 || is_term) {
-                ctx->rack_counts[t_idx]--;
-                ctx->tiles_left--;
-                placed[num_placed].row = row;
-                placed[num_placed].col = cur_col;
-                placed[num_placed].letter = t;
-                placed[num_placed].is_blank = false;
+        char t = (char)('A' + t_idx);
+        bool is_term = false;
+        uint32_t next_node = dawg_step(ctx->dawg, node, t, &is_term);
+        if (next_node != 0 || is_term) {
+            ctx->rack_counts[t_idx]--;
+            if (ctx->rack_counts[t_idx] == 0) ctx->rack_mask &= ~(1U << t_idx);
+            ctx->tiles_left--;
+            placed[num_placed].row = row;
+            placed[num_placed].col = cur_col;
+            placed[num_placed].letter = t;
+            placed[num_placed].is_blank = false;
 
-                word[word_len] = t;
-                left_part(ctx, row, anchor_col, next_node, limit,
-                          target_prefix_len, word, word_len + 1,
-                          placed, num_placed + 1);
+            word[word_len] = t;
+            left_part(ctx, row, anchor_col, next_node, limit,
+                      target_prefix_len, word, word_len + 1,
+                      placed, num_placed + 1);
 
-                ctx->rack_counts[t_idx]++;
-                ctx->tiles_left++;
-            }
+            ctx->rack_counts[t_idx]++;
+            ctx->rack_mask |= (1U << t_idx);
+            ctx->tiles_left++;
         }
     }
 

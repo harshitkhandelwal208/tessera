@@ -7,6 +7,7 @@
 #include "dict.h"
 #include "movegen.h"
 #include "endgame.h"
+#include "zobrist.h"
 
 static void init_rack_str(Rack *rack, const char *str) {
     rack_init(rack);
@@ -56,6 +57,16 @@ int main(void) {
            best_move.word, best_move.row, best_move.col,
            best_move.dir == DIR_HORIZONTAL ? 'H' : 'V', best_move.score);
     printf("  Predicted Terminal Net Margin: %+d pts\n", net_margin);
+
+    /* Verify mathematical identity between zobrist_update_move and zobrist_compute_board */
+    uint64_t h_initial = zobrist_compute_board(&board, 0);
+    Board test_board;
+    board_copy(&test_board, &board);
+    board_apply_move(&test_board, &best_move);
+    uint64_t h_recomputed = zobrist_compute_board(&test_board, 0);
+    uint64_t h_incremental = zobrist_update_move(h_initial, &best_move);
+    assert(h_incremental == h_recomputed);
+    printf("  Verified exact Zobrist incremental bit-identity (h=0x%016llx)!\n", (unsigned long long)h_incremental);
 
     /* Check that solving is sub-millisecond */
     assert(elapsed_ms < 50.0);

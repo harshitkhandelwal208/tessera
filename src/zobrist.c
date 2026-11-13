@@ -94,3 +94,17 @@ uint64_t zobrist_update_tile(uint64_t hash, int row, int col, char letter, bool 
     /* XOR out empty state 0 and XOR in new state */
     return hash ^ zobrist_cells[sq][0] ^ zobrist_cells[sq][state];
 }
+
+uint64_t zobrist_update_move(uint64_t hash, const Move *m) {
+    if (!m || m->type != MOVE_PLAY) return hash;
+    for (int p = 0; p < m->num_placed; p++) {
+        hash = zobrist_update_tile(hash, m->placed[p].row, m->placed[p].col,
+                                   m->placed[p].letter, m->placed[p].is_blank);
+    }
+    return hash;
+}
+
+uint64_t zobrist_toggle_turn(uint64_t hash) {
+    if (!zobrist_initialized) zobrist_init();
+    return hash ^ zobrist_turn[0] ^ zobrist_turn[1];
+}

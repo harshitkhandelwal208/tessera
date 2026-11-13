@@ -845,26 +845,42 @@ void nnue_accumulator_apply_sparse(const NNUEModel *model, const NNUEAccumulator
                                    const SparseFeature *features, int num_features,
                                    NNUEAccumulator *out_acc) {
 #if defined(__AVX512F__)
-    for (int o = 0; o < NNUE_L1_DIM; o += 16) {
-        __m512 acc = _mm512_load_ps(&base->vals[o]);
+    for (int o = 0; o < NNUE_L1_DIM; o += 64) {
+        __m512 a0 = _mm512_load_ps(&base->vals[o + 0]);
+        __m512 a1 = _mm512_load_ps(&base->vals[o + 16]);
+        __m512 a2 = _mm512_load_ps(&base->vals[o + 32]);
+        __m512 a3 = _mm512_load_ps(&base->vals[o + 48]);
         for (int f = 0; f < num_features; f++) {
             uint16_t idx = features[f].index;
-            float val = features[f].value;
-            __m512 w = _mm512_load_ps(&model->w1_by_feature[idx][o]);
-            acc = _mm512_fmadd_ps(_mm512_set1_ps(val), w, acc);
+            __m512 val = _mm512_set1_ps(features[f].value);
+            a0 = _mm512_fmadd_ps(val, _mm512_load_ps(&model->w1_by_feature[idx][o + 0]), a0);
+            a1 = _mm512_fmadd_ps(val, _mm512_load_ps(&model->w1_by_feature[idx][o + 16]), a1);
+            a2 = _mm512_fmadd_ps(val, _mm512_load_ps(&model->w1_by_feature[idx][o + 32]), a2);
+            a3 = _mm512_fmadd_ps(val, _mm512_load_ps(&model->w1_by_feature[idx][o + 48]), a3);
         }
-        _mm512_store_ps(&out_acc->vals[o], acc);
+        _mm512_store_ps(&out_acc->vals[o + 0], a0);
+        _mm512_store_ps(&out_acc->vals[o + 16], a1);
+        _mm512_store_ps(&out_acc->vals[o + 32], a2);
+        _mm512_store_ps(&out_acc->vals[o + 48], a3);
     }
 #elif defined(__AVX2__)
-    for (int o = 0; o < NNUE_L1_DIM; o += 8) {
-        __m256 acc = _mm256_load_ps(&base->vals[o]);
+    for (int o = 0; o < NNUE_L1_DIM; o += 32) {
+        __m256 a0 = _mm256_load_ps(&base->vals[o + 0]);
+        __m256 a1 = _mm256_load_ps(&base->vals[o + 8]);
+        __m256 a2 = _mm256_load_ps(&base->vals[o + 16]);
+        __m256 a3 = _mm256_load_ps(&base->vals[o + 24]);
         for (int f = 0; f < num_features; f++) {
             uint16_t idx = features[f].index;
-            float val = features[f].value;
-            __m256 w = _mm256_load_ps(&model->w1_by_feature[idx][o]);
-            acc = _mm256_fmadd_ps(_mm256_set1_ps(val), w, acc);
+            __m256 val = _mm256_set1_ps(features[f].value);
+            a0 = _mm256_fmadd_ps(val, _mm256_load_ps(&model->w1_by_feature[idx][o + 0]), a0);
+            a1 = _mm256_fmadd_ps(val, _mm256_load_ps(&model->w1_by_feature[idx][o + 8]), a1);
+            a2 = _mm256_fmadd_ps(val, _mm256_load_ps(&model->w1_by_feature[idx][o + 16]), a2);
+            a3 = _mm256_fmadd_ps(val, _mm256_load_ps(&model->w1_by_feature[idx][o + 24]), a3);
         }
-        _mm256_store_ps(&out_acc->vals[o], acc);
+        _mm256_store_ps(&out_acc->vals[o + 0], a0);
+        _mm256_store_ps(&out_acc->vals[o + 8], a1);
+        _mm256_store_ps(&out_acc->vals[o + 16], a2);
+        _mm256_store_ps(&out_acc->vals[o + 24], a3);
     }
 #else
     memcpy(out_acc->vals, base->vals, sizeof(base->vals));

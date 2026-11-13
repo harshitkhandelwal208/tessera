@@ -55,13 +55,6 @@ static void endgame_tt_clear(void) {
     g_endgame_ctx.generation = 1;
 }
 
-static uint64_t compute_endgame_key(const Board *board, const Rack *r1, const Rack *r2, int turn) {
-    uint64_t k = zobrist_compute_board(board, turn);
-    k ^= zobrist_compute_rack(r1, 0);
-    k ^= zobrist_compute_rack(r2, 1);
-    return k;
-}
-
 static int rack_total_points(const Rack *rack) {
     int sum = 0;
     for (int i = 0; i < rack->count; i++) {
@@ -82,12 +75,30 @@ static int compare_move_order(const void *a, const void *b) {
     return ob->eff_score - oa->eff_score;
 }
 
+static inline void sort_endgame_moves(EndgameMoveOrder *order, int n) {
+    if (n <= 1) return;
+    if (n <= 32) {
+        for (int i = 1; i < n; i++) {
+            EndgameMoveOrder key = order[i];
+            int j = i - 1;
+            while (j >= 0 && order[j].eff_score < key.eff_score) {
+                order[j + 1] = order[j];
+                j--;
+            }
+            order[j + 1] = key;
+        }
+    } else {
+        qsort(order, n, sizeof(EndgameMoveOrder), compare_move_order);
+    }
+}
+
 /*
  * Negamax formulation of perfect-information Scrabble endgame on a position-keyed DAG.
  * Returns the net margin from the perspective of the player to move.
  */
 static int negamax_dag(const Board *board, const Dawg *dawg,
                        const Rack *my_rack, const Rack *opp_rack,
+                       uint64_t board_hash,
                        int alpha, int beta, int depth, int consecutive_passes,
                        Move *out_best) {
     int my_rack_val = rack_total_points(my_rack);
@@ -111,7 +122,7 @@ static int negamax_dag(const Board *board, const Dawg *dawg,
         return -my_rack_val + opp_rack_val;
     }
 
-    uint64_t key = compute_endgame_key(board, my_rack, opp_rack, depth % 2);
+    uint64_t key = board_hash ^ zobrist_compute_rack(my_rack, 0) ^ zobrist_compute_rack(opp_rack, 1);
     uint32_t cluster_idx = (uint32_t)(key & (ENDGAME_TT_CLUSTERS - 1));
     EndgameTTCluster *cl = &g_endgame_ctx.tt[cluster_idx];
     EndgameTTEntry *victim = &cl->entries[0];
@@ -152,7 +163,9 @@ static int negamax_dag(const Board *board, const Dawg *dawg,
 
     if (moves->count == 0) {
         /* Must pass */
-        int score = -negamax_dag(board, dawg, opp_rack, my_rack, -beta, -alpha,
+        int score = -negamax_dag(board, dawg, opp_rack, my_rack,
+                                 zobrist_toggle_turn(board_hash),
+                                 -beta, -alpha,
                                  depth + 1, consecutive_passes + 1, NULL);
         if (out_best && depth == 0) {
             memset(out_best, 0, sizeof(Move));
@@ -171,9 +184,7 @@ static int negamax_dag(const Board *board, const Dawg *dawg,
         }
         order[i].eff_score = eff;
     }
-    if (moves->count > 1) {
-        qsort(order, moves->count, sizeof(EndgameMoveOrder), compare_move_order);
-    }
+    sort_endgame_moves(order, moves->count);
 
     int best_score = -ENDGAME_INF;
     Move best_move = moves->moves[order[0].idx];
@@ -184,18 +195,23 @@ static int negamax_dag(const Board *board, const Dawg *dawg,
     int max_beam = (depth == 0) ? 64 : (depth <= 2 ? 40 : 24);
     if (beam > max_beam) beam = max_beam;
 
+    bool has_evaluated_outplay = false;
+
     for (int i = 0; i < beam; i++) {
         Move *m = &moves->moves[order[i].idx];
 
         /* If this move empties my rack, game immediately terminates! */
         if (m->num_placed == my_rack->count) {
-            int game_out_score = order[i].eff_score;
-            if (game_out_score > best_score) {
-                best_score = game_out_score;
-                best_move = *m;
+            if (!has_evaluated_outplay) {
+                has_evaluated_outplay = true;
+                int game_out_score = order[i].eff_score;
+                if (game_out_score > best_score) {
+                    best_score = game_out_score;
+                    best_move = *m;
+                }
+                if (game_out_score > alpha) alpha = game_out_score;
+                if (alpha >= beta) break;
             }
-            if (game_out_score > alpha) alpha = game_out_score;
-            if (alpha >= beta) break;
             continue;
         }
 
@@ -207,8 +223,12 @@ static int negamax_dag(const Board *board, const Dawg *dawg,
         Rack new_my_rack;
         new_my_rack.count = my_rack->count - m->num_placed;
         memcpy(new_my_rack.tiles, m->leave, new_my_rack.count);
+        new_my_rack.tiles[new_my_rack.count] = '\0';
+
+        uint64_t child_board_hash = zobrist_toggle_turn(zobrist_update_move(board_hash, m));
 
         int score = m->score - negamax_dag(&child_board, dawg, opp_rack, &new_my_rack,
+                                           child_board_hash,
                                            -beta, -alpha, depth + 1, 0, NULL);
 
         if (score > best_score) {
@@ -257,7 +277,9 @@ bool endgame_solve_exact(const Board *board, const Dawg *dawg,
 
     Move best;
     memset(&best, 0, sizeof(Move));
+    uint64_t root_board_hash = zobrist_compute_board(board, 0);
     int margin = negamax_dag(board, dawg, my_rack, opp_rack,
+                             root_board_hash,
                              -ENDGAME_INF, ENDGAME_INF, 0, 0, &best);
 
     if (out_best_move) *out_best_move = best;

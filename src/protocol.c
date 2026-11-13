@@ -591,9 +591,11 @@ void protocol_run_benchmark(const Dawg *dawg) {
     int total_moves_gen = 0;
     clock_t start = clock();
     MoveList ml = {0};
+    move_list_init(&ml);
 
-    for (int rep = 0; rep < 5; rep++) {
+    for (int rep = 0; rep < 20; rep++) {
         for (int i = 0; i < 5; i++) {
+            ml.count = 0;
             total_moves_gen += movegen_generate_all(&board, dawg, &racks[i], &ml);
         }
     }
@@ -601,7 +603,7 @@ void protocol_run_benchmark(const Dawg *dawg) {
 
     clock_t end = clock();
     double elapsed_s = (double)(end - start) / CLOCKS_PER_SEC;
-    printf("Move Generation: %d moves generated across 25 calls in %.3f seconds (%.0f moves/sec)\n",
+    printf("Move Generation: %d moves generated across 100 calls in %.3f seconds (%.0f moves/sec)\n",
            total_moves_gen, elapsed_s, (double)total_moves_gen / elapsed_s);
 
     printf("Lattice Belief-Settling Benchmark...\n");

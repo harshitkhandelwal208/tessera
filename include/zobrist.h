@@ -23,4 +23,10 @@ uint64_t zobrist_compute_rack(const Rack *rack, int player_idx);
 /* Incremental update for a placed tile */
 uint64_t zobrist_update_tile(uint64_t hash, int row, int col, char letter, bool is_blank);
 
+/* Incremental update for an entire move's placed tiles */
+uint64_t zobrist_update_move(uint64_t hash, const Move *m);
+
+/* Toggles turn bit between player 0 and player 1 */
+uint64_t zobrist_toggle_turn(uint64_t hash);
+
 #endif /* ZOBRIST_H */
