@@ -78,4 +78,23 @@ static inline uint32_t dawg_step(const Dawg *dawg, uint32_t node_index, char let
     return 0;
 }
 
+static inline bool dawg_step_edge(const Dawg *dawg, uint32_t node_index, char letter, DawgEdge *out_edge) {
+    if (node_index == 0 || node_index >= dawg->num_edges) return false;
+
+    uint32_t target_code = (letter >= 'a' && letter <= 'z') ? (uint32_t)(letter - 'a') : (uint32_t)(letter - 'A');
+    uint32_t idx = node_index;
+
+    while (1) {
+        DawgEdge edge = dawg->edges[idx];
+        uint32_t edge_code = (edge & DAWG_LETTER_MASK) >> DAWG_LETTER_SHIFT;
+        if (edge_code == target_code) {
+            *out_edge = edge;
+            return true;
+        }
+        if (edge & DAWG_LAST_CHILD_MASK) break;
+        idx++;
+    }
+    return false;
+}
+
 #endif /* DICT_H */

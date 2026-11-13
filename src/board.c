@@ -121,10 +121,6 @@ void board_recompute_bitboards(Board *b) {
     }
 }
 
-void board_copy(Board *dst, const Board *src) {
-    memcpy(dst, src, sizeof(Board));
-}
-
 void board_print(const Board *b) {
     printf("    ");
     for (int c = 0; c < BOARD_SIZE; c++) {

@@ -3,6 +3,7 @@
 
 #include "types.h"
 #include "dict.h"
+#include <string.h>
 
 /* 256-bit compact bitboard covering all 225 squares (15x15) */
 typedef struct {
@@ -124,7 +125,9 @@ typedef struct {
 
 /* Lifecycle */
 void board_init(Board *b);
-void board_copy(Board *dst, const Board *src);
+static inline void board_copy(Board *dst, const Board *src) {
+    memcpy(dst, src, sizeof(Board));
+}
 void board_print(const Board *b);
 void board_recompute_bitboards(Board *b);
 

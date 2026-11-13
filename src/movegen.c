@@ -150,6 +150,7 @@ typedef struct {
     int best_score;
     float best_equity;
     int bag_count;
+    PhaseBucket phase;
     bool track_equity;
 } GenContext;
 
@@ -200,21 +201,23 @@ static inline void record_move(GenContext *ctx, int row, int start_col, const ch
         int score = score_horizontal_move(ctx->board, ctx->cross_checks, row, start_col, word, word_len, placed, num_placed);
         if (score > ctx->best_score) ctx->best_score = score;
         if (ctx->track_equity) {
-            char leave[RACK_CAPACITY + 1];
-            int lcnt = 0;
-            for (int l = 0; l < 26; l++) {
-                for (int c = 0; c < ctx->rack_counts[l]; c++) {
-                    leave[lcnt++] = (char)('A' + l);
+            float max_leave = (ctx->rack_counts[26] > 0) ? 27.0f : 8.5f;
+            if ((float)score + max_leave > ctx->best_equity) {
+                char leave[RACK_CAPACITY + 1];
+                int lcnt = 0;
+                for (int l = 0; l < 26; l++) {
+                    for (int c = 0; c < ctx->rack_counts[l]; c++) {
+                        leave[lcnt++] = (char)('A' + l);
+                    }
                 }
+                for (int c = 0; c < ctx->rack_counts[26]; c++) {
+                    leave[lcnt++] = '?';
+                }
+                leave[lcnt] = '\0';
+                float leave_eq = eval_rack_leave_bucketed(leave, ctx->phase);
+                float total_eq = (float)score + leave_eq;
+                if (total_eq > ctx->best_equity) ctx->best_equity = total_eq;
             }
-            for (int c = 0; c < ctx->rack_counts[26]; c++) {
-                leave[lcnt++] = '?';
-            }
-            leave[lcnt] = '\0';
-            PhaseBucket phase = eval_classify_phase(ctx->bag_count);
-            float leave_eq = eval_rack_leave_bucketed(leave, phase);
-            float total_eq = (float)score + leave_eq;
-            if (total_eq > ctx->best_equity) ctx->best_equity = total_eq;
         }
         return;
     }
@@ -318,19 +321,21 @@ static void extend_right(GenContext *ctx, int row, int col, uint32_t node, DawgE
 
             if ((avail_mask & (1U << let_idx)) != 0) {
                 char let = (char)('A' + let_idx);
+                uint32_t next_child = dawg_child_index(edge);
+
+                placed[num_placed].row = row;
+                placed[num_placed].col = col;
+                placed[num_placed].letter = let;
+                word[word_len] = let;
 
                 /* Check regular letter in rack */
                 if (ctx->rack_counts[let_idx] > 0) {
                     ctx->rack_counts[let_idx]--;
                     if (ctx->rack_counts[let_idx] == 0) ctx->rack_mask &= ~(1U << let_idx);
                     ctx->tiles_left--;
-                    placed[num_placed].row = row;
-                    placed[num_placed].col = col;
-                    placed[num_placed].letter = let;
                     placed[num_placed].is_blank = false;
 
-                    word[word_len] = let;
-                    extend_right(ctx, row, col + 1, dawg_child_index(edge), edge,
+                    extend_right(ctx, row, col + 1, next_child, edge,
                                  start_col, anchor_col, word, word_len + 1,
                                  placed, num_placed + 1);
 
@@ -343,13 +348,9 @@ static void extend_right(GenContext *ctx, int row, int col, uint32_t node, DawgE
                 if (ctx->rack_counts[26] > 0) {
                     ctx->rack_counts[26]--;
                     ctx->tiles_left--;
-                    placed[num_placed].row = row;
-                    placed[num_placed].col = col;
-                    placed[num_placed].letter = let;
                     placed[num_placed].is_blank = true;
 
-                    word[word_len] = let;
-                    extend_right(ctx, row, col + 1, dawg_child_index(edge), edge,
+                    extend_right(ctx, row, col + 1, next_child, edge,
                                  start_col, anchor_col, word, word_len + 1,
                                  placed, num_placed + 1);
 
@@ -366,17 +367,10 @@ static void extend_right(GenContext *ctx, int row, int col, uint32_t node, DawgE
         if (node == 0) return;
 
         char existing_tile = ctx->board->cells[row][col].tile;
-        bool is_term = false;
-        uint32_t next_node = dawg_step(ctx->dawg, node, existing_tile, &is_term);
-
-        if (next_node != 0 || is_term) {
-            /* Construct synthetic leading edge for next step */
-            DawgEdge syn_edge = ((uint32_t)(existing_tile - 'A') << DAWG_LETTER_SHIFT) |
-                                (next_node << DAWG_CHILD_SHIFT) |
-                                (is_term ? DAWG_TERMINAL_MASK : 0);
-
+        DawgEdge match_edge;
+        if (dawg_step_edge(ctx->dawg, node, existing_tile, &match_edge)) {
             word[word_len] = existing_tile;
-            extend_right(ctx, row, col + 1, next_node, syn_edge,
+            extend_right(ctx, row, col + 1, dawg_child_index(match_edge), match_edge,
                          start_col, anchor_col, word, word_len + 1,
                          placed, num_placed);
         }
@@ -413,22 +407,22 @@ static void left_part(GenContext *ctx, int row, int anchor_col, uint32_t node, i
 
         if ((avail_mask & (1U << let_idx)) != 0) {
             uint32_t next_node = dawg_child_index(edge);
-            bool is_term = dawg_is_terminal(edge);
 
-            if (next_node != 0 || is_term) {
+            if (next_node != 0) {
                 char let = (char)('A' + let_idx);
+
+                placed[num_placed].row = row;
+                placed[num_placed].col = cur_col;
+                placed[num_placed].letter = let;
+                word[word_len] = let;
 
                 /* 1. Try regular letter in rack */
                 if (ctx->rack_counts[let_idx] > 0) {
                     ctx->rack_counts[let_idx]--;
                     if (ctx->rack_counts[let_idx] == 0) ctx->rack_mask &= ~(1U << let_idx);
                     ctx->tiles_left--;
-                    placed[num_placed].row = row;
-                    placed[num_placed].col = cur_col;
-                    placed[num_placed].letter = let;
                     placed[num_placed].is_blank = false;
 
-                    word[word_len] = let;
                     left_part(ctx, row, anchor_col, next_node, limit,
                               target_prefix_len, word, word_len + 1,
                               placed, num_placed + 1);
@@ -442,12 +436,8 @@ static void left_part(GenContext *ctx, int row, int anchor_col, uint32_t node, i
                 if (ctx->rack_counts[26] > 0) {
                     ctx->rack_counts[26]--;
                     ctx->tiles_left--;
-                    placed[num_placed].row = row;
-                    placed[num_placed].col = cur_col;
-                    placed[num_placed].letter = let;
                     placed[num_placed].is_blank = true;
 
-                    word[word_len] = let;
                     left_part(ctx, row, anchor_col, next_node, limit,
                               target_prefix_len, word, word_len + 1,
                               placed, num_placed + 1);
@@ -624,6 +614,7 @@ float movegen_find_best_response_equity_cached(const Board *board, const BoardCr
     ctx.best_score = 0;
     ctx.best_equity = -1000.0f;
     ctx.bag_count = bag_count;
+    ctx.phase = eval_classify_phase(bag_count);
     ctx.track_equity = true;
 
     /* 1. Generate Horizontal Moves with precomputed h_checks */
