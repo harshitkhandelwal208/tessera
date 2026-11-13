@@ -182,21 +182,19 @@ OpennessBucket eval_classify_openness(const Board *board) {
     return OPENNESS_STANDARD;
 }
 
-static bool is_vowel_c(char c) {
-    c = (char)toupper((unsigned char)c);
-    return (c == 'A' || c == 'E' || c == 'I' || c == 'O' || c == 'U');
+static inline bool is_vowel_idx(int idx) {
+    return (0x104111U & (1U << idx)) != 0;
+}
+
+static inline bool is_vowel_c(char c) {
+    int idx = (c >= 'a' && c <= 'z') ? (c - 'a') : (c - 'A');
+    return (idx >= 0 && idx < 26) && is_vowel_idx(idx);
 }
 
 typedef struct {
     const char *stem;
     float value;
 } StemBonus;
-
-static int compare_stem(const void *key, const void *elem) {
-    const char *k = (const char *)key;
-    const StemBonus *sb = (const StemBonus *)elem;
-    return strcmp(k, sb->stem);
-}
 
 /* 6-letter top championship bingo stems (sorted alphabetically for bsearch) */
 static const StemBonus STEMS_6[] = {
@@ -390,30 +388,63 @@ static const StemBonus STEMS_3[] = {
  * Higher-Order Super-Leave & Stem Recognition:
  * Binary searches sorted leave substrings against championship bingo stems.
  */
-static float eval_super_leave_stems(const char *sorted_leave, int len) {
-    if (len < 3 || len > 6) return 0.0f;
+static inline float lookup_stem_6(const char *key) {
+    int low = 0, high = (int)(sizeof(STEMS_6) / sizeof(STEMS_6[0])) - 1;
+    while (low <= high) {
+        int mid = (low + high) >> 1;
+        int cmp = strcmp(key, STEMS_6[mid].stem);
+        if (cmp == 0) return STEMS_6[mid].value * 0.15f;
+        if (cmp < 0) high = mid - 1;
+        else low = mid + 1;
+    }
+    return 0.0f;
+}
 
-    if (len == 6) {
-        StemBonus *found = (StemBonus*)bsearch(sorted_leave, STEMS_6, sizeof(STEMS_6)/sizeof(STEMS_6[0]),
-                                               sizeof(StemBonus), compare_stem);
-        return found ? (found->value * 0.15f) : 0.0f;
+static inline float lookup_stem_5(const char *key) {
+    int low = 0, high = (int)(sizeof(STEMS_5) / sizeof(STEMS_5[0])) - 1;
+    while (low <= high) {
+        int mid = (low + high) >> 1;
+        int cmp = strcmp(key, STEMS_5[mid].stem);
+        if (cmp == 0) return STEMS_5[mid].value * 0.15f;
+        if (cmp < 0) high = mid - 1;
+        else low = mid + 1;
     }
-    if (len == 5) {
-        StemBonus *found = (StemBonus*)bsearch(sorted_leave, STEMS_5, sizeof(STEMS_5)/sizeof(STEMS_5[0]),
-                                               sizeof(StemBonus), compare_stem);
-        return found ? (found->value * 0.15f) : 0.0f;
-    }
-    if (len == 4) {
-        StemBonus *found = (StemBonus*)bsearch(sorted_leave, STEMS_4, sizeof(STEMS_4)/sizeof(STEMS_4[0]),
-                                               sizeof(StemBonus), compare_stem);
-        return found ? (found->value * 0.15f) : 0.0f;
-    }
-    if (len == 3) {
-        StemBonus *found = (StemBonus*)bsearch(sorted_leave, STEMS_3, sizeof(STEMS_3)/sizeof(STEMS_3[0]),
-                                               sizeof(StemBonus), compare_stem);
-        return found ? (found->value * 0.15f) : 0.0f;
-    }
+    return 0.0f;
+}
 
+static inline float lookup_stem_4(const char *key) {
+    int low = 0, high = (int)(sizeof(STEMS_4) / sizeof(STEMS_4[0])) - 1;
+    while (low <= high) {
+        int mid = (low + high) >> 1;
+        int cmp = strcmp(key, STEMS_4[mid].stem);
+        if (cmp == 0) return STEMS_4[mid].value * 0.15f;
+        if (cmp < 0) high = mid - 1;
+        else low = mid + 1;
+    }
+    return 0.0f;
+}
+
+static inline float lookup_stem_3(const char *key) {
+    int low = 0, high = (int)(sizeof(STEMS_3) / sizeof(STEMS_3[0])) - 1;
+    while (low <= high) {
+        int mid = (low + high) >> 1;
+        int cmp = strcmp(key, STEMS_3[mid].stem);
+        if (cmp == 0) return STEMS_3[mid].value * 0.15f;
+        if (cmp < 0) high = mid - 1;
+        else low = mid + 1;
+    }
+    return 0.0f;
+}
+
+/*
+ * Higher-Order Super-Leave & Stem Recognition:
+ * Inlined branch-predicted binary searches across sorted championship bingo stems.
+ */
+static inline float eval_super_leave_stems(const char *sorted_leave, int len) {
+    if (len == 6) return lookup_stem_6(sorted_leave);
+    if (len == 5) return lookup_stem_5(sorted_leave);
+    if (len == 4) return lookup_stem_4(sorted_leave);
+    if (len == 3) return lookup_stem_3(sorted_leave);
     return 0.0f;
 }
 
@@ -431,56 +462,48 @@ float eval_rack_leave_bucketed(const char *leave, PhaseBucket phase) {
     int vowels = 0, consonants = 0, blanks = 0;
     int high_point_tiles = 0; /* F, H, V, W, Y, K, J, X, Q, Z */
 
-    char sorted_leave[RACK_CAPACITY + 1];
-    int slen = 0;
-
     /* 1. Accumulator A: Single Tile Values */
     for (int i = 0; i < len; i++) {
-        char c = (char)toupper((unsigned char)leave[i]);
+        char c = leave[i];
         if (c == '?') {
             counts[26]++;
             blanks++;
             equity += PHASE_TILE_EQUITY[p_idx][26];
-            sorted_leave[slen++] = '?';
-        } else if (c >= 'A' && c <= 'Z') {
-            int idx = c - 'A';
-            counts[idx]++;
-            equity += PHASE_TILE_EQUITY[p_idx][idx];
-            sorted_leave[slen++] = c;
-
-            if (is_vowel_c(c)) {
-                vowels++;
-            } else {
-                consonants++;
-            }
-
-            /* Track high value tile concentration */
-            int val = TILE_VALUES[idx];
-            if (val >= 4) {
-                high_point_tiles++;
+        } else {
+            int idx = (c >= 'a' && c <= 'z') ? (c - 'a') : (c - 'A');
+            if (idx >= 0 && idx < 26) {
+                counts[idx]++;
+                equity += PHASE_TILE_EQUITY[p_idx][idx];
+                if (is_vowel_idx(idx)) {
+                    vowels++;
+                } else {
+                    consonants++;
+                }
+                if (TILE_VALUES[idx] >= 4) {
+                    high_point_tiles++;
+                }
             }
         }
+    }
+
+    /* Counting-sort leave for stem lookup in O(N) */
+    char sorted_leave[RACK_CAPACITY + 1];
+    int slen = 0;
+    for (int c = 0; c < 26; c++) {
+        for (int k = 0; k < counts[c]; k++) {
+            sorted_leave[slen++] = (char)('A' + c);
+        }
+    }
+    for (int k = 0; k < counts[26]; k++) {
+        sorted_leave[slen++] = '?';
     }
     sorted_leave[slen] = '\0';
 
-    /* Sort leave for stem lookup */
-    for (int i = 0; i < slen - 1; i++) {
+    /* 2. Accumulator B: Pairwise Letter Synergy directly from sorted uppercase leave */
+    for (int i = 0; i < slen; i++) {
+        int idx1 = (sorted_leave[i] == '?') ? 26 : (sorted_leave[i] - 'A');
         for (int j = i + 1; j < slen; j++) {
-            if (sorted_leave[i] > sorted_leave[j]) {
-                char tmp = sorted_leave[i];
-                sorted_leave[i] = sorted_leave[j];
-                sorted_leave[j] = tmp;
-            }
-        }
-    }
-
-    /* 2. Accumulator B: Pairwise Letter Synergy & Duplicate Kernel */
-    for (int i = 0; i < len; i++) {
-        char c1 = (char)toupper((unsigned char)leave[i]);
-        int idx1 = (c1 == '?') ? 26 : (c1 - 'A');
-        for (int j = i + 1; j < len; j++) {
-            char c2 = (char)toupper((unsigned char)leave[j]);
-            int idx2 = (c2 == '?') ? 26 : (c2 - 'A');
+            int idx2 = (sorted_leave[j] == '?') ? 26 : (sorted_leave[j] - 'A');
             equity += PAIRWISE_SYNERGY[idx1][idx2];
         }
     }

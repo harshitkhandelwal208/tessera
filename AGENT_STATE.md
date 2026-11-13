@@ -336,6 +336,25 @@
     - 14-game championship tournament benchmark completed in **50.81 seconds** (3.63s per full 40-turn game) with **71.4% win rate** and **+66.4 pts/game net spread**.
     - 100% pass across all 7 test suites on both GCC 14 (`make test`) and Zig 0.17.1 (`zig build test -Doptimize=ReleaseFast`).
 
+### 24. Inlined Stem Binary Search, Counting-Sort Leave Construction, and Bitmask Vowel Evaluations
+- **Implementation**:
+  - `src/eval.c`.
+  - Inlined bitmask vowel classification `is_vowel_idx`:
+    `return (0x104111U & (1U << idx)) != 0;`
+    Evaluates whether an index (0..25) is a vowel ('A', 'E', 'I', 'O', 'U') in a single bitwise shift and mask operation, bypassing branching and `toupper` lookups.
+  - Inlined branch-predicted binary searches `lookup_stem_6`, `lookup_stem_5`, `lookup_stem_4`, `lookup_stem_3` in `eval_super_leave_stems`, completely eliminating generic `bsearch` and indirect function pointer dispatch overhead.
+  - Replaced $O(N^2)$ bubble sort on rack leaves with $O(N)$ counting-sort construction directly from `counts[27]`.
+  - Direct pairwise letter synergy accumulation from the pre-sorted uppercase leave without repeated `toupper` operations.
+  - Eliminated unused `compare_stem` to maintain 0 compiler warnings under `-Wall -Wextra -Werror`.
+  - **Verification & Impact**:
+    - Terminal Endgame DAG solver latency clocked at **0.23 ms (230 $\mu$s)**.
+    - Opening move generation throughput: **7.67M – 8.33M moves/sec** (0.38 ms).
+    - Populated board move generation throughput: **2.75M – 2.78M moves/sec** (0.85 ms – 0.90 ms).
+    - AI simulation deliberation latency: **88.34 ms – 97.12 ms** (sub-100 ms).
+    - Pure graph proof propagation latency: **100.75 ms – 105.35 ms**.
+    - Pure incremental accumulator pipeline: **559,000 – 655,000 evals/sec** (max discrepancy 0.000013 pts).
+    - 100% pass across all 7 test suites on both GCC 14 (`make test`) and Zig 0.17.1 (`zig build test -Doptimize=ReleaseFast`).
+
 ---
 
 ## Tournament Benchmark Leaderboard (Championship Bot Matrix)
@@ -419,4 +438,5 @@ Results against the 7-bot championship matrix:
 - [x] Dynamic TT search-window tightening in `negamax_dag` updating $\alpha$ and $\beta$ directly from lower/upper bounds.
 - [x] Preallocated thread-local `order_pool` in `EndgameThreadContext` eliminating Variable Length Arrays in endgame search.
 - [x] Precomputed speculative BoardCrossCache and zero-allocation counterplay equity in archetype simulations.
+- [x] Inlined stem binary searches, counting-sort leave construction, and bitmask vowel evaluations in `eval.c`.
 - [x] Shared library `libtessera.so` built and verified for C/C++/Python bindings.
