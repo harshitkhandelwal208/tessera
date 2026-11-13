@@ -7,20 +7,20 @@
 #include "types.h"
 #include "board.h"
 
-#define NNUE_INPUT_DIM  768
+#define NNUE_INPUT_DIM  1024
 #define NNUE_L1_DIM     256
 #define NNUE_L2_DIM     64
 #define NNUE_MAGIC      0x4E4E5545 /* 'NNUE' in ASCII */
-#define NNUE_VERSION    2
+#define NNUE_VERSION    3
 
 /*
  * Supercharged NNUE Architecture:
- * Input (768) -> Linear (256) -> ClippedReLU -> Linear (64) -> ClippedReLU -> Dual-Head
+ * Input (1024) -> Linear (256) -> ClippedReLU -> Linear (64) -> ClippedReLU -> Dual-Head
  *
  * ClippedReLU(x) = clamp(x, 0.0f, 1.0f)
  */
 typedef struct {
-    alignas(64) float w1[NNUE_L1_DIM * NNUE_INPUT_DIM]; /* 256 x 768 */
+    alignas(64) float w1[NNUE_L1_DIM * NNUE_INPUT_DIM]; /* 256 x 1024 */
     alignas(64) float b1[NNUE_L1_DIM];                  /* 256 */
     alignas(64) float w2[NNUE_L2_DIM * NNUE_L1_DIM];    /* 64 x 256 */
     alignas(64) float b2[NNUE_L2_DIM];                  /* 64 */
@@ -86,7 +86,7 @@ bool nnue_load(NNUEModel *model, const char *filepath);
 bool nnue_save(const NNUEModel *model, const char *filepath);
 
 /*
- * Extract 768-dimensional feature vector from a board state, candidate move,
+ * Extract 1024-dimensional feature vector from a board state, candidate move,
  * active rack, bag count, and score differential.
  */
 void nnue_extract_features_with_score(const Board *board, const Move *move, const Rack *rack,

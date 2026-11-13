@@ -211,17 +211,21 @@ void nnue_extract_features_with_score(const Board *board, const Move *move, cons
     int leave_counts[27] = {0};
     int leave_len = 0;
     int blanks = 0, high_placed = 0;
+    int vowels = 0, consonants = 0, high_points = 0, quad_points = 0;
+    int duplicate_count = 0, distinct_letters = 0;
+    int total_leave_points = 0;
+    float tw_cnt = 0.0f, dw_cnt = 0.0f, tl_cnt = 0.0f, dl_cnt = 0.0f;
+    int blanks_placed = 0;
+    float center_dist = 0.0f;
+    bool perimeter_touch = false;
+    bool ideal_vc = false;
+    int clumsy = 0;
 
     if (move) {
         /* 1. Move Placement Features (0..15: 16 features) */
         out_features[0] = (float)move->score / 50.0f;
         out_features[1] = (float)move->num_placed / 7.0f;
         out_features[2] = (move->num_placed == 7) ? 1.0f : 0.0f; /* Bingo */
-
-        float tw_cnt = 0.0f, dw_cnt = 0.0f, tl_cnt = 0.0f, dl_cnt = 0.0f;
-        int blanks_placed = 0;
-        float center_dist = 0.0f;
-        bool perimeter_touch = false;
 
     for (int p = 0; p < move->num_placed; p++) {
         int r = move->placed[p].row;
@@ -258,9 +262,6 @@ void nnue_extract_features_with_score(const Board *board, const Move *move, cons
 
     /* 2. Leave Tile Counts (16..42 for 27 tiles: 0..25=A..Z, 26=?) */
     leave_len = (int)strlen(move->leave);
-    int vowels = 0, consonants = 0, high_points = 0, quad_points = 0;
-    int duplicate_count = 0, distinct_letters = 0;
-    int total_leave_points = 0;
 
     for (int i = 0; i < leave_len; i++) {
         char c = move->leave[i];
@@ -339,8 +340,8 @@ void nnue_extract_features_with_score(const Board *board, const Move *move, cons
     out_features[494] = (float)total_leave_points / 30.0f;
     float v_ratio = (vowels + consonants > 0) ? (float)vowels / (float)(vowels + consonants) : 0.5f;
     out_features[495] = v_ratio;
-    bool ideal_vc = (vowels == 2 && consonants == 3) || (vowels == 3 && consonants == 2) ||
-                    (vowels == 2 && consonants == 2) || (vowels == 3 && consonants == 3);
+    ideal_vc = (vowels == 2 && consonants == 3) || (vowels == 3 && consonants == 2) ||
+               (vowels == 2 && consonants == 2) || (vowels == 3 && consonants == 3);
     out_features[496] = ideal_vc ? 1.0f : 0.0f;
     out_features[497] = (leave_len >= 3 && vowels == 0) ? 1.0f : 0.0f;
     out_features[498] = (leave_len >= 3 && consonants == 0) ? 1.0f : 0.0f;
@@ -348,7 +349,7 @@ void nnue_extract_features_with_score(const Board *board, const Move *move, cons
     float unplayable_penalty = (leave_counts['Q' - 'A'] * 10.0f + leave_counts['V' - 'A'] * 5.0f) / 25.0f;
     out_features[500] = unplayable_penalty;
     out_features[501] = (float)leave_counts['S' - 'A'];
-    int clumsy = leave_counts['V' - 'A'] + leave_counts['W' - 'A'] + leave_counts['Y' - 'A'];
+    clumsy = leave_counts['V' - 'A'] + leave_counts['W' - 'A'] + leave_counts['Y' - 'A'];
     out_features[502] = (float)clumsy / 3.0f;
     int liquid = leave_counts['L' - 'A'] + leave_counts['R' - 'A'] + leave_counts['S' - 'A'] + leave_counts['T' - 'A'];
     out_features[503] = (float)liquid / 4.0f;
@@ -503,7 +504,7 @@ void nnue_extract_features_with_score(const Board *board, const Move *move, cons
     out_features[662] = eval_score_margin_risk_multiplier(score_diff);
     out_features[663] = (fabsf((float)score_diff) <= 15.0f) ? 1.0f : 0.0f;
 
-    /* 10. Cross-Check Hooks, Leave-Board Synergy & Lane Dynamics (701..767: 67 features) */
+    /* 10. Cross-Check Hooks, Leave-Board Synergy & Lane Dynamics (701..868) */
     if (move) {
         out_features[701] = (leave_counts['S' - 'A'] > 0 && total_anchors > 5) ? 1.0f : 0.0f;
         out_features[702] = (leave_counts['D' - 'A'] > 0 && total_anchors > 5) ? 1.0f : 0.0f;
@@ -513,6 +514,379 @@ void nnue_extract_features_with_score(const Board *board, const Move *move, cons
         out_features[706] = (high_placed > 0 && move->score >= 35) ? 1.0f : 0.0f; /* High-value tile monetization */
         out_features[707] = (move->num_placed == 7 && score_diff < 0) ? 1.0f : 0.0f; /* Deficit bingo comeback */
         out_features[708] = (leave_len == 0) ? 1.0f : 0.0f; /* Clean empty leave */
+
+        /* 11. Extended 4-Tile Bingo Stems (709..772: 64 stems) */
+        static const char *stems4[64] = {
+            "ACER", "ACRS", "ADEL", "ADER", "ADES", "ADIS", "AELP", "AELS", "AELT", "AEMN",
+            "AENR", "AENS", "AEPS", "AERS", "AEST", "AILS", "AILV", "AINR", "AINS", "AINT",
+            "AIRS", "AIRT", "AIST", "ALMN", "ALNR", "ALNS", "ALOS", "ALRT", "ALST", "ANOR",
+            "ANRS", "ANST", "AORT", "ARST", "CDEN", "CINT", "DEIN", "DEIR", "DEIS", "DEIT",
+            "DELN", "DELR", "DELS", "DENR", "DENS", "DEOR", "DEOS", "DERT", "DEST", "EILN",
+            "EILR", "EILS", "EILT", "EIMN", "EIMR", "EIMS", "EINP", "EINR", "EINS", "EINT",
+            "EIPS", "EIPR", "EIRT", "EIST"
+        };
+        for (int s = 0; s < 64; s++) {
+            bool ok = true;
+            for (int k = 0; k < 4; k++) {
+                if (leave_counts[stems4[s][k] - 'A'] < 1) { ok = false; break; }
+            }
+            if (ok) out_features[709 + s] = 1.0f;
+        }
+
+        /* 12. High-Equity 2-Tile Leave Synergies (773..820: 48 synergies) */
+        static const char *pairs2[48] = {
+            "ER", "IN", "ES", "RE", "AN", "EN", "TI", "ST", "ON", "OR",
+            "AT", "TE", "AL", "AR", "IS", "IT", "ED", "NT", "RA", "TO",
+            "ET", "SE", "NE", "LI", "LE", "RO", "ND", "RI", "NG", "DE",
+            "ME", "SA", "EL", "TA", "SI", "TH", "LO", "DI", "CO", "MA",
+            "CA", "LA", "NA", "PE", "PR", "TR", "PL", "CL"
+        };
+        for (int p = 0; p < 48; p++) {
+            char c0 = pairs2[p][0];
+            char c1 = pairs2[p][1];
+            if (c0 == c1) {
+                if (leave_counts[c0 - 'A'] >= 2) out_features[773 + p] = 1.0f;
+            } else {
+                if (leave_counts[c0 - 'A'] >= 1 && leave_counts[c1 - 'A'] >= 1) out_features[773 + p] = 1.0f;
+            }
+        }
+
+        /* 13. Fine-Grained Duplicate Penalties & Rack Micro-Distributions (821..868: 48 features) */
+        for (int c = 0; c < 26; c++) {
+            if (leave_counts[c] >= 2) {
+                out_features[821 + c] = (float)(leave_counts[c] - 1);
+            }
+        }
+        bool trip_dup = false;
+        for (int c = 0; c < 26; c++) {
+            if (leave_counts[c] >= 3) { trip_dup = true; break; }
+        }
+        out_features[847] = trip_dup ? 1.0f : 0.0f;
+        out_features[848] = (vowels == 0) ? 1.0f : 0.0f;
+        out_features[849] = (vowels == 1) ? 1.0f : 0.0f;
+        out_features[850] = (vowels == 2) ? 1.0f : 0.0f;
+        out_features[851] = (vowels >= 3) ? 1.0f : 0.0f;
+        out_features[852] = (consonants == 0) ? 1.0f : 0.0f;
+        out_features[853] = (consonants == 1) ? 1.0f : 0.0f;
+        out_features[854] = (consonants == 2) ? 1.0f : 0.0f;
+        out_features[855] = (consonants >= 3) ? 1.0f : 0.0f;
+        out_features[856] = (blanks > 0 && leave_counts['S' - 'A'] > 0) ? 1.0f : 0.0f;
+        out_features[857] = (leave_counts['S' - 'A'] >= 2) ? 1.0f : 0.0f;
+        out_features[858] = (blanks >= 2) ? 1.0f : 0.0f;
+        out_features[859] = (leave_counts['Q' - 'A'] > 0) ? 1.0f : 0.0f;
+        out_features[860] = (leave_counts['Z' - 'A'] > 0) ? 1.0f : 0.0f;
+        out_features[861] = (leave_counts['J' - 'A'] > 0) ? 1.0f : 0.0f;
+        out_features[862] = (leave_counts['X' - 'A'] > 0) ? 1.0f : 0.0f;
+        out_features[863] = (leave_counts['K' - 'A'] > 0) ? 1.0f : 0.0f;
+        out_features[864] = (leave_counts['V' - 'A'] > 0) ? 1.0f : 0.0f;
+        out_features[865] = (leave_counts['W' - 'A'] > 0) ? 1.0f : 0.0f;
+        out_features[866] = (leave_counts['Y' - 'A'] > 0) ? 1.0f : 0.0f;
+        out_features[867] = (leave_counts['B' - 'A'] > 0) ? 1.0f : 0.0f;
+        out_features[868] = (leave_counts['P' - 'A'] > 0) ? 1.0f : 0.0f;
+    }
+
+    /* 14. Static Board Lane Openness & Hook Exposure (869..878: 10 features) */
+    int r0_occ = 0, r14_occ = 0, c0_occ = 0, c14_occ = 0, r7_occ = 0, c7_occ = 0;
+    for (int i = 0; i < BOARD_SIZE; i++) {
+        if (bb_test(&board->occupied, 0, i)) r0_occ++;
+        if (bb_test(&board->occupied, 14, i)) r14_occ++;
+        if (bb_test(&board->occupied, i, 0)) c0_occ++;
+        if (bb_test(&board->occupied, i, 14)) c14_occ++;
+        if (bb_test(&board->occupied, 7, i)) r7_occ++;
+        if (bb_test(&board->occupied, i, 7)) c7_occ++;
+    }
+    int nw_anchors = 0, ne_anchors = 0, sw_anchors = 0, se_anchors = 0;
+    for (int r = 0; r < BOARD_SIZE; r++) {
+        for (int c = 0; c < BOARD_SIZE; c++) {
+            if (bb_test(&board->anchors, r, c)) {
+                if (r < 7 && c < 7) nw_anchors++;
+                else if (r < 7 && c > 7) ne_anchors++;
+                else if (r > 7 && c < 7) sw_anchors++;
+                else if (r > 7 && c > 7) se_anchors++;
+            }
+        }
+    }
+    out_features[869] = (float)r0_occ / 15.0f;
+    out_features[870] = (float)r14_occ / 15.0f;
+    out_features[871] = (float)c0_occ / 15.0f;
+    out_features[872] = (float)c14_occ / 15.0f;
+    out_features[873] = (float)r7_occ / 15.0f;
+    out_features[874] = (float)c7_occ / 15.0f;
+    out_features[875] = (float)nw_anchors / 10.0f;
+    out_features[876] = (float)ne_anchors / 10.0f;
+    out_features[877] = (float)sw_anchors / 10.0f;
+    out_features[878] = (float)se_anchors / 10.0f;
+
+    /* 15. Static Pre-Endgame & Bag Countdown Dynamics (930..950: 21 features) */
+    out_features[930] = (bag_count >= 1 && bag_count <= 7) ? 1.0f : 0.0f;
+    out_features[931] = (bag_count >= 8 && bag_count <= 14) ? 1.0f : 0.0f;
+    out_features[932] = (bag_count >= 15 && bag_count <= 21) ? 1.0f : 0.0f;
+    out_features[933] = (bag_count == 0) ? 1.0f : 0.0f;
+    out_features[934] = (float)u_counts['Q' - 'A'];
+    out_features[935] = (float)u_counts['Z' - 'A'];
+    out_features[936] = (float)u_counts['X' - 'A'];
+    out_features[937] = (float)u_counts['J' - 'A'];
+    out_features[938] = (float)u_s / 4.0f;
+    out_features[939] = (float)u_blanks / 2.0f;
+    out_features[940] = (float)u_counts['C' - 'A'] / 2.0f;
+    out_features[941] = (float)u_counts['V' - 'A'] / 2.0f;
+    out_features[942] = (u_vowels + u_consonants > 0) ? (float)u_vowels / (float)(u_vowels + u_consonants) : 0.5f;
+    out_features[943] = (float)abs(u_vowels - u_consonants) / (u_denom > 0.0f ? u_denom : 1.0f);
+    out_features[944] = (bag_count <= 14 && u_blanks > 0) ? 1.0f : 0.0f;
+    out_features[945] = (bag_count <= 14 && u_s > 0) ? 1.0f : 0.0f;
+    out_features[946] = (100.0f - (float)bag_count) / 100.0f;
+    out_features[947] = (bag_count < 7) ? (float)(7 - bag_count) / 7.0f : 0.0f;
+    out_features[948] = (bag_count < 14) ? (float)(14 - bag_count) / 14.0f : 0.0f;
+    out_features[949] = (bag_count > 0 && bag_count <= 4) ? 1.0f : 0.0f;
+    out_features[950] = (u_counts['Q' - 'A'] > 0 && u_counts['U' - 'A'] == 0) ? 1.0f : 0.0f;
+
+    /* 16. Static Score Differential Margin Buckets (965..973: 9 features) */
+    out_features[965] = (score_diff >= 80) ? 1.0f : 0.0f;
+    out_features[966] = (score_diff >= 40 && score_diff < 80) ? 1.0f : 0.0f;
+    out_features[967] = (score_diff >= 15 && score_diff < 40) ? 1.0f : 0.0f;
+    out_features[968] = (score_diff >= -14 && score_diff < 15) ? 1.0f : 0.0f;
+    out_features[969] = (score_diff >= -39 && score_diff < -14) ? 1.0f : 0.0f;
+    out_features[970] = (score_diff >= -79 && score_diff < -39) ? 1.0f : 0.0f;
+    out_features[971] = (score_diff < -79) ? 1.0f : 0.0f;
+    out_features[972] = tanhf(((float)score_diff - 40.0f) / 30.0f);
+    out_features[973] = (score_diff > 30 && bag_count < 25) ? 1.0f : 0.0f;
+
+    /* 17. Static Tournament Game-Theoretic Terms (991..1023: 33 features) */
+    out_features[991] = (bag_count == 0) ? 1.0f : (bag_count <= 14 ? (14.0f - (float)bag_count) / 14.0f : 0.0f);
+    out_features[992] = ((bag_count + 14) % 2 == 0) ? 1.0f : 0.0f;
+    out_features[993] = (bag_count % 2 == 1) ? 1.0f : 0.0f;
+    out_features[994] = (float)(u_counts['Q'-'A'] + u_counts['Z'-'A'] + u_counts['J'-'A'] + u_counts['X'-'A']) / 4.0f;
+    out_features[995] = (u_vowels + u_consonants > 0) ? fabsf((float)u_vowels / (float)(u_vowels + u_consonants) - 0.42f) : 0.0f;
+    out_features[996] = (total_anchors > 0) ? (float)hot_anchors / (float)total_anchors : 0.0f;
+    float sum_r = 0.0f, sum_c = 0.0f;
+    for (int r = 0; r < BOARD_SIZE; r++) {
+        for (int c = 0; c < BOARD_SIZE; c++) {
+            if (bb_test(&board->occupied, r, c)) {
+                sum_r += (float)r;
+                sum_c += (float)c;
+            }
+        }
+    }
+    float cm_r = (total_occupied > 0) ? (sum_r / (float)total_occupied) : 7.0f;
+    float cm_c = (total_occupied > 0) ? (sum_c / (float)total_occupied) : 7.0f;
+    out_features[997] = cm_r / 14.0f;
+    out_features[998] = cm_c / 14.0f;
+    out_features[999] = (fabsf(cm_r - 7.0f) + fabsf(cm_c - 7.0f)) / 14.0f;
+
+    out_features[1000] = (float)nw_occ / 25.0f;
+    out_features[1001] = (float)ne_occ / 25.0f;
+    out_features[1002] = (float)sw_occ / 25.0f;
+    out_features[1003] = (float)se_occ / 25.0f;
+    out_features[1004] = (float)(nw_occ + se_occ) / 50.0f;
+    out_features[1005] = (float)(ne_occ + sw_occ) / 50.0f;
+    out_features[1006] = (float)perimeter_occ / 56.0f;
+    out_features[1007] = (float)center_occ / 25.0f;
+
+    for (int p = 0; p < 8; p++) {
+        out_features[1008 + p] = (phase == (PhaseBucket)p) ? tanhf((float)score_diff / 50.0f) : 0.0f;
+    }
+
+    out_features[1016] = (float)phase / 7.0f * (float)openness / 3.0f;
+    out_features[1017] = (float)bag_count / 100.0f * (float)total_occupied / 100.0f;
+    out_features[1018] = (float)hot_anchors / 10.0f * (float)open_tw / 8.0f;
+    out_features[1019] = (float)u_blanks / 2.0f * (float)u_s / 4.0f;
+    out_features[1020] = (score_diff > 0 ? 1.0f : -1.0f) * ((100.0f - (float)bag_count) / 100.0f);
+    out_features[1021] = tanhf((float)score_diff / 100.0f) * ((float)total_occupied / 100.0f);
+    out_features[1022] = (open_tw == 0) ? 1.0f : 0.0f;
+    out_features[1023] = (open_dw == 0) ? 1.0f : 0.0f;
+
+    /* 18. Move Dynamic Lane, Power & Tactical Features (879..929, 951..964, 974..990) */
+    if (move) {
+        bool touch_r0 = false, touch_r14 = false, touch_c0 = false, touch_c14 = false;
+        bool touch_r7 = false, touch_c7 = false;
+        bool crosses_tw_lane = false, crosses_dw_lane = false;
+        int exp_empty_tw = 0, exp_empty_dw = 0, exp_empty_tl = 0, exp_empty_dl = 0;
+        int exp_tw_consonants = 0, exp_tw_vowels = 0;
+        int exp_dw_vowels = 0, exp_dw_consonants = 0;
+        int min_r = 15, max_r = -1, min_c = 15, max_c = -1;
+        int placed_on_bonus = 0;
+
+        for (int p = 0; p < move->num_placed; p++) {
+            int r = move->placed[p].row;
+            int c = move->placed[p].col;
+            if (r == 0) touch_r0 = true;
+            if (r == 14) touch_r14 = true;
+            if (c == 0) touch_c0 = true;
+            if (c == 14) touch_c14 = true;
+            if (r == 7) touch_r7 = true;
+            if (c == 7) touch_c7 = true;
+            if (r == 0 || r == 7 || r == 14) crosses_tw_lane = true;
+            if (c == 0 || c == 7 || c == 14) crosses_tw_lane = true;
+            if (r == c || r + c == 14) crosses_dw_lane = true;
+
+            if (r < min_r) min_r = r;
+            if (r > max_r) max_r = r;
+            if (c < min_c) min_c = c;
+            if (c > max_c) max_c = c;
+
+            MultiplierType m = board_get_multiplier(r, c);
+            if (m != MULT_NONE) placed_on_bonus++;
+
+            char ch = move->placed[p].letter;
+            bool is_v = is_vowel_char(ch);
+
+            int dr[4] = {-1, 1, 0, 0};
+            int dc[4] = {0, 0, -1, 1};
+            for (int d = 0; d < 4; d++) {
+                int nr = r + dr[d];
+                int nc = c + dc[d];
+                if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
+                    if (board->cells[nr][nc].tile == 0) {
+                        MultiplierType nm = board_get_multiplier(nr, nc);
+                        if (nm == MULT_TW) {
+                            exp_empty_tw++;
+                            if (is_v) exp_tw_vowels++;
+                            else exp_tw_consonants++;
+                        } else if (nm == MULT_DW) {
+                            exp_empty_dw++;
+                            if (is_v) exp_dw_vowels++;
+                            else exp_dw_consonants++;
+                        } else if (nm == MULT_TL) {
+                            exp_empty_tl++;
+                        } else if (nm == MULT_DL) {
+                            exp_empty_dl++;
+                        }
+                    }
+                }
+            }
+        }
+
+        out_features[879] = touch_r0 ? 1.0f : 0.0f;
+        out_features[880] = touch_r14 ? 1.0f : 0.0f;
+        out_features[881] = touch_c0 ? 1.0f : 0.0f;
+        out_features[882] = touch_c14 ? 1.0f : 0.0f;
+        out_features[883] = touch_r7 ? 1.0f : 0.0f;
+        out_features[884] = touch_c7 ? 1.0f : 0.0f;
+        out_features[885] = crosses_tw_lane ? 1.0f : 0.0f;
+        out_features[886] = crosses_dw_lane ? 1.0f : 0.0f;
+        out_features[887] = (float)exp_empty_tw / 4.0f;
+        out_features[888] = (float)exp_empty_dw / 8.0f;
+        out_features[889] = (float)exp_empty_tl / 6.0f;
+        out_features[890] = (float)exp_empty_dl / 12.0f;
+        out_features[891] = (float)exp_tw_consonants / 2.0f;
+        out_features[892] = (float)exp_tw_vowels / 2.0f;
+        out_features[893] = (float)exp_dw_vowels / 4.0f;
+        out_features[894] = (float)exp_dw_consonants / 4.0f;
+        out_features[895] = (min_r >= 0 && min_r <= 14) ? (float)min_r / 14.0f : 0.5f;
+        out_features[896] = (min_c >= 0 && min_c <= 14) ? (float)min_c / 14.0f : 0.5f;
+        int span = (max_r >= min_r && max_c >= min_c) ? (max_r - min_r + max_c - min_c + 1) : 0;
+        out_features[897] = (float)span / 15.0f;
+        out_features[898] = (move->num_placed == 1) ? 1.0f : 0.0f;
+        out_features[899] = (move->col > 0 && board->cells[move->row][move->col - 1].tile != 0) ? 1.0f : 0.0f;
+        out_features[900] = (move->dir == DIR_HORIZONTAL && move->col + (int)strlen(move->word) < BOARD_SIZE &&
+                             board->cells[move->row][move->col + (int)strlen(move->word)].tile != 0) ? 1.0f : 0.0f;
+        int num_cross = (move->num_placed > 1) ? (move->num_placed - 1) : 0;
+        out_features[901] = (num_cross >= 2) ? 1.0f : 0.0f;
+        out_features[902] = (float)num_cross / 5.0f;
+        out_features[903] = (float)move->score / 50.0f;
+        out_features[904] = (float)move->score / (float)(move->num_placed > 0 ? move->num_placed : 1) / 10.0f;
+        out_features[905] = (move->score > 0) ? (float)placed_on_bonus / (float)(move->num_placed > 0 ? move->num_placed : 1) : 0.0f;
+        out_features[906] = (placed_on_bonus >= 2) ? 1.0f : 0.0f;
+        out_features[907] = (float)move->num_placed / 7.0f;
+        out_features[908] = (float)exp_empty_tw;
+        out_features[909] = (float)(exp_empty_tw - (tw_cnt > 0.0f ? 1 : 0));
+        out_features[910] = (touch_r0 || touch_r14 || touch_c0 || touch_c14) ? 1.0f : 0.0f;
+        out_features[911] = (exp_empty_tw + exp_empty_dw >= 2) ? 1.0f : 0.0f;
+        out_features[912] = (exp_empty_tw + exp_empty_dw == 0) ? 1.0f : 0.0f;
+        out_features[913] = (crosses_tw_lane && move->num_placed >= 4) ? 1.0f : 0.0f;
+        out_features[914] = (center_dist <= 3.0f) ? 1.0f : 0.0f;
+        out_features[915] = (center_dist >= 8.0f) ? 1.0f : 0.0f;
+
+        bool touches_power = false;
+        bool s_placed = false;
+        bool q_placed = false, z_placed = false, x_placed = false, j_placed = false;
+        bool high_on_bonus = false;
+        for (int p = 0; p < move->num_placed; p++) {
+            int r = move->placed[p].row;
+            int c = move->placed[p].col;
+            char let = move->placed[p].letter;
+            if (let == 'S') s_placed = true;
+            MultiplierType m = board_get_multiplier(r, c);
+            bool is_b = (m != MULT_NONE);
+            if (let == 'Q') { q_placed = true; if (is_b) high_on_bonus = true; }
+            if (let == 'Z') { z_placed = true; if (is_b) high_on_bonus = true; }
+            if (let == 'X') { x_placed = true; if (is_b) high_on_bonus = true; }
+            if (let == 'J') { j_placed = true; if (is_b) high_on_bonus = true; }
+
+            int dr[4] = {-1, 1, 0, 0};
+            int dc[4] = {0, 0, -1, 1};
+            for (int d = 0; d < 4; d++) {
+                int nr = r + dr[d];
+                int nc = c + dc[d];
+                if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
+                    char t = board->cells[nr][nc].tile;
+                    if (t == 'Q' || t == 'Z' || t == 'X' || t == 'J') touches_power = true;
+                }
+            }
+        }
+        out_features[916] = touches_power ? 1.0f : 0.0f;
+
+        /* Power tile management (917..929) */
+        out_features[917] = (blanks_placed > 0 && move->num_placed < 7) ? 1.0f : 0.0f;
+        out_features[918] = (blanks_placed > 0 && move->num_placed == 7) ? 1.0f : 0.0f;
+        out_features[919] = (blanks > 0) ? 1.0f : 0.0f;
+        out_features[920] = (s_placed && move->num_placed < 7) ? 1.0f : 0.0f;
+        out_features[921] = (s_placed && move->num_placed == 7) ? 1.0f : 0.0f;
+        out_features[922] = (leave_counts['S' - 'A'] > 0) ? 1.0f : 0.0f;
+        out_features[923] = (q_placed && high_on_bonus) ? 1.0f : 0.0f;
+        out_features[924] = (z_placed && high_on_bonus) ? 1.0f : 0.0f;
+        out_features[925] = (x_placed && high_on_bonus) ? 1.0f : 0.0f;
+        out_features[926] = (j_placed && high_on_bonus) ? 1.0f : 0.0f;
+        out_features[927] = (q_placed && move->score < 20) ? 1.0f : 0.0f;
+        out_features[928] = (high_placed > 0 && move->score >= 35) ? 1.0f : 0.0f;
+        out_features[929] = (clumsy > 0 && (leave_counts['Q'-'A'] > 0 || leave_counts['Z'-'A'] > 0)) ? 1.0f : 0.0f;
+
+        /* Move tactical synergies & clean leaves (951..964) */
+        bool perfect_leave = (strcmp(move->leave, "ER") == 0 || strcmp(move->leave, "IN") == 0 ||
+                              strcmp(move->leave, "ST") == 0 || strcmp(move->leave, "RE") == 0 ||
+                              strcmp(move->leave, "ES") == 0);
+        out_features[951] = perfect_leave ? 1.0f : 0.0f;
+        out_features[952] = (move->score >= 40 && move->num_placed <= 4) ? 1.0f : 0.0f;
+        out_features[953] = (move->num_placed > 0 && (float)move->score / (float)move->num_placed >= 8.0f) ? 1.0f : 0.0f;
+        out_features[954] = (move->num_placed == 1 && (q_placed || z_placed || x_placed || j_placed)) ? 1.0f : 0.0f;
+        out_features[955] = (move->type == MOVE_EXCHANGE && move->num_placed >= 5) ? 1.0f : 0.0f;
+        int placed_vowels = 0, placed_consonants = 0;
+        for (int p = 0; p < move->num_placed; p++) {
+            if (is_vowel_char(move->placed[p].letter)) placed_vowels++;
+            else placed_consonants++;
+        }
+        out_features[956] = (placed_vowels >= 3 && ideal_vc) ? 1.0f : 0.0f;
+        out_features[957] = (placed_consonants >= 4 && ideal_vc) ? 1.0f : 0.0f;
+        out_features[958] = (move->num_placed == 1 && move->score >= 20) ? 1.0f : 0.0f;
+        out_features[959] = (tw_cnt >= 2.0f) ? 1.0f : 0.0f;
+        out_features[960] = (move->num_placed >= 3 && num_cross >= 2) ? 1.0f : 0.0f;
+        out_features[961] = (num_cross >= 1 && move->score >= 30) ? 1.0f : 0.0f;
+        out_features[962] = (leave_len == 0) ? 1.0f : 0.0f;
+        out_features[963] = (leave_len == 1) ? 1.0f : 0.0f;
+        out_features[964] = (leave_len == 2) ? 1.0f : 0.0f;
+
+        /* Post-move dynamic margin & win probability (974..990) */
+        int post_diff = score_diff + move->score;
+        int post_bag = bag_count >= move->num_placed ? (bag_count - move->num_placed) : 0;
+        out_features[974] = (post_diff >= 80) ? 1.0f : 0.0f;
+        out_features[975] = (post_diff >= 40 && post_diff < 80) ? 1.0f : 0.0f;
+        out_features[976] = (post_diff >= 15 && post_diff < 40) ? 1.0f : 0.0f;
+        out_features[977] = (post_diff >= -14 && post_diff < 15) ? 1.0f : 0.0f;
+        out_features[978] = (post_diff >= -39 && post_diff < -14) ? 1.0f : 0.0f;
+        out_features[979] = (post_diff >= -79 && post_diff < -39) ? 1.0f : 0.0f;
+        out_features[980] = (post_diff < -79) ? 1.0f : 0.0f;
+        float post_win = eval_win_probability(post_diff, post_bag);
+        float pre_win = eval_win_probability(score_diff, bag_count);
+        out_features[981] = post_win;
+        out_features[982] = post_win - pre_win;
+        out_features[983] = (score_diff < 0 && post_diff > 0) ? 1.0f : 0.0f;
+        out_features[984] = (post_diff >= score_diff + 30) ? 1.0f : 0.0f;
+        out_features[985] = (score_diff < -50 && move->score >= 40) ? 1.0f : 0.0f;
+        out_features[986] = (score_diff > 40 && move->num_placed <= 2) ? 1.0f : 0.0f;
+        out_features[987] = (post_diff > 0) ? tanhf((float)post_diff / 50.0f) : 0.0f;
+        out_features[988] = (post_diff < 0) ? tanhf((float)(-post_diff) / 50.0f) : 0.0f;
+        out_features[989] = (move->num_placed == 7 && post_diff >= 60) ? 1.0f : 0.0f;
+        out_features[990] = (move->num_placed == 7 && fabsf((float)score_diff) <= 20.0f) ? 1.0f : 0.0f;
     }
 }
 
@@ -773,7 +1147,7 @@ void nnue_accumulator_build_base(const NNUEModel *model, const Board *board, con
 #if defined(__AVX512F__)
     for (int o = 0; o < NNUE_L1_DIM; o += 16) {
         __m512 acc = _mm512_load_ps(&model->b1[o]);
-        for (int i = 537; i < NNUE_INPUT_DIM; i++) {
+        for (int i = 0; i < NNUE_INPUT_DIM; i++) {
             float val = base_features[i];
             if (val != 0.0f) {
                 __m512 w = _mm512_load_ps(&model->w1_by_feature[i][o]);
@@ -785,7 +1159,7 @@ void nnue_accumulator_build_base(const NNUEModel *model, const Board *board, con
 #elif defined(__AVX2__)
     for (int o = 0; o < NNUE_L1_DIM; o += 8) {
         __m256 acc = _mm256_load_ps(&model->b1[o]);
-        for (int i = 537; i < NNUE_INPUT_DIM; i++) {
+        for (int i = 0; i < NNUE_INPUT_DIM; i++) {
             float val = base_features[i];
             if (val != 0.0f) {
                 __m256 w = _mm256_load_ps(&model->w1_by_feature[i][o]);
@@ -797,7 +1171,7 @@ void nnue_accumulator_build_base(const NNUEModel *model, const Board *board, con
 #else
     for (int o = 0; o < NNUE_L1_DIM; o++) {
         float sum = model->b1[o];
-        for (int i = 537; i < NNUE_INPUT_DIM; i++) {
+        for (int i = 0; i < NNUE_INPUT_DIM; i++) {
             if (base_features[i] != 0.0f) {
                 sum += base_features[i] * model->w1_by_feature[i][o];
             }
@@ -831,7 +1205,28 @@ int nnue_extract_move_sparse_features(const Board *board, const Move *move,
         out_sparse[count].value = features[557];
         count++;
     }
-    for (int i = 701; i <= 708; i++) {
+    for (int i = 701; i <= 868; i++) {
+        if (features[i] != 0.0f) {
+            out_sparse[count].index = (uint16_t)i;
+            out_sparse[count].value = features[i];
+            count++;
+        }
+    }
+    for (int i = 879; i <= 929; i++) {
+        if (features[i] != 0.0f) {
+            out_sparse[count].index = (uint16_t)i;
+            out_sparse[count].value = features[i];
+            count++;
+        }
+    }
+    for (int i = 951; i <= 964; i++) {
+        if (features[i] != 0.0f) {
+            out_sparse[count].index = (uint16_t)i;
+            out_sparse[count].value = features[i];
+            count++;
+        }
+    }
+    for (int i = 974; i <= 990; i++) {
         if (features[i] != 0.0f) {
             out_sparse[count].index = (uint16_t)i;
             out_sparse[count].value = features[i];
@@ -1024,7 +1419,7 @@ float nnue_forward_move_incremental(const NNUEModel *model, const NNUEAccumulato
                                     const Board *board, const Move *move,
                                     int bag_count, int score_diff) {
     if (!model || !model->is_loaded) return 0.0f;
-    SparseFeature sparse[128];
+    SparseFeature sparse[256];
     int n = nnue_extract_move_sparse_features(board, move, bag_count, score_diff, sparse);
     NNUEAccumulator move_acc;
     nnue_accumulator_apply_sparse(model, base_acc, sparse, n, &move_acc);
@@ -1038,7 +1433,7 @@ NNUEResult nnue_forward_move_incremental_dual(const NNUEModel *model, const NNUE
     res.net_spread = 0.0f;
     res.win_probability = 0.5f;
     if (!model || !model->is_loaded) return res;
-    SparseFeature sparse[128];
+    SparseFeature sparse[256];
     int n = nnue_extract_move_sparse_features(board, move, bag_count, score_diff, sparse);
     NNUEAccumulator move_acc;
     nnue_accumulator_apply_sparse(model, base_acc, sparse, n, &move_acc);

@@ -65,12 +65,42 @@ int main(void) {
     clock_t t_inc_end = clock();
     double inc_ms = ((double)(t_inc_end - t_inc_start) / CLOCKS_PER_SEC) * 1000.0;
 
-    printf("[BENCHMARK] %d move evaluations:\n", moves.count);
-    printf("  Dense Forward Pass:       %.2f ms (%.0f evals/sec, sum=%.1f)\n",
-           dense_ms, (double)moves.count / (dense_ms / 1000.0), dense_sum);
-    printf("  Incremental Accumulator:  %.2f ms (%.0f evals/sec, sum=%.1f)\n",
-           inc_ms, (double)moves.count / (inc_ms / 1000.0), inc_sum);
-    printf("  Throughput Speedup:       %.2fx FASTER!\n", dense_ms / inc_ms);
+    /* 3. Raw Incremental Accumulator Pipeline Throughput Benchmark */
+    SparseFeature test_sparse[256];
+    int test_n = nnue_extract_move_sparse_features(&board, &moves.moves[0], 86, 0, test_sparse);
+
+    clock_t t_acc_start = clock();
+    int acc_iters = 1000000;
+    NNUEAccumulator bench_acc;
+    for (int it = 0; it < acc_iters; it++) {
+        nnue_accumulator_apply_sparse(&g_nnue, &base_acc, test_sparse, test_n, &bench_acc);
+    }
+    clock_t t_acc_end = clock();
+    double acc_ms = ((double)(t_acc_end - t_acc_start) / CLOCKS_PER_SEC) * 1000.0;
+    double acc_eps = (double)acc_iters / (acc_ms / 1000.0);
+
+    clock_t t_raw_start = clock();
+    int raw_iters = 200000;
+    float raw_sum = 0.0f;
+    for (int it = 0; it < raw_iters; it++) {
+        NNUEAccumulator test_acc;
+        nnue_accumulator_apply_sparse(&g_nnue, &base_acc, test_sparse, test_n, &test_acc);
+        raw_sum += nnue_forward_accumulator(&g_nnue, &test_acc);
+    }
+    clock_t t_raw_end = clock();
+    double raw_ms = ((double)(t_raw_end - t_raw_start) / CLOCKS_PER_SEC) * 1000.0;
+    double raw_eps = (double)raw_iters / (raw_ms / 1000.0);
+
+    printf("[BENCHMARK] Move evaluations:\n");
+    printf("  Dense Forward Pass (%d moves):        %.2f ms (%.0f evals/sec, sum=%.1f)\n",
+           moves.count, dense_ms, (double)moves.count / (dense_ms / 1000.0), dense_sum);
+    printf("  End-to-End Incremental (%d moves):    %.2f ms (%.0f evals/sec, sum=%.1f)\n",
+           moves.count, inc_ms, (double)moves.count / (inc_ms / 1000.0), inc_sum);
+    printf("  Sparse Accumulator Update Only:        %.2f ms (%.0f updates/sec)\n",
+           acc_ms, acc_eps);
+    printf("  Pure Incremental Accumulator Pipeline: %.2f ms (%.0f evals/sec, sum=%.1f)\n",
+           raw_ms, raw_eps, raw_sum);
+    printf("  Throughput Speedup:                    %.2fx FASTER!\n", dense_ms / inc_ms);
 
     /* Check exact numerical equivalence across all legal moves */
     float max_diff = 0.0f;
