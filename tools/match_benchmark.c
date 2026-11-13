@@ -186,7 +186,7 @@ int main(int argc, char **argv) {
     }
 
     if (nnue_load(&g_nnue, "data/nnue.bin")) {
-        printf("[INFO] Supercharged Deep NNUE Evaluator loaded successfully (1024->256->64->Dual-Head, 1.1 MB)\n\n");
+        printf("[INFO] Supercharged Deep NNUE Evaluator loaded successfully (1024->256->SCReLU(512)->64->32->Dual-Head, Version 4, 1.1 MB)\n\n");
     } else {
         printf("[INFO] NNUE model data/nnue.bin not found. Using hand-tuned Evaluator.\n\n");
     }

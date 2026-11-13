@@ -7,27 +7,43 @@
 #include "types.h"
 #include "board.h"
 
-#define NNUE_INPUT_DIM  1024
-#define NNUE_L1_DIM     256
-#define NNUE_L2_DIM     64
-#define NNUE_MAGIC      0x4E4E5545 /* 'NNUE' in ASCII */
-#define NNUE_VERSION    3
+#define NNUE_INPUT_DIM        1024
+#define NNUE_L1_DIM           256
+#define NNUE_L1_ACT_DIM       512  /* Concatenated Dual Activation: 256 CReLU + 256 SCReLU */
+#define NNUE_L2_DIM           64
+#define NNUE_L3_DIM           32
+#define NNUE_MAGIC            0x4E4E5545 /* 'NNUE' in ASCII */
+#define NNUE_VERSION          4
 
 /*
- * Supercharged NNUE Architecture:
- * Input (1024) -> Linear (256) -> ClippedReLU -> Linear (64) -> ClippedReLU -> Dual-Head
+ * Tier 2 Deep Master Net Architecture Constants (Stockfish Two-Tier Blueprint)
+ * (100% L3 Cache Resident, ~8.4 MB to 16.8 MB)
+ */
+#define NNUE_TIER2_INPUT_DIM  16384
+#define NNUE_TIER2_L1_DIM     512
+#define NNUE_TIER2_L1_ACT_DIM 1024
+#define NNUE_TIER2_L2_DIM     128
+#define NNUE_TIER2_L3_DIM     64
+
+/*
+ * Supercharged Two-Tier In-Cache NNUE Architecture (Stockfish / Viridithas / Berserk pattern):
+ * Input (1024) -> Accumulator (256) -> Dual Activation (512: CReLU + SCReLU)
+ *              -> Linear (64) -> CReLU -> Linear (32) -> CReLU -> Dual-Head
  *
- * ClippedReLU(x) = clamp(x, 0.0f, 1.0f)
+ * Path A: ClippedReLU(x) = clamp(x, 0.0f, 1.0f)
+ * Path B: SqrClippedReLU(x) = clamp(x, 0.0f, 1.0f)^2
  */
 typedef struct {
-    alignas(64) float w1[NNUE_L1_DIM * NNUE_INPUT_DIM]; /* 256 x 1024 */
-    alignas(64) float b1[NNUE_L1_DIM];                  /* 256 */
-    alignas(64) float w2[NNUE_L2_DIM * NNUE_L1_DIM];    /* 64 x 256 */
-    alignas(64) float b2[NNUE_L2_DIM];                  /* 64 */
-    alignas(64) float w3[NNUE_L2_DIM];                  /* 1 x 64 (Score head) */
-    float b3;                                           /* 1 */
-    alignas(64) float w_win[NNUE_L2_DIM];               /* 1 x 64 (Win probability head) */
-    float b_win;                                        /* 1 */
+    alignas(64) float w1[NNUE_L1_DIM * NNUE_INPUT_DIM];       /* 256 x 1024 */
+    alignas(64) float b1[NNUE_L1_DIM];                        /* 256 */
+    alignas(64) float w2[NNUE_L2_DIM * NNUE_L1_ACT_DIM];      /* 64 x 512 */
+    alignas(64) float b2[NNUE_L2_DIM];                        /* 64 */
+    alignas(64) float w3[NNUE_L3_DIM * NNUE_L2_DIM];          /* 32 x 64 */
+    alignas(64) float b3[NNUE_L3_DIM];                        /* 32 */
+    alignas(64) float w_spread[NNUE_L3_DIM];                  /* 1 x 32 (Score head) */
+    float b_spread;                                           /* 1 */
+    alignas(64) float w_win[NNUE_L3_DIM];                     /* 1 x 32 (Win probability head) */
+    float b_win;                                              /* 1 */
     bool is_loaded;
     /* Feature-major transposed W1 for ultra-fast incremental accumulation: w1_by_feature[feature_idx][neuron_idx] */
     alignas(64) float w1_by_feature[NNUE_INPUT_DIM][NNUE_L1_DIM];
@@ -37,11 +53,13 @@ typedef struct {
 typedef struct {
     alignas(64) int8_t  w1[NNUE_L1_DIM * NNUE_INPUT_DIM];
     alignas(64) int16_t b1[NNUE_L1_DIM];
-    alignas(64) int8_t  w2[NNUE_L2_DIM * NNUE_L1_DIM];
+    alignas(64) int8_t  w2[NNUE_L2_DIM * NNUE_L1_ACT_DIM];
     alignas(64) int16_t b2[NNUE_L2_DIM];
-    alignas(64) int16_t w3[NNUE_L2_DIM];
-    int16_t b3;
-    alignas(64) int16_t w_win[NNUE_L2_DIM];
+    alignas(64) int8_t  w3[NNUE_L3_DIM * NNUE_L2_DIM];
+    alignas(64) int16_t b3[NNUE_L3_DIM];
+    alignas(64) int16_t w_spread[NNUE_L3_DIM];
+    int16_t b_spread;
+    alignas(64) int16_t w_win[NNUE_L3_DIM];
     int16_t b_win;
     float scale1;
     float scale2;

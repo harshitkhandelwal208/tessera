@@ -28,18 +28,23 @@ typedef struct {
     float m_b1[NNUE_L1_DIM];
     float v_b1[NNUE_L1_DIM];
 
-    float m_w2[NNUE_L2_DIM * NNUE_L1_DIM];
-    float v_w2[NNUE_L2_DIM * NNUE_L1_DIM];
+    float m_w2[NNUE_L2_DIM * NNUE_L1_ACT_DIM];
+    float v_w2[NNUE_L2_DIM * NNUE_L1_ACT_DIM];
     float m_b2[NNUE_L2_DIM];
     float v_b2[NNUE_L2_DIM];
 
-    float m_w3[NNUE_L2_DIM];
-    float v_w3[NNUE_L2_DIM];
-    float m_b3;
-    float v_b3;
+    float m_w3[NNUE_L3_DIM * NNUE_L2_DIM];
+    float v_w3[NNUE_L3_DIM * NNUE_L2_DIM];
+    float m_b3[NNUE_L3_DIM];
+    float v_b3[NNUE_L3_DIM];
 
-    float m_w_win[NNUE_L2_DIM];
-    float v_w_win[NNUE_L2_DIM];
+    float m_w_spread[NNUE_L3_DIM];
+    float v_w_spread[NNUE_L3_DIM];
+    float m_b_spread;
+    float v_b_spread;
+
+    float m_w_win[NNUE_L3_DIM];
+    float v_w_win[NNUE_L3_DIM];
     float m_b_win;
     float v_b_win;
 
@@ -52,7 +57,9 @@ typedef struct {
     float *gw2;
     float *gb2;
     float *gw3;
-    float gb3;
+    float *gb3;
+    float *gw_spread;
+    float gb_spread;
     float *gw_win;
     float gb_win;
 } ThreadGrad;
@@ -157,21 +164,25 @@ int main(int argc, char *argv[]) {
     /* Allocate batch gradient buffers */
     float *grad_w1 = (float*)calloc(NNUE_L1_DIM * NNUE_INPUT_DIM, sizeof(float));
     float *grad_b1 = (float*)calloc(NNUE_L1_DIM, sizeof(float));
-    float *grad_w2 = (float*)calloc(NNUE_L2_DIM * NNUE_L1_DIM, sizeof(float));
+    float *grad_w2 = (float*)calloc(NNUE_L2_DIM * NNUE_L1_ACT_DIM, sizeof(float));
     float *grad_b2 = (float*)calloc(NNUE_L2_DIM, sizeof(float));
-    float *grad_w3 = (float*)calloc(NNUE_L2_DIM, sizeof(float));
-    float *grad_w_win = (float*)calloc(NNUE_L2_DIM, sizeof(float));
+    float *grad_w3 = (float*)calloc(NNUE_L3_DIM * NNUE_L2_DIM, sizeof(float));
+    float *grad_b3 = (float*)calloc(NNUE_L3_DIM, sizeof(float));
+    float *grad_w_spread = (float*)calloc(NNUE_L3_DIM, sizeof(float));
+    float *grad_w_win = (float*)calloc(NNUE_L3_DIM, sizeof(float));
 
     /* Allocate per-thread gradient buffers on the heap */
     ThreadGrad *th_grads = (ThreadGrad*)malloc(max_threads * sizeof(ThreadGrad));
     for (int t = 0; t < max_threads; t++) {
         th_grads[t].gw1 = (float*)calloc(NNUE_L1_DIM * NNUE_INPUT_DIM, sizeof(float));
         th_grads[t].gb1 = (float*)calloc(NNUE_L1_DIM, sizeof(float));
-        th_grads[t].gw2 = (float*)calloc(NNUE_L2_DIM * NNUE_L1_DIM, sizeof(float));
+        th_grads[t].gw2 = (float*)calloc(NNUE_L2_DIM * NNUE_L1_ACT_DIM, sizeof(float));
         th_grads[t].gb2 = (float*)calloc(NNUE_L2_DIM, sizeof(float));
-        th_grads[t].gw3 = (float*)calloc(NNUE_L2_DIM, sizeof(float));
-        th_grads[t].gw_win = (float*)calloc(NNUE_L2_DIM, sizeof(float));
-        th_grads[t].gb3 = 0.0f;
+        th_grads[t].gw3 = (float*)calloc(NNUE_L3_DIM * NNUE_L2_DIM, sizeof(float));
+        th_grads[t].gb3 = (float*)calloc(NNUE_L3_DIM, sizeof(float));
+        th_grads[t].gw_spread = (float*)calloc(NNUE_L3_DIM, sizeof(float));
+        th_grads[t].gb_spread = 0.0f;
+        th_grads[t].gw_win = (float*)calloc(NNUE_L3_DIM, sizeof(float));
         th_grads[t].gb_win = 0.0f;
     }
 
@@ -219,11 +230,13 @@ int main(int argc, char *argv[]) {
             /* Zero main batch gradients */
             memset(grad_w1, 0, NNUE_L1_DIM * NNUE_INPUT_DIM * sizeof(float));
             memset(grad_b1, 0, NNUE_L1_DIM * sizeof(float));
-            memset(grad_w2, 0, NNUE_L2_DIM * NNUE_L1_DIM * sizeof(float));
+            memset(grad_w2, 0, NNUE_L2_DIM * NNUE_L1_ACT_DIM * sizeof(float));
             memset(grad_b2, 0, NNUE_L2_DIM * sizeof(float));
-            memset(grad_w3, 0, NNUE_L2_DIM * sizeof(float));
-            memset(grad_w_win, 0, NNUE_L2_DIM * sizeof(float));
-            float grad_b3 = 0.0f;
+            memset(grad_w3, 0, NNUE_L3_DIM * NNUE_L2_DIM * sizeof(float));
+            memset(grad_b3, 0, NNUE_L3_DIM * sizeof(float));
+            memset(grad_w_spread, 0, NNUE_L3_DIM * sizeof(float));
+            float grad_b_spread = 0.0f;
+            memset(grad_w_win, 0, NNUE_L3_DIM * sizeof(float));
             float grad_b_win = 0.0f;
             double batch_loss = 0.0;
 
@@ -233,11 +246,13 @@ int main(int argc, char *argv[]) {
                 ThreadGrad *tg = &th_grads[tid];
                 memset(tg->gw1, 0, NNUE_L1_DIM * NNUE_INPUT_DIM * sizeof(float));
                 memset(tg->gb1, 0, NNUE_L1_DIM * sizeof(float));
-                memset(tg->gw2, 0, NNUE_L2_DIM * NNUE_L1_DIM * sizeof(float));
+                memset(tg->gw2, 0, NNUE_L2_DIM * NNUE_L1_ACT_DIM * sizeof(float));
                 memset(tg->gb2, 0, NNUE_L2_DIM * sizeof(float));
-                memset(tg->gw3, 0, NNUE_L2_DIM * sizeof(float));
-                memset(tg->gw_win, 0, NNUE_L2_DIM * sizeof(float));
-                tg->gb3 = 0.0f;
+                memset(tg->gw3, 0, NNUE_L3_DIM * NNUE_L2_DIM * sizeof(float));
+                memset(tg->gb3, 0, NNUE_L3_DIM * sizeof(float));
+                memset(tg->gw_spread, 0, NNUE_L3_DIM * sizeof(float));
+                tg->gb_spread = 0.0f;
+                memset(tg->gw_win, 0, NNUE_L3_DIM * sizeof(float));
                 tg->gb_win = 0.0f;
 
                 #pragma omp for schedule(static)
@@ -245,98 +260,157 @@ int main(int argc, char *argv[]) {
                     const TrainingSample *sample = &dataset[batch_offset + s];
 
                     /* Forward Pass */
+                    /* 1. L1 linear accumulation: 1024 -> 256 */
                     float z1[NNUE_L1_DIM];
-                    float a1[NNUE_L1_DIM];
                     for (int o = 0; o < NNUE_L1_DIM; o++) {
                         float sum = model.b1[o];
                         const float *w_row = &model.w1[o * NNUE_INPUT_DIM];
                         for (int i = 0; i < NNUE_INPUT_DIM; i++) {
-                            sum += w_row[i] * sample->features[i];
+                            if (sample->features[i] != 0.0f) {
+                                sum += w_row[i] * sample->features[i];
+                            }
                         }
                         z1[o] = sum;
-                        a1[o] = fminf(fmaxf(sum, 0.0f), 1.0f); /* ClippedReLU */
                     }
 
+                    /* 2. Dual SCReLU Activation: 256 -> 512 (Path A CReLU + Path B SCReLU) */
+                    float a1[NNUE_L1_ACT_DIM];
+                    for (int i = 0; i < NNUE_L1_DIM; i++) {
+                        float c = fminf(fmaxf(z1[i], 0.0f), 1.0f);
+                        a1[i] = c;                      /* Path A */
+                        a1[NNUE_L1_DIM + i] = c * c;     /* Path B */
+                    }
+
+                    /* 3. L2 linear + ClippedReLU: 512 -> 64 */
                     float z2[NNUE_L2_DIM];
                     float a2[NNUE_L2_DIM];
                     for (int o = 0; o < NNUE_L2_DIM; o++) {
                         float sum = model.b2[o];
-                        const float *w_row = &model.w2[o * NNUE_L1_DIM];
-                        for (int i = 0; i < NNUE_L1_DIM; i++) {
+                        const float *w_row = &model.w2[o * NNUE_L1_ACT_DIM];
+                        for (int i = 0; i < NNUE_L1_ACT_DIM; i++) {
                             sum += w_row[i] * a1[i];
                         }
                         z2[o] = sum;
-                        a2[o] = fminf(fmaxf(sum, 0.0f), 1.0f); /* ClippedReLU */
+                        a2[o] = fminf(fmaxf(sum, 0.0f), 1.0f);
                     }
 
-                    /* 1. Score Head */
-                    float y_hat = model.b3;
-                    for (int i = 0; i < NNUE_L2_DIM; i++) {
-                        y_hat += model.w3[i] * a2[i];
+                    /* 4. L3 linear + ClippedReLU: 64 -> 32 */
+                    float z3[NNUE_L3_DIM];
+                    float a3[NNUE_L3_DIM];
+                    for (int o = 0; o < NNUE_L3_DIM; o++) {
+                        float sum = model.b3[o];
+                        const float *w_row = &model.w3[o * NNUE_L2_DIM];
+                        for (int i = 0; i < NNUE_L2_DIM; i++) {
+                            sum += w_row[i] * a2[i];
+                        }
+                        z3[o] = sum;
+                        a3[o] = fminf(fmaxf(sum, 0.0f), 1.0f);
                     }
 
-                    /* Huber Loss & Gradient */
+                    /* 5. Dual Output Heads */
+                    /* Head 1: Spread Margin */
+                    float y_hat = model.b_spread;
+                    for (int i = 0; i < NNUE_L3_DIM; i++) {
+                        y_hat += model.w_spread[i] * a3[i];
+                    }
+
+                    /* Huber Loss & Gradient (0.5 weight) */
                     float diff = y_hat - sample->target;
                     float abs_diff = fabsf(diff);
-                    float loss = 0.0f;
-                    float d_out = 0.0f;
+                    float loss_huber = 0.0f;
+                    float d_huber = 0.0f;
 
                     if (abs_diff <= HUBER_DELTA) {
-                        loss = 0.5f * diff * diff;
-                        d_out = diff;
+                        loss_huber = 0.5f * diff * diff;
+                        d_huber = diff;
                     } else {
-                        loss = HUBER_DELTA * (abs_diff - 0.5f * HUBER_DELTA);
-                        d_out = (diff > 0.0f) ? HUBER_DELTA : -HUBER_DELTA;
+                        loss_huber = HUBER_DELTA * (abs_diff - 0.5f * HUBER_DELTA);
+                        d_huber = (diff > 0.0f) ? HUBER_DELTA : -HUBER_DELTA;
                     }
-                    batch_loss += loss;
+                    float d_spread = 0.5f * d_huber;
 
-                    /* 2. Win Probability Head */
+                    /* Head 2: Win Probability */
                     float z_win = model.b_win;
-                    for (int i = 0; i < NNUE_L2_DIM; i++) {
-                        z_win += model.w_win[i] * a2[i];
+                    for (int i = 0; i < NNUE_L3_DIM; i++) {
+                        z_win += model.w_win[i] * a3[i];
                     }
                     float p_win = 1.0f / (1.0f + expf(-z_win * 3.0f));
+                    float eps = 1e-7f;
+                    float p_safe = fminf(fmaxf(p_win, eps), 1.0f - eps);
+                    float loss_bce = -(sample->win_target * logf(p_safe) + (1.0f - sample->win_target) * logf(1.0f - p_safe));
+                    float d_win = 0.5f * (p_win - sample->win_target) * 3.0f;
 
-                    /* Cross-entropy gradient on calibrated win outcome */
-                    float d_win = (p_win - sample->win_target) * 3.0f;
-                    tg->gb_win += d_win;
-                    for (int i = 0; i < NNUE_L2_DIM; i++) {
-                        tg->gw_win[i] += d_win * a2[i];
-                    }
+                    batch_loss += 0.5f * loss_huber + 0.5f * loss_bce;
 
                     /* Backward Pass */
-                    tg->gb3 += d_out;
-                    float d_a2[NNUE_L2_DIM];
-                    for (int i = 0; i < NNUE_L2_DIM; i++) {
-                        tg->gw3[i] += d_out * a2[i];
-                        d_a2[i] = (d_out * model.w3[i]) + (0.30f * d_win * model.w_win[i]);
+                    /* Gradients into Head parameters */
+                    tg->gb_spread += d_spread;
+                    tg->gb_win += d_win;
+                    for (int i = 0; i < NNUE_L3_DIM; i++) {
+                        tg->gw_spread[i] += d_spread * a3[i];
+                        tg->gw_win[i] += d_win * a3[i];
                     }
 
+                    /* Backprop into a3 (32) */
+                    float d_a3[NNUE_L3_DIM];
+                    for (int i = 0; i < NNUE_L3_DIM; i++) {
+                        d_a3[i] = (d_spread * model.w_spread[i]) + (d_win * model.w_win[i]);
+                    }
+
+                    /* Backprop through L3 ClippedReLU into z3 */
+                    float d_z3[NNUE_L3_DIM];
+                    for (int i = 0; i < NNUE_L3_DIM; i++) {
+                        d_z3[i] = (z3[i] > 0.0f && z3[i] < 1.0f) ? d_a3[i] : 0.0f;
+                        tg->gb3[i] += d_z3[i];
+                    }
+
+                    /* Backprop through W3 into a2 (64) */
+                    float d_a2[NNUE_L2_DIM] = {0};
+                    for (int o = 0; o < NNUE_L3_DIM; o++) {
+                        const float *w_row = &model.w3[o * NNUE_L2_DIM];
+                        float *gw_row = &tg->gw3[o * NNUE_L2_DIM];
+                        float dz = d_z3[o];
+                        for (int i = 0; i < NNUE_L2_DIM; i++) {
+                            gw_row[i] += dz * a2[i];
+                            d_a2[i] += dz * w_row[i];
+                        }
+                    }
+
+                    /* Backprop through L2 ClippedReLU into z2 */
                     float d_z2[NNUE_L2_DIM];
                     for (int i = 0; i < NNUE_L2_DIM; i++) {
                         d_z2[i] = (z2[i] > 0.0f && z2[i] < 1.0f) ? d_a2[i] : 0.0f;
                         tg->gb2[i] += d_z2[i];
                     }
 
-                    float d_a1[NNUE_L1_DIM] = {0};
+                    /* Backprop through W2 into a1 (512) */
+                    float d_a1[NNUE_L1_ACT_DIM] = {0};
                     for (int o = 0; o < NNUE_L2_DIM; o++) {
-                        const float *w_row = &model.w2[o * NNUE_L1_DIM];
-                        float *gw_row = &tg->gw2[o * NNUE_L1_DIM];
+                        const float *w_row = &model.w2[o * NNUE_L1_ACT_DIM];
+                        float *gw_row = &tg->gw2[o * NNUE_L1_ACT_DIM];
                         float dz = d_z2[o];
-                        for (int i = 0; i < NNUE_L1_DIM; i++) {
+                        for (int i = 0; i < NNUE_L1_ACT_DIM; i++) {
                             gw_row[i] += dz * a1[i];
                             d_a1[i] += dz * w_row[i];
                         }
                     }
 
+                    /* Backprop through Dual SCReLU into z1 (256) */
                     float d_z1[NNUE_L1_DIM];
                     for (int i = 0; i < NNUE_L1_DIM; i++) {
-                        d_z1[i] = (z1[i] > 0.0f && z1[i] < 1.0f) ? d_a1[i] : 0.0f;
+                        if (z1[i] > 0.0f && z1[i] < 1.0f) {
+                            float c = z1[i];
+                            d_z1[i] = d_a1[i] + 2.0f * c * d_a1[NNUE_L1_DIM + i];
+                        } else {
+                            d_z1[i] = 0.0f;
+                        }
                         tg->gb1[i] += d_z1[i];
                     }
 
+                    /* Backprop through W1 into features */
                     for (int o = 0; o < NNUE_L1_DIM; o++) {
                         float dz = d_z1[o];
+                        if (dz == 0.0f) continue;
                         float *gw_row = &tg->gw1[o * NNUE_INPUT_DIM];
                         for (int i = 0; i < NNUE_INPUT_DIM; i++) {
                             if (sample->features[i] != 0.0f) {
@@ -350,11 +424,13 @@ int main(int argc, char *argv[]) {
                 {
                     for (int i = 0; i < NNUE_L1_DIM * NNUE_INPUT_DIM; i++) grad_w1[i] += tg->gw1[i];
                     for (int i = 0; i < NNUE_L1_DIM; i++) grad_b1[i] += tg->gb1[i];
-                    for (int i = 0; i < NNUE_L2_DIM * NNUE_L1_DIM; i++) grad_w2[i] += tg->gw2[i];
+                    for (int i = 0; i < NNUE_L2_DIM * NNUE_L1_ACT_DIM; i++) grad_w2[i] += tg->gw2[i];
                     for (int i = 0; i < NNUE_L2_DIM; i++) grad_b2[i] += tg->gb2[i];
-                    for (int i = 0; i < NNUE_L2_DIM; i++) grad_w3[i] += tg->gw3[i];
-                    grad_b3 += tg->gb3;
-                    for (int i = 0; i < NNUE_L2_DIM; i++) grad_w_win[i] += tg->gw_win[i];
+                    for (int i = 0; i < NNUE_L3_DIM * NNUE_L2_DIM; i++) grad_w3[i] += tg->gw3[i];
+                    for (int i = 0; i < NNUE_L3_DIM; i++) grad_b3[i] += tg->gb3[i];
+                    for (int i = 0; i < NNUE_L3_DIM; i++) grad_w_spread[i] += tg->gw_spread[i];
+                    grad_b_spread += tg->gb_spread;
+                    for (int i = 0; i < NNUE_L3_DIM; i++) grad_w_win[i] += tg->gw_win[i];
                     grad_b_win += tg->gb_win;
                 }
             }
@@ -365,11 +441,13 @@ int main(int argc, char *argv[]) {
             float inv_batch = 1.0f / (float)batch_size;
             for (int i = 0; i < NNUE_L1_DIM * NNUE_INPUT_DIM; i++) grad_w1[i] *= inv_batch;
             for (int i = 0; i < NNUE_L1_DIM; i++) grad_b1[i] *= inv_batch;
-            for (int i = 0; i < NNUE_L2_DIM * NNUE_L1_DIM; i++) grad_w2[i] *= inv_batch;
+            for (int i = 0; i < NNUE_L2_DIM * NNUE_L1_ACT_DIM; i++) grad_w2[i] *= inv_batch;
             for (int i = 0; i < NNUE_L2_DIM; i++) grad_b2[i] *= inv_batch;
-            for (int i = 0; i < NNUE_L2_DIM; i++) grad_w3[i] *= inv_batch;
-            grad_b3 *= inv_batch;
-            for (int i = 0; i < NNUE_L2_DIM; i++) grad_w_win[i] *= inv_batch;
+            for (int i = 0; i < NNUE_L3_DIM * NNUE_L2_DIM; i++) grad_w3[i] *= inv_batch;
+            for (int i = 0; i < NNUE_L3_DIM; i++) grad_b3[i] *= inv_batch;
+            for (int i = 0; i < NNUE_L3_DIM; i++) grad_w_spread[i] *= inv_batch;
+            grad_b_spread *= inv_batch;
+            for (int i = 0; i < NNUE_L3_DIM; i++) grad_w_win[i] *= inv_batch;
             grad_b_win *= inv_batch;
 
             /* Adam Parameter Update */
@@ -379,15 +457,19 @@ int main(int argc, char *argv[]) {
             adam_update_array(model.b1, grad_b1, adam->m_b1, adam->v_b1,
                               NNUE_L1_DIM, lr, 0.9f, 0.999f, 1e-8f, 0.0f, adam->t);
             adam_update_array(model.w2, grad_w2, adam->m_w2, adam->v_w2,
-                              NNUE_L2_DIM * NNUE_L1_DIM, lr, 0.9f, 0.999f, 1e-8f, WEIGHT_DECAY, adam->t);
+                              NNUE_L2_DIM * NNUE_L1_ACT_DIM, lr, 0.9f, 0.999f, 1e-8f, WEIGHT_DECAY, adam->t);
             adam_update_array(model.b2, grad_b2, adam->m_b2, adam->v_b2,
                               NNUE_L2_DIM, lr, 0.9f, 0.999f, 1e-8f, 0.0f, adam->t);
             adam_update_array(model.w3, grad_w3, adam->m_w3, adam->v_w3,
-                              NNUE_L2_DIM, lr, 0.9f, 0.999f, 1e-8f, WEIGHT_DECAY, adam->t);
-            adam_update_array(&model.b3, &grad_b3, &adam->m_b3, &adam->v_b3,
+                              NNUE_L3_DIM * NNUE_L2_DIM, lr, 0.9f, 0.999f, 1e-8f, WEIGHT_DECAY, adam->t);
+            adam_update_array(model.b3, grad_b3, adam->m_b3, adam->v_b3,
+                              NNUE_L3_DIM, lr, 0.9f, 0.999f, 1e-8f, 0.0f, adam->t);
+            adam_update_array(model.w_spread, grad_w_spread, adam->m_w_spread, adam->v_w_spread,
+                              NNUE_L3_DIM, lr, 0.9f, 0.999f, 1e-8f, WEIGHT_DECAY, adam->t);
+            adam_update_array(&model.b_spread, &grad_b_spread, &adam->m_b_spread, &adam->v_b_spread,
                               1, lr, 0.9f, 0.999f, 1e-8f, 0.0f, adam->t);
             adam_update_array(model.w_win, grad_w_win, adam->m_w_win, adam->v_w_win,
-                              NNUE_L2_DIM, lr, 0.9f, 0.999f, 1e-8f, WEIGHT_DECAY, adam->t);
+                              NNUE_L3_DIM, lr, 0.9f, 0.999f, 1e-8f, WEIGHT_DECAY, adam->t);
             adam_update_array(&model.b_win, &grad_b_win, &adam->m_b_win, &adam->v_b_win,
                               1, lr, 0.9f, 0.999f, 1e-8f, 0.0f, adam->t);
         }
@@ -436,6 +518,8 @@ int main(int argc, char *argv[]) {
         free(th_grads[t].gw2);
         free(th_grads[t].gb2);
         free(th_grads[t].gw3);
+        free(th_grads[t].gb3);
+        free(th_grads[t].gw_spread);
         free(th_grads[t].gw_win);
     }
     free(th_grads);
@@ -444,6 +528,8 @@ int main(int argc, char *argv[]) {
     free(grad_w2);
     free(grad_b2);
     free(grad_w3);
+    free(grad_b3);
+    free(grad_w_spread);
     free(grad_w_win);
     free(adam);
     free(dataset);

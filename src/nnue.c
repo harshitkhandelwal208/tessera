@@ -31,20 +31,28 @@ void nnue_init_random(NNUEModel *model) {
         model->b1[i] = 0.05f;
     }
 
-    float limit2 = sqrtf(6.0f / (float)(NNUE_L1_DIM + NNUE_L2_DIM));
-    for (int i = 0; i < NNUE_L2_DIM * NNUE_L1_DIM; i++) {
+    float limit2 = sqrtf(6.0f / (float)(NNUE_L1_ACT_DIM + NNUE_L2_DIM));
+    for (int i = 0; i < NNUE_L2_DIM * NNUE_L1_ACT_DIM; i++) {
         model->w2[i] = rand_uniform(limit2);
     }
     for (int i = 0; i < NNUE_L2_DIM; i++) {
         model->b2[i] = 0.05f;
     }
 
-    float limit3 = sqrtf(6.0f / (float)(NNUE_L2_DIM + 1));
-    for (int i = 0; i < NNUE_L2_DIM; i++) {
+    float limit3 = sqrtf(6.0f / (float)(NNUE_L2_DIM + NNUE_L3_DIM));
+    for (int i = 0; i < NNUE_L3_DIM * NNUE_L2_DIM; i++) {
         model->w3[i] = rand_uniform(limit3);
-        model->w_win[i] = rand_uniform(limit3);
     }
-    model->b3 = 0.0f;
+    for (int i = 0; i < NNUE_L3_DIM; i++) {
+        model->b3[i] = 0.05f;
+    }
+
+    float limit_head = sqrtf(6.0f / (float)(NNUE_L3_DIM + 1));
+    for (int i = 0; i < NNUE_L3_DIM; i++) {
+        model->w_spread[i] = rand_uniform(limit_head);
+        model->w_win[i] = rand_uniform(limit_head);
+    }
+    model->b_spread = 0.0f;
     model->b_win = 0.0f;
     model->is_loaded = true;
 
@@ -88,15 +96,15 @@ void nnue_quantize(const NNUEModel *src, NNUEQuantizedModel *dst) {
         }
     }
 
-    /* Find max absolute weight for L2 */
+    /* Find max absolute weight for L2 (64 x 512) */
     float max_w2 = 1e-6f;
-    for (int i = 0; i < NNUE_L2_DIM * NNUE_L1_DIM; i++) {
+    for (int i = 0; i < NNUE_L2_DIM * NNUE_L1_ACT_DIM; i++) {
         float a = fabsf(src->w2[i]);
         if (a > max_w2) max_w2 = a;
     }
     dst->scale2 = 127.0f / max_w2;
 
-    for (int i = 0; i < NNUE_L2_DIM * NNUE_L1_DIM; i++) {
+    for (int i = 0; i < NNUE_L2_DIM * NNUE_L1_ACT_DIM; i++) {
         int val = (int)roundf(src->w2[i] * dst->scale2);
         if (val > 127) val = 127;
         if (val < -127) val = -127;
@@ -109,19 +117,34 @@ void nnue_quantize(const NNUEModel *src, NNUEQuantizedModel *dst) {
         dst->b2[i] = (int16_t)val;
     }
 
-    /* Score head weights */
+    /* Find max absolute weight for L3 (32 x 64) */
     float max_w3 = 1e-6f;
-    for (int i = 0; i < NNUE_L2_DIM; i++) {
+    for (int i = 0; i < NNUE_L3_DIM * NNUE_L2_DIM; i++) {
         float a = fabsf(src->w3[i]);
         if (a > max_w3) max_w3 = a;
     }
-    dst->scale3 = 512.0f / max_w3;
-    for (int i = 0; i < NNUE_L2_DIM; i++) {
-        dst->w3[i] = (int16_t)roundf(src->w3[i] * dst->scale3);
-        dst->w_win[i] = (int16_t)roundf(src->w_win[i] * dst->scale3);
+    dst->scale3 = 127.0f / max_w3;
+
+    for (int i = 0; i < NNUE_L3_DIM * NNUE_L2_DIM; i++) {
+        int val = (int)roundf(src->w3[i] * dst->scale3);
+        if (val > 127) val = 127;
+        if (val < -127) val = -127;
+        dst->w3[i] = (int8_t)val;
     }
-    dst->b3 = (int16_t)roundf(src->b3 * dst->scale3);
-    dst->b_win = (int16_t)roundf(src->b_win * dst->scale3);
+    for (int i = 0; i < NNUE_L3_DIM; i++) {
+        int val = (int)roundf(src->b3[i] * dst->scale3);
+        if (val > 32767) val = 32767;
+        if (val < -32767) val = -32767;
+        dst->b3[i] = (int16_t)val;
+    }
+
+    /* Score and Win head weights (32 -> 1) */
+    for (int i = 0; i < NNUE_L3_DIM; i++) {
+        dst->w_spread[i] = (int16_t)roundf(src->w_spread[i] * 512.0f);
+        dst->w_win[i] = (int16_t)roundf(src->w_win[i] * 512.0f);
+    }
+    dst->b_spread = (int16_t)roundf(src->b_spread * 512.0f);
+    dst->b_win = (int16_t)roundf(src->b_win * 512.0f);
     dst->is_loaded = true;
 }
 
@@ -129,26 +152,29 @@ bool nnue_save(const NNUEModel *model, const char *filepath) {
     FILE *f = fopen(filepath, "wb");
     if (!f) return false;
 
-    uint32_t header[5] = {
+    uint32_t header[6] = {
         NNUE_MAGIC,
         NNUE_VERSION,
         NNUE_INPUT_DIM,
         NNUE_L1_DIM,
-        NNUE_L2_DIM
+        NNUE_L2_DIM,
+        NNUE_L3_DIM
     };
 
-    if (fwrite(header, sizeof(uint32_t), 5, f) != 5) {
+    if (fwrite(header, sizeof(uint32_t), 6, f) != 6) {
         fclose(f);
         return false;
     }
 
     fwrite(model->w1, sizeof(float), NNUE_L1_DIM * NNUE_INPUT_DIM, f);
     fwrite(model->b1, sizeof(float), NNUE_L1_DIM, f);
-    fwrite(model->w2, sizeof(float), NNUE_L2_DIM * NNUE_L1_DIM, f);
+    fwrite(model->w2, sizeof(float), NNUE_L2_DIM * NNUE_L1_ACT_DIM, f);
     fwrite(model->b2, sizeof(float), NNUE_L2_DIM, f);
-    fwrite(model->w3, sizeof(float), NNUE_L2_DIM, f);
-    fwrite(&model->b3, sizeof(float), 1, f);
-    fwrite(model->w_win, sizeof(float), NNUE_L2_DIM, f);
+    fwrite(model->w3, sizeof(float), NNUE_L3_DIM * NNUE_L2_DIM, f);
+    fwrite(model->b3, sizeof(float), NNUE_L3_DIM, f);
+    fwrite(model->w_spread, sizeof(float), NNUE_L3_DIM, f);
+    fwrite(&model->b_spread, sizeof(float), 1, f);
+    fwrite(model->w_win, sizeof(float), NNUE_L3_DIM, f);
     fwrite(&model->b_win, sizeof(float), 1, f);
 
     fclose(f);
@@ -159,32 +185,36 @@ bool nnue_load(NNUEModel *model, const char *filepath) {
     FILE *f = fopen(filepath, "rb");
     if (!f) return false;
 
-    uint32_t header[5];
-    if (fread(header, sizeof(uint32_t), 5, f) != 5) {
+    uint32_t header[6];
+    if (fread(header, sizeof(uint32_t), 6, f) != 6) {
         fclose(f);
         return false;
     }
 
     if (header[0] != NNUE_MAGIC || header[1] != NNUE_VERSION ||
-        header[2] != NNUE_INPUT_DIM || header[3] != NNUE_L1_DIM || header[4] != NNUE_L2_DIM) {
+        header[2] != NNUE_INPUT_DIM || header[3] != NNUE_L1_DIM ||
+        header[4] != NNUE_L2_DIM || header[5] != NNUE_L3_DIM) {
         fclose(f);
         return false;
     }
 
     size_t r1 = fread(model->w1, sizeof(float), NNUE_L1_DIM * NNUE_INPUT_DIM, f);
     size_t r2 = fread(model->b1, sizeof(float), NNUE_L1_DIM, f);
-    size_t r3 = fread(model->w2, sizeof(float), NNUE_L2_DIM * NNUE_L1_DIM, f);
+    size_t r3 = fread(model->w2, sizeof(float), NNUE_L2_DIM * NNUE_L1_ACT_DIM, f);
     size_t r4 = fread(model->b2, sizeof(float), NNUE_L2_DIM, f);
-    size_t r5 = fread(model->w3, sizeof(float), NNUE_L2_DIM, f);
-    size_t r6 = fread(&model->b3, sizeof(float), 1, f);
-    size_t r7 = fread(model->w_win, sizeof(float), NNUE_L2_DIM, f);
-    size_t r8 = fread(&model->b_win, sizeof(float), 1, f);
+    size_t r5 = fread(model->w3, sizeof(float), NNUE_L3_DIM * NNUE_L2_DIM, f);
+    size_t r6 = fread(model->b3, sizeof(float), NNUE_L3_DIM, f);
+    size_t r7 = fread(model->w_spread, sizeof(float), NNUE_L3_DIM, f);
+    size_t r8 = fread(&model->b_spread, sizeof(float), 1, f);
+    size_t r9 = fread(model->w_win, sizeof(float), NNUE_L3_DIM, f);
+    size_t r10 = fread(&model->b_win, sizeof(float), 1, f);
 
     fclose(f);
 
     if (r1 != NNUE_L1_DIM * NNUE_INPUT_DIM || r2 != NNUE_L1_DIM ||
-        r3 != NNUE_L2_DIM * NNUE_L1_DIM || r4 != NNUE_L2_DIM ||
-        r5 != NNUE_L2_DIM || r6 != 1 || r7 != NNUE_L2_DIM || r8 != 1) {
+        r3 != NNUE_L2_DIM * NNUE_L1_ACT_DIM || r4 != NNUE_L2_DIM ||
+        r5 != NNUE_L3_DIM * NNUE_L2_DIM || r6 != NNUE_L3_DIM ||
+        r7 != NNUE_L3_DIM || r8 != 1 || r9 != NNUE_L3_DIM || r10 != 1) {
         return false;
     }
 
@@ -912,6 +942,81 @@ static inline float hsum256(__m256 v) {
 #endif
 
 /*
+ * AVX-512 / AVX2 Vectorized Raw Dot Product + Bias (No Activation).
+ */
+static inline void vectorized_linear_raw(const float *weights, const float *biases,
+                                         const float *in, float *out,
+                                         int out_dim, int in_dim) {
+#if defined(__AVX512F__)
+    for (int o = 0; o < out_dim; o++) {
+        __m512 v_acc = _mm512_setzero_ps();
+        const float *w_row = &weights[o * in_dim];
+        for (int i = 0; i < in_dim; i += 16) {
+            __m512 v_w = _mm512_loadu_ps(&w_row[i]);
+            __m512 v_x = _mm512_loadu_ps(&in[i]);
+            v_acc = _mm512_fmadd_ps(v_w, v_x, v_acc);
+        }
+        out[o] = _mm512_reduce_add_ps(v_acc) + biases[o];
+    }
+#elif defined(__AVX2__)
+    for (int o = 0; o < out_dim; o++) {
+        __m256 v_acc = _mm256_setzero_ps();
+        const float *w_row = &weights[o * in_dim];
+        for (int i = 0; i < in_dim; i += 8) {
+            __m256 v_w = _mm256_loadu_ps(&w_row[i]);
+            __m256 v_x = _mm256_loadu_ps(&in[i]);
+            v_acc = _mm256_fmadd_ps(v_w, v_x, v_acc);
+        }
+        out[o] = hsum256(v_acc) + biases[o];
+    }
+#else
+    for (int o = 0; o < out_dim; o++) {
+        float sum = biases[o];
+        const float *w_row = &weights[o * in_dim];
+        for (int i = 0; i < in_dim; i++) {
+            sum += w_row[i] * in[i];
+        }
+        out[o] = sum;
+    }
+#endif
+}
+
+/*
+ * Dual activation function: Path A ClippedReLU + Path B SqrClippedReLU (SCReLU)
+ * Input: in[NNUE_L1_DIM] (256 floats)
+ * Output: out[NNUE_L1_ACT_DIM] (512 floats)
+ *   out[0..255]     = clamp(in[i], 0.0f, 1.0f)
+ *   out[256..511]   = clamp(in[i], 0.0f, 1.0f)^2
+ */
+static inline void vectorized_dual_screlu(const float *in, float *out) {
+#if defined(__AVX512F__)
+    __m512 v_zero = _mm512_setzero_ps();
+    __m512 v_one = _mm512_set1_ps(1.0f);
+    for (int i = 0; i < NNUE_L1_DIM; i += 16) {
+        __m512 x = _mm512_load_ps(&in[i]);
+        __m512 c = _mm512_min_ps(_mm512_max_ps(x, v_zero), v_one);
+        _mm512_store_ps(&out[i], c);
+        _mm512_store_ps(&out[NNUE_L1_DIM + i], _mm512_mul_ps(c, c));
+    }
+#elif defined(__AVX2__)
+    __m256 v_zero = _mm256_setzero_ps();
+    __m256 v_one = _mm256_set1_ps(1.0f);
+    for (int i = 0; i < NNUE_L1_DIM; i += 8) {
+        __m256 x = _mm256_load_ps(&in[i]);
+        __m256 c = _mm256_min_ps(_mm256_max_ps(x, v_zero), v_one);
+        _mm256_store_ps(&out[i], c);
+        _mm256_store_ps(&out[NNUE_L1_DIM + i], _mm256_mul_ps(c, c));
+    }
+#else
+    for (int i = 0; i < NNUE_L1_DIM; i++) {
+        float c = fminf(fmaxf(in[i], 0.0f), 1.0f);
+        out[i] = c;
+        out[NNUE_L1_DIM + i] = c * c;
+    }
+#endif
+}
+
+/*
  * AVX-512 / AVX2 Vectorized Dot Product + Bias with ClippedReLU activation.
  */
 static inline void vectorized_linear_crelu(const float *weights, const float *biases,
@@ -960,35 +1065,43 @@ static inline void vectorized_linear_crelu(const float *weights, const float *bi
 float nnue_forward(const NNUEModel *model, const float *features) {
     if (!model || !model->is_loaded) return 0.0f;
 
-    /* Layer 1: 768 -> 256 */
-    alignas(64) float l1_out[NNUE_L1_DIM];
-    vectorized_linear_crelu(model->w1, model->b1, features, l1_out, NNUE_L1_DIM, NNUE_INPUT_DIM);
+    /* Layer 1: 1024 -> 256 accumulator */
+    alignas(64) float l1_acc[NNUE_L1_DIM];
+    vectorized_linear_raw(model->w1, model->b1, features, l1_acc, NNUE_L1_DIM, NNUE_INPUT_DIM);
 
-    /* Layer 2: 256 -> 64 */
-    alignas(64) float l2_out[NNUE_L2_DIM];
-    vectorized_linear_crelu(model->w2, model->b2, l1_out, l2_out, NNUE_L2_DIM, NNUE_L1_DIM);
+    /* Dual SCReLU activation: 256 -> 512 */
+    alignas(64) float l1_act[NNUE_L1_ACT_DIM];
+    vectorized_dual_screlu(l1_acc, l1_act);
 
-    /* Layer 3: 64 -> 1 */
+    /* Layer 2: 512 -> 64 */
+    alignas(64) float l2_act[NNUE_L2_DIM];
+    vectorized_linear_crelu(model->w2, model->b2, l1_act, l2_act, NNUE_L2_DIM, NNUE_L1_ACT_DIM);
+
+    /* Layer 3: 64 -> 32 */
+    alignas(64) float l3_act[NNUE_L3_DIM];
+    vectorized_linear_crelu(model->w3, model->b3, l2_act, l3_act, NNUE_L3_DIM, NNUE_L2_DIM);
+
+    /* Spread Head: 32 -> 1 */
 #if defined(__AVX512F__)
     __m512 v_acc = _mm512_setzero_ps();
-    for (int i = 0; i < NNUE_L2_DIM; i += 16) {
-        __m512 v_w = _mm512_loadu_ps(&model->w3[i]);
-        __m512 v_x = _mm512_loadu_ps(&l2_out[i]);
+    for (int i = 0; i < NNUE_L3_DIM; i += 16) {
+        __m512 v_w = _mm512_loadu_ps(&model->w_spread[i]);
+        __m512 v_x = _mm512_loadu_ps(&l3_act[i]);
         v_acc = _mm512_fmadd_ps(v_w, v_x, v_acc);
     }
-    float raw_equity = _mm512_reduce_add_ps(v_acc) + model->b3;
+    float raw_equity = _mm512_reduce_add_ps(v_acc) + model->b_spread;
 #elif defined(__AVX2__)
     __m256 v_acc = _mm256_setzero_ps();
-    for (int i = 0; i < NNUE_L2_DIM; i += 8) {
-        __m256 v_w = _mm256_loadu_ps(&model->w3[i]);
-        __m256 v_x = _mm256_loadu_ps(&l2_out[i]);
+    for (int i = 0; i < NNUE_L3_DIM; i += 8) {
+        __m256 v_w = _mm256_loadu_ps(&model->w_spread[i]);
+        __m256 v_x = _mm256_loadu_ps(&l3_act[i]);
         v_acc = _mm256_fmadd_ps(v_w, v_x, v_acc);
     }
-    float raw_equity = hsum256(v_acc) + model->b3;
+    float raw_equity = hsum256(v_acc) + model->b_spread;
 #else
-    float raw_equity = model->b3;
-    for (int i = 0; i < NNUE_L2_DIM; i++) {
-        raw_equity += model->w3[i] * l2_out[i];
+    float raw_equity = model->b_spread;
+    for (int i = 0; i < NNUE_L3_DIM; i++) {
+        raw_equity += model->w_spread[i] * l3_act[i];
     }
 #endif
 
@@ -999,7 +1112,7 @@ float nnue_forward_quantized(const NNUEQuantizedModel *model, const float *featu
     if (!model || !model->is_loaded) return 0.0f;
 
     alignas(64) int16_t l1_acc[NNUE_L1_DIM];
-    alignas(64) uint8_t l1_act[NNUE_L1_DIM];
+    alignas(64) uint8_t l1_act[NNUE_L1_ACT_DIM];
 
     for (int o = 0; o < NNUE_L1_DIM; o++) {
         int32_t sum = (int32_t)model->b1[o];
@@ -1012,17 +1125,18 @@ float nnue_forward_quantized(const NNUEQuantizedModel *model, const float *featu
         l1_acc[o] = (int16_t)(sum / 64);
         int v = l1_acc[o] > 0 ? (l1_acc[o] > 127 ? 127 : l1_acc[o]) : 0;
         l1_act[o] = (uint8_t)v;
+        l1_act[NNUE_L1_DIM + o] = (uint8_t)((v * v) / 127);
     }
 
     alignas(64) uint8_t l2_act[NNUE_L2_DIM];
     for (int o = 0; o < NNUE_L2_DIM; o++) {
         int32_t sum = (int32_t)model->b2[o];
-        const int8_t *w_row = &model->w2[o * NNUE_L1_DIM];
+        const int8_t *w_row = &model->w2[o * NNUE_L1_ACT_DIM];
 
 #if defined(__AVX2__)
         __m256i sum_v = _mm256_setzero_si256();
         __m256i ones = _mm256_set1_epi16(1);
-        for (int i = 0; i < NNUE_L1_DIM; i += 32) {
+        for (int i = 0; i < NNUE_L1_ACT_DIM; i += 32) {
             __m256i act_v = _mm256_load_si256((const __m256i*)&l1_act[i]);
             __m256i w_v = _mm256_loadu_si256((const __m256i*)&w_row[i]);
             __m256i prod = _mm256_maddubs_epi16(act_v, w_v);
@@ -1036,7 +1150,7 @@ float nnue_forward_quantized(const NNUEQuantizedModel *model, const float *featu
         sum128 = _mm_hadd_epi32(sum128, sum128);
         sum += _mm_cvtsi128_si32(sum128);
 #else
-        for (int i = 0; i < NNUE_L1_DIM; i++) {
+        for (int i = 0; i < NNUE_L1_ACT_DIM; i++) {
             sum += (int32_t)w_row[i] * (int32_t)l1_act[i];
         }
 #endif
@@ -1044,12 +1158,41 @@ float nnue_forward_quantized(const NNUEQuantizedModel *model, const float *featu
         l2_act[o] = (uint8_t)(v > 0 ? (v > 127 ? 127 : v) : 0);
     }
 
-    int32_t out_acc = (int32_t)model->b3;
-    for (int i = 0; i < NNUE_L2_DIM; i++) {
-        out_acc += (int32_t)model->w3[i] * (int32_t)l2_act[i];
+    alignas(64) uint8_t l3_act[NNUE_L3_DIM];
+    for (int o = 0; o < NNUE_L3_DIM; o++) {
+        int32_t sum = (int32_t)model->b3[o];
+        const int8_t *w_row = &model->w3[o * NNUE_L2_DIM];
+#if defined(__AVX2__)
+        __m256i sum_v = _mm256_setzero_si256();
+        __m256i ones = _mm256_set1_epi16(1);
+        for (int i = 0; i < NNUE_L2_DIM; i += 32) {
+            __m256i act_v = _mm256_load_si256((const __m256i*)&l2_act[i]);
+            __m256i w_v = _mm256_loadu_si256((const __m256i*)&w_row[i]);
+            __m256i prod = _mm256_maddubs_epi16(act_v, w_v);
+            __m256i prod32 = _mm256_madd_epi16(prod, ones);
+            sum_v = _mm256_add_epi32(sum_v, prod32);
+        }
+        __m128i lo = _mm256_castsi256_si128(sum_v);
+        __m128i hi = _mm256_extracti128_si256(sum_v, 1);
+        __m128i sum128 = _mm_add_epi32(lo, hi);
+        sum128 = _mm_hadd_epi32(sum128, sum128);
+        sum128 = _mm_hadd_epi32(sum128, sum128);
+        sum += _mm_cvtsi128_si32(sum128);
+#else
+        for (int i = 0; i < NNUE_L2_DIM; i++) {
+            sum += (int32_t)w_row[i] * (int32_t)l2_act[i];
+        }
+#endif
+        int v = sum / 128;
+        l3_act[o] = (uint8_t)(v > 0 ? (v > 127 ? 127 : v) : 0);
     }
 
-    float raw = (float)out_acc / (model->scale3 * 128.0f);
+    int32_t out_acc = (int32_t)model->b_spread;
+    for (int i = 0; i < NNUE_L3_DIM; i++) {
+        out_acc += (int32_t)model->w_spread[i] * (int32_t)l3_act[i];
+    }
+
+    float raw = (float)out_acc / (512.0f * 128.0f);
     return raw * 50.0f;
 }
 
@@ -1059,28 +1202,36 @@ NNUEResult nnue_forward_dual(const NNUEModel *model, const float *features) {
     res.win_probability = 0.5f;
     if (!model || !model->is_loaded) return res;
 
-    /* Layer 1: 768 -> 256 */
-    alignas(64) float l1_out[NNUE_L1_DIM];
-    vectorized_linear_crelu(model->w1, model->b1, features, l1_out, NNUE_L1_DIM, NNUE_INPUT_DIM);
+    /* Layer 1: 1024 -> 256 accumulator */
+    alignas(64) float l1_acc[NNUE_L1_DIM];
+    vectorized_linear_raw(model->w1, model->b1, features, l1_acc, NNUE_L1_DIM, NNUE_INPUT_DIM);
 
-    /* Layer 2: 256 -> 64 */
-    alignas(64) float l2_out[NNUE_L2_DIM];
-    vectorized_linear_crelu(model->w2, model->b2, l1_out, l2_out, NNUE_L2_DIM, NNUE_L1_DIM);
+    /* Dual SCReLU activation: 256 -> 512 */
+    alignas(64) float l1_act[NNUE_L1_ACT_DIM];
+    vectorized_dual_screlu(l1_acc, l1_act);
 
-    /* Layer 3 Dual Head */
+    /* Layer 2: 512 -> 64 */
+    alignas(64) float l2_act[NNUE_L2_DIM];
+    vectorized_linear_crelu(model->w2, model->b2, l1_act, l2_act, NNUE_L2_DIM, NNUE_L1_ACT_DIM);
+
+    /* Layer 3: 64 -> 32 */
+    alignas(64) float l3_act[NNUE_L3_DIM];
+    vectorized_linear_crelu(model->w3, model->b3, l2_act, l3_act, NNUE_L3_DIM, NNUE_L2_DIM);
+
+    /* Dual Heads: 32 -> 1 */
 #if defined(__AVX512F__)
     __m512 v_acc1 = _mm512_setzero_ps();
     __m512 v_acc2 = _mm512_setzero_ps();
 
-    for (int i = 0; i < NNUE_L2_DIM; i += 16) {
-        __m512 v_x = _mm512_loadu_ps(&l2_out[i]);
-        __m512 v_w1 = _mm512_loadu_ps(&model->w3[i]);
+    for (int i = 0; i < NNUE_L3_DIM; i += 16) {
+        __m512 v_x = _mm512_loadu_ps(&l3_act[i]);
+        __m512 v_w1 = _mm512_loadu_ps(&model->w_spread[i]);
         __m512 v_w2 = _mm512_loadu_ps(&model->w_win[i]);
         v_acc1 = _mm512_fmadd_ps(v_w1, v_x, v_acc1);
         v_acc2 = _mm512_fmadd_ps(v_w2, v_x, v_acc2);
     }
 
-    float raw_equity = _mm512_reduce_add_ps(v_acc1) + model->b3;
+    float raw_equity = _mm512_reduce_add_ps(v_acc1) + model->b_spread;
     res.net_spread = raw_equity * 50.0f;
 
     float raw_win = _mm512_reduce_add_ps(v_acc2) + model->b_win;
@@ -1089,25 +1240,25 @@ NNUEResult nnue_forward_dual(const NNUEModel *model, const float *features) {
     __m256 v_acc1 = _mm256_setzero_ps();
     __m256 v_acc2 = _mm256_setzero_ps();
 
-    for (int i = 0; i < NNUE_L2_DIM; i += 8) {
-        __m256 v_x = _mm256_loadu_ps(&l2_out[i]);
-        __m256 v_w1 = _mm256_loadu_ps(&model->w3[i]);
+    for (int i = 0; i < NNUE_L3_DIM; i += 8) {
+        __m256 v_x = _mm256_loadu_ps(&l3_act[i]);
+        __m256 v_w1 = _mm256_loadu_ps(&model->w_spread[i]);
         __m256 v_w2 = _mm256_loadu_ps(&model->w_win[i]);
         v_acc1 = _mm256_fmadd_ps(v_w1, v_x, v_acc1);
         v_acc2 = _mm256_fmadd_ps(v_w2, v_x, v_acc2);
     }
 
-    float raw_equity = hsum256(v_acc1) + model->b3;
+    float raw_equity = hsum256(v_acc1) + model->b_spread;
     res.net_spread = raw_equity * 50.0f;
 
     float raw_win = hsum256(v_acc2) + model->b_win;
     res.win_probability = 1.0f / (1.0f + expf(-raw_win * 3.0f));
 #else
-    float raw_equity = model->b3;
+    float raw_equity = model->b_spread;
     float raw_win = model->b_win;
-    for (int i = 0; i < NNUE_L2_DIM; i++) {
-        raw_equity += model->w3[i] * l2_out[i];
-        raw_win += model->w_win[i] * l2_out[i];
+    for (int i = 0; i < NNUE_L3_DIM; i++) {
+        raw_equity += model->w_spread[i] * l3_act[i];
+        raw_win += model->w_win[i] * l3_act[i];
     }
     res.net_spread = raw_equity * 50.0f;
     res.win_probability = 1.0f / (1.0f + expf(-raw_win * 3.0f));
@@ -1293,50 +1444,39 @@ void nnue_accumulator_apply_sparse(const NNUEModel *model, const NNUEAccumulator
 float nnue_forward_accumulator(const NNUEModel *model, const NNUEAccumulator *acc) {
     if (!model || !model->is_loaded) return 0.0f;
 
-    alignas(64) float l1_out[NNUE_L1_DIM];
-#if defined(__AVX512F__)
-    __m512 v_zero = _mm512_setzero_ps();
-    __m512 v_one = _mm512_set1_ps(1.0f);
-    for (int o = 0; o < NNUE_L1_DIM; o += 16) {
-        __m512 x = _mm512_load_ps(&acc->vals[o]);
-        _mm512_store_ps(&l1_out[o], _mm512_min_ps(_mm512_max_ps(x, v_zero), v_one));
-    }
-#elif defined(__AVX2__)
-    __m256 v_zero = _mm256_setzero_ps();
-    __m256 v_one = _mm256_set1_ps(1.0f);
-    for (int o = 0; o < NNUE_L1_DIM; o += 8) {
-        __m256 x = _mm256_load_ps(&acc->vals[o]);
-        _mm256_store_ps(&l1_out[o], _mm256_min_ps(_mm256_max_ps(x, v_zero), v_one));
-    }
-#else
-    for (int o = 0; o < NNUE_L1_DIM; o++) {
-        l1_out[o] = fminf(fmaxf(acc->vals[o], 0.0f), 1.0f);
-    }
-#endif
+    /* Dual SCReLU activation directly on accumulated pre-activation sum */
+    alignas(64) float l1_act[NNUE_L1_ACT_DIM];
+    vectorized_dual_screlu(acc->vals, l1_act);
 
-    alignas(64) float l2_out[NNUE_L2_DIM];
-    vectorized_linear_crelu(model->w2, model->b2, l1_out, l2_out, NNUE_L2_DIM, NNUE_L1_DIM);
+    /* Layer 2: 512 -> 64 */
+    alignas(64) float l2_act[NNUE_L2_DIM];
+    vectorized_linear_crelu(model->w2, model->b2, l1_act, l2_act, NNUE_L2_DIM, NNUE_L1_ACT_DIM);
 
+    /* Layer 3: 64 -> 32 */
+    alignas(64) float l3_act[NNUE_L3_DIM];
+    vectorized_linear_crelu(model->w3, model->b3, l2_act, l3_act, NNUE_L3_DIM, NNUE_L2_DIM);
+
+    /* Spread Head: 32 -> 1 */
 #if defined(__AVX512F__)
     __m512 v_acc = _mm512_setzero_ps();
-    for (int i = 0; i < NNUE_L2_DIM; i += 16) {
-        __m512 v_w = _mm512_loadu_ps(&model->w3[i]);
-        __m512 v_x = _mm512_loadu_ps(&l2_out[i]);
+    for (int i = 0; i < NNUE_L3_DIM; i += 16) {
+        __m512 v_w = _mm512_loadu_ps(&model->w_spread[i]);
+        __m512 v_x = _mm512_loadu_ps(&l3_act[i]);
         v_acc = _mm512_fmadd_ps(v_w, v_x, v_acc);
     }
-    float raw_equity = _mm512_reduce_add_ps(v_acc) + model->b3;
+    float raw_equity = _mm512_reduce_add_ps(v_acc) + model->b_spread;
 #elif defined(__AVX2__)
     __m256 v_acc = _mm256_setzero_ps();
-    for (int i = 0; i < NNUE_L2_DIM; i += 8) {
-        __m256 v_w = _mm256_loadu_ps(&model->w3[i]);
-        __m256 v_x = _mm256_loadu_ps(&l2_out[i]);
+    for (int i = 0; i < NNUE_L3_DIM; i += 8) {
+        __m256 v_w = _mm256_loadu_ps(&model->w_spread[i]);
+        __m256 v_x = _mm256_loadu_ps(&l3_act[i]);
         v_acc = _mm256_fmadd_ps(v_w, v_x, v_acc);
     }
-    float raw_equity = hsum256(v_acc) + model->b3;
+    float raw_equity = hsum256(v_acc) + model->b_spread;
 #else
-    float raw_equity = model->b3;
-    for (int i = 0; i < NNUE_L2_DIM; i++) {
-        raw_equity += model->w3[i] * l2_out[i];
+    float raw_equity = model->b_spread;
+    for (int i = 0; i < NNUE_L3_DIM; i++) {
+        raw_equity += model->w_spread[i] * l3_act[i];
     }
 #endif
 
@@ -1349,64 +1489,53 @@ NNUEResult nnue_forward_accumulator_dual(const NNUEModel *model, const NNUEAccum
     res.win_probability = 0.5f;
     if (!model || !model->is_loaded) return res;
 
-    alignas(64) float l1_out[NNUE_L1_DIM];
-#if defined(__AVX512F__)
-    __m512 v_zero = _mm512_setzero_ps();
-    __m512 v_one = _mm512_set1_ps(1.0f);
-    for (int o = 0; o < NNUE_L1_DIM; o += 16) {
-        __m512 x = _mm512_load_ps(&acc->vals[o]);
-        _mm512_store_ps(&l1_out[o], _mm512_min_ps(_mm512_max_ps(x, v_zero), v_one));
-    }
-#elif defined(__AVX2__)
-    __m256 v_zero = _mm256_setzero_ps();
-    __m256 v_one = _mm256_set1_ps(1.0f);
-    for (int o = 0; o < NNUE_L1_DIM; o += 8) {
-        __m256 x = _mm256_load_ps(&acc->vals[o]);
-        _mm256_store_ps(&l1_out[o], _mm256_min_ps(_mm256_max_ps(x, v_zero), v_one));
-    }
-#else
-    for (int o = 0; o < NNUE_L1_DIM; o++) {
-        l1_out[o] = fminf(fmaxf(acc->vals[o], 0.0f), 1.0f);
-    }
-#endif
+    /* Dual SCReLU activation directly on accumulated pre-activation sum */
+    alignas(64) float l1_act[NNUE_L1_ACT_DIM];
+    vectorized_dual_screlu(acc->vals, l1_act);
 
-    alignas(64) float l2_out[NNUE_L2_DIM];
-    vectorized_linear_crelu(model->w2, model->b2, l1_out, l2_out, NNUE_L2_DIM, NNUE_L1_DIM);
+    /* Layer 2: 512 -> 64 */
+    alignas(64) float l2_act[NNUE_L2_DIM];
+    vectorized_linear_crelu(model->w2, model->b2, l1_act, l2_act, NNUE_L2_DIM, NNUE_L1_ACT_DIM);
 
+    /* Layer 3: 64 -> 32 */
+    alignas(64) float l3_act[NNUE_L3_DIM];
+    vectorized_linear_crelu(model->w3, model->b3, l2_act, l3_act, NNUE_L3_DIM, NNUE_L2_DIM);
+
+    /* Dual Heads: 32 -> 1 */
 #if defined(__AVX512F__)
     __m512 v_acc1 = _mm512_setzero_ps();
     __m512 v_acc2 = _mm512_setzero_ps();
-    for (int i = 0; i < NNUE_L2_DIM; i += 16) {
-        __m512 v_x = _mm512_loadu_ps(&l2_out[i]);
-        __m512 v_w1 = _mm512_loadu_ps(&model->w3[i]);
+    for (int i = 0; i < NNUE_L3_DIM; i += 16) {
+        __m512 v_x = _mm512_loadu_ps(&l3_act[i]);
+        __m512 v_w1 = _mm512_loadu_ps(&model->w_spread[i]);
         __m512 v_w2 = _mm512_loadu_ps(&model->w_win[i]);
         v_acc1 = _mm512_fmadd_ps(v_w1, v_x, v_acc1);
         v_acc2 = _mm512_fmadd_ps(v_w2, v_x, v_acc2);
     }
-    float raw_equity = _mm512_reduce_add_ps(v_acc1) + model->b3;
+    float raw_equity = _mm512_reduce_add_ps(v_acc1) + model->b_spread;
     res.net_spread = raw_equity * 50.0f;
     float raw_win = _mm512_reduce_add_ps(v_acc2) + model->b_win;
     res.win_probability = 1.0f / (1.0f + expf(-raw_win * 3.0f));
 #elif defined(__AVX2__)
     __m256 v_acc1 = _mm256_setzero_ps();
     __m256 v_acc2 = _mm256_setzero_ps();
-    for (int i = 0; i < NNUE_L2_DIM; i += 8) {
-        __m256 v_x = _mm256_loadu_ps(&l2_out[i]);
-        __m256 v_w1 = _mm256_loadu_ps(&model->w3[i]);
+    for (int i = 0; i < NNUE_L3_DIM; i += 8) {
+        __m256 v_x = _mm256_loadu_ps(&l3_act[i]);
+        __m256 v_w1 = _mm256_loadu_ps(&model->w_spread[i]);
         __m256 v_w2 = _mm256_loadu_ps(&model->w_win[i]);
         v_acc1 = _mm256_fmadd_ps(v_w1, v_x, v_acc1);
         v_acc2 = _mm256_fmadd_ps(v_w2, v_x, v_acc2);
     }
-    float raw_equity = hsum256(v_acc1) + model->b3;
+    float raw_equity = hsum256(v_acc1) + model->b_spread;
     res.net_spread = raw_equity * 50.0f;
     float raw_win = hsum256(v_acc2) + model->b_win;
     res.win_probability = 1.0f / (1.0f + expf(-raw_win * 3.0f));
 #else
-    float raw_equity = model->b3;
+    float raw_equity = model->b_spread;
     float raw_win = model->b_win;
-    for (int i = 0; i < NNUE_L2_DIM; i++) {
-        raw_equity += model->w3[i] * l2_out[i];
-        raw_win += model->w_win[i] * l2_out[i];
+    for (int i = 0; i < NNUE_L3_DIM; i++) {
+        raw_equity += model->w_spread[i] * l3_act[i];
+        raw_win += model->w_win[i] * l3_act[i];
     }
     res.net_spread = raw_equity * 50.0f;
     res.win_probability = 1.0f / (1.0f + expf(-raw_win * 3.0f));
