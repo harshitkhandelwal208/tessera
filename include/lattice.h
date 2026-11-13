@@ -97,6 +97,7 @@ void     lattice_clear(Lattice *lat);
 
 /* Lookup or register position in lattice */
 uint32_t lattice_find_or_insert(Lattice *lat, const Board *board, int turn, bool *created);
+uint32_t lattice_find_or_insert_with_key(Lattice *lat, const Board *board, uint64_t key, int turn, bool *created);
 
 /* Add parent back-pointer for backward settling */
 void     lattice_add_parent(Lattice *lat, uint32_t child_idx, uint32_t parent_idx);

@@ -53,11 +53,16 @@ void lattice_free(Lattice *lat) {
 }
 
 static bool boards_equal(const Board *a, const Board *b) {
+    if (a->occupied.b[0] != b->occupied.b[0] ||
+        a->occupied.b[1] != b->occupied.b[1] ||
+        a->occupied.b[2] != b->occupied.b[2] ||
+        a->occupied.b[3] != b->occupied.b[3]) {
+        return false;
+    }
     return memcmp(a->cells, b->cells, sizeof(a->cells)) == 0;
 }
 
-uint32_t lattice_find_or_insert(Lattice *lat, const Board *board, int turn, bool *created) {
-    uint64_t key = zobrist_compute_board(board, turn);
+uint32_t lattice_find_or_insert_with_key(Lattice *lat, const Board *board, uint64_t key, int turn, bool *created) {
     uint32_t cluster_idx = (uint32_t)(key & (TT_NUM_CLUSTERS - 1));
 
     /* Probe 64-byte primary cluster */
@@ -158,6 +163,11 @@ uint32_t lattice_find_or_insert(Lattice *lat, const Board *board, int turn, bool
 
     if (created) *created = true;
     return new_idx;
+}
+
+uint32_t lattice_find_or_insert(Lattice *lat, const Board *board, int turn, bool *created) {
+    uint64_t key = zobrist_compute_board(board, turn);
+    return lattice_find_or_insert_with_key(lat, board, key, turn, created);
 }
 
 void lattice_add_parent(Lattice *lat, uint32_t child_idx, uint32_t parent_idx) {
@@ -278,8 +288,9 @@ void lattice_expand_node(Lattice *lat, uint32_t node_idx, const Dawg *dawg,
         board_copy(&spec_board, &node->board);
         board_apply_move(&spec_board, &edge->move);
 
+        uint64_t child_key = zobrist_toggle_turn(zobrist_update_move(node->zobrist_key, &edge->move));
         bool created = false;
-        uint32_t child_idx = lattice_find_or_insert(lat, &spec_board, 1 - node->turn, &created);
+        uint32_t child_idx = lattice_find_or_insert_with_key(lat, &spec_board, child_key, 1 - node->turn, &created);
         edge->target_node_idx = child_idx;
 
         if (child_idx > 0) {
