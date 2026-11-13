@@ -33,6 +33,10 @@ static inline char dawg_letter(DawgEdge edge) {
     return (char)('A' + ((edge & DAWG_LETTER_MASK) >> DAWG_LETTER_SHIFT));
 }
 
+static inline uint32_t dawg_letter_idx(DawgEdge edge) {
+    return (edge & DAWG_LETTER_MASK) >> DAWG_LETTER_SHIFT;
+}
+
 static inline uint32_t dawg_child_index(DawgEdge edge) {
     return (edge & DAWG_CHILD_MASK) >> DAWG_CHILD_SHIFT;
 }

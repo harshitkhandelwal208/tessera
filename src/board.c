@@ -267,8 +267,7 @@ void board_compute_horizontal_cross_checks(const Board *b, const Dawg *dawg,
             uint32_t edge_idx = prefix_node;
             while (1) {
                 DawgEdge edge = dawg->edges[edge_idx];
-                char let = dawg_letter(edge);
-                int l = (int)(let - 'A');
+                uint32_t l = dawg_letter_idx(edge);
 
                 bool word_valid = false;
                 if (!has_down_suffix) {

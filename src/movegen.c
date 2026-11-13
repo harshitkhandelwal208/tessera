@@ -11,6 +11,9 @@
 static _Thread_local alignas(64) Move s_move_arena[MOVE_ARENA_MAX_DEPTH][INITIAL_MOVE_CAPACITY];
 static _Thread_local int s_move_arena_in_use[MOVE_ARENA_MAX_DEPTH] = {0};
 
+static const uint8_t s_letter_mults[5] = { 1, 2, 3, 1, 1 };
+static const uint8_t s_word_mults[5]   = { 1, 1, 1, 2, 3 };
+
 /*
  * Ultra-fast in-register move scorer.
  * Directly evaluates the score of a horizontal word on ctx->board using precomputed cross-checks.
@@ -33,13 +36,9 @@ static inline int score_horizontal_move(const Board *b, const CrossCheck (*cross
             bool is_blank = placed[placed_k].is_blank;
             int let_val = is_blank ? 0 : TILE_VALUES[word[i] - 'A'];
             MultiplierType m = b->cells[row][c].mult;
-            int letter_mult = 1;
-            int word_mult = 1;
-
-            if (m == MULT_DL) letter_mult = 2;
-            else if (m == MULT_TL) letter_mult = 3;
-            else if (m == MULT_DW) { main_word_mult *= 2; word_mult = 2; }
-            else if (m == MULT_TW) { main_word_mult *= 3; word_mult = 3; }
+            int letter_mult = s_letter_mults[m];
+            int word_mult = s_word_mults[m];
+            main_word_mult *= word_mult;
 
             main_word_sum += let_val * letter_mult;
 
@@ -315,10 +314,11 @@ static void extend_right(GenContext *ctx, int row, int col, uint32_t node, DawgE
         uint32_t edge_idx = node;
         while (1) {
             DawgEdge edge = ctx->dawg->edges[edge_idx];
-            char let = dawg_letter(edge);
-            int let_idx = let - 'A';
+            uint32_t let_idx = dawg_letter_idx(edge);
 
             if ((avail_mask & (1U << let_idx)) != 0) {
+                char let = (char)('A' + let_idx);
+
                 /* Check regular letter in rack */
                 if (ctx->rack_counts[let_idx] > 0) {
                     ctx->rack_counts[let_idx]--;
@@ -402,62 +402,64 @@ static void left_part(GenContext *ctx, int row, int anchor_col, uint32_t node, i
     uint32_t mask = ctx->cross_checks[row][cur_col].valid_letters_mask;
     if (mask == 0) return;
 
-    /* 1. Try regular letters present in rack via hardware bit-scan */
-    uint32_t pmask = mask & ctx->rack_mask;
-    while (pmask) {
-        int t_idx = __builtin_ctz(pmask);
-        pmask &= pmask - 1;
+    uint32_t avail_mask = (ctx->rack_counts[26] > 0) ? mask : (mask & ctx->rack_mask);
+    if (avail_mask == 0) return;
 
-        char t = (char)('A' + t_idx);
-        bool is_term = false;
-        uint32_t next_node = dawg_step(ctx->dawg, node, t, &is_term);
-        if (next_node != 0 || is_term) {
-            ctx->rack_counts[t_idx]--;
-            if (ctx->rack_counts[t_idx] == 0) ctx->rack_mask &= ~(1U << t_idx);
-            ctx->tiles_left--;
-            placed[num_placed].row = row;
-            placed[num_placed].col = cur_col;
-            placed[num_placed].letter = t;
-            placed[num_placed].is_blank = false;
+    /* Single-pass DAWG edge walk: iterate over sibling edges directly */
+    uint32_t edge_idx = node;
+    while (1) {
+        DawgEdge edge = ctx->dawg->edges[edge_idx];
+        uint32_t let_idx = dawg_letter_idx(edge);
 
-            word[word_len] = t;
-            left_part(ctx, row, anchor_col, next_node, limit,
-                      target_prefix_len, word, word_len + 1,
-                      placed, num_placed + 1);
+        if ((avail_mask & (1U << let_idx)) != 0) {
+            uint32_t next_node = dawg_child_index(edge);
+            bool is_term = dawg_is_terminal(edge);
 
-            ctx->rack_counts[t_idx]++;
-            ctx->rack_mask |= (1U << t_idx);
-            ctx->tiles_left++;
-        }
-    }
+            if (next_node != 0 || is_term) {
+                char let = (char)('A' + let_idx);
 
-    /* 2. Try blank '?' in rack as all letters that have edges in DAWG */
-    if (ctx->rack_counts[26] > 0) {
-        uint32_t edge_idx = node;
-        while (1) {
-            DawgEdge edge = ctx->dawg->edges[edge_idx];
-            char let = dawg_letter(edge);
-            int let_idx = let - 'A';
+                /* 1. Try regular letter in rack */
+                if (ctx->rack_counts[let_idx] > 0) {
+                    ctx->rack_counts[let_idx]--;
+                    if (ctx->rack_counts[let_idx] == 0) ctx->rack_mask &= ~(1U << let_idx);
+                    ctx->tiles_left--;
+                    placed[num_placed].row = row;
+                    placed[num_placed].col = cur_col;
+                    placed[num_placed].letter = let;
+                    placed[num_placed].is_blank = false;
 
-            if ((mask & (1U << let_idx)) != 0) {
-                ctx->rack_counts[26]--;
-                ctx->tiles_left--;
-                placed[num_placed].row = row;
-                placed[num_placed].col = cur_col;
-                placed[num_placed].letter = let;
-                placed[num_placed].is_blank = true;
+                    word[word_len] = let;
+                    left_part(ctx, row, anchor_col, next_node, limit,
+                              target_prefix_len, word, word_len + 1,
+                              placed, num_placed + 1);
 
-                word[word_len] = let;
-                left_part(ctx, row, anchor_col, dawg_child_index(edge), limit,
-                          target_prefix_len, word, word_len + 1,
-                          placed, num_placed + 1);
+                    ctx->rack_counts[let_idx]++;
+                    ctx->rack_mask |= (1U << let_idx);
+                    ctx->tiles_left++;
+                }
 
-                ctx->rack_counts[26]++;
-                ctx->tiles_left++;
+                /* 2. Try blank '?' in rack */
+                if (ctx->rack_counts[26] > 0) {
+                    ctx->rack_counts[26]--;
+                    ctx->tiles_left--;
+                    placed[num_placed].row = row;
+                    placed[num_placed].col = cur_col;
+                    placed[num_placed].letter = let;
+                    placed[num_placed].is_blank = true;
+
+                    word[word_len] = let;
+                    left_part(ctx, row, anchor_col, next_node, limit,
+                              target_prefix_len, word, word_len + 1,
+                              placed, num_placed + 1);
+
+                    ctx->rack_counts[26]++;
+                    ctx->tiles_left++;
+                }
             }
-            if (dawg_is_last_child(edge)) break;
-            edge_idx++;
         }
+
+        if (dawg_is_last_child(edge)) break;
+        edge_idx++;
     }
 }
 
@@ -513,9 +515,13 @@ static void generate_row_moves(GenContext *ctx) {
                     k--;
                 }
 
-                for (int prefix_len = 0; prefix_len <= limit; prefix_len++) {
-                    char word[MAX_WORD_LEN + 1];
-                    PlacedTile placed[RACK_CAPACITY];
+                char word[MAX_WORD_LEN + 1];
+                PlacedTile placed[RACK_CAPACITY];
+                word[0] = '\0';
+                extend_right(ctx, r, c, ctx->dawg->root_index, 0, c, c,
+                             word, 0, placed, 0);
+
+                for (int prefix_len = 1; prefix_len <= limit; prefix_len++) {
                     left_part(ctx, r, c, ctx->dawg->root_index, limit, prefix_len,
                               word, 0, placed, 0);
                 }
