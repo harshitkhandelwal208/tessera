@@ -4,24 +4,47 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdalign.h>
+
+#define MOVE_ARENA_MAX_DEPTH 8
+static _Thread_local alignas(64) Move s_move_arena[MOVE_ARENA_MAX_DEPTH][INITIAL_MOVE_CAPACITY];
+static _Thread_local int s_move_arena_in_use[MOVE_ARENA_MAX_DEPTH] = {0};
 
 void move_list_init(MoveList *list) {
     if (!list) return;
     list->count = 0;
-    if (!list->moves || list->capacity == 0) {
-        list->capacity = INITIAL_MOVE_CAPACITY;
-        list->moves = (Move*)malloc(sizeof(Move) * list->capacity);
+    if (list->moves != NULL && list->capacity > 0) {
+        return; /* Already initialized with valid arena or heap buffer */
     }
+    list->arena_slot = 0;
+    /* Attempt to acquire a 64-byte cacheline-aligned thread-local arena slot */
+    for (int i = 0; i < MOVE_ARENA_MAX_DEPTH; i++) {
+        if (!s_move_arena_in_use[i]) {
+            s_move_arena_in_use[i] = 1;
+            list->moves = s_move_arena[i];
+            list->capacity = INITIAL_MOVE_CAPACITY;
+            list->arena_slot = i + 1;
+            return;
+        }
+    }
+    /* Fallback if all arena slots in use (rare deep recursion) */
+    list->capacity = INITIAL_MOVE_CAPACITY;
+    list->moves = (Move*)malloc(sizeof(Move) * list->capacity);
+    list->arena_slot = 0;
 }
 
 void move_list_destroy(MoveList *list) {
     if (!list) return;
-    if (list->moves) {
+    if (list->arena_slot > 0 && list->arena_slot <= MOVE_ARENA_MAX_DEPTH) {
+        s_move_arena_in_use[list->arena_slot - 1] = 0;
+        list->moves = NULL;
+    } else if (list->moves) {
         free(list->moves);
         list->moves = NULL;
     }
     list->count = 0;
     list->capacity = 0;
+    list->arena_slot = 0;
 }
 
 void board_transpose(Board *dst, const Board *src) {
@@ -31,6 +54,7 @@ void board_transpose(Board *dst, const Board *src) {
             dst->cells[r][c] = src->cells[c][r];
         }
     }
+    board_recompute_bitboards(dst);
 }
 
 typedef struct {
@@ -123,8 +147,15 @@ static inline void record_move(GenContext *ctx, int row, int start_col, const ch
     /* Dynamically grow move list when needed so moves are never capped */
     if (ctx->list->count >= ctx->list->capacity) {
         int new_cap = ctx->list->capacity > 0 ? ctx->list->capacity * 2 : INITIAL_MOVE_CAPACITY;
-        Move *new_moves = (Move*)realloc(ctx->list->moves, sizeof(Move) * new_cap);
+        Move *new_moves = (Move*)malloc(sizeof(Move) * new_cap);
         if (!new_moves) return;
+        memcpy(new_moves, ctx->list->moves, sizeof(Move) * ctx->list->count);
+        if (ctx->list->arena_slot > 0 && ctx->list->arena_slot <= MOVE_ARENA_MAX_DEPTH) {
+            s_move_arena_in_use[ctx->list->arena_slot - 1] = 0;
+            ctx->list->arena_slot = 0;
+        } else if (ctx->list->moves) {
+            free(ctx->list->moves);
+        }
         ctx->list->moves = new_moves;
         ctx->list->capacity = new_cap;
     }
@@ -342,9 +373,15 @@ static void left_part(GenContext *ctx, int row, int anchor_col, uint32_t node, i
 static void generate_row_moves(GenContext *ctx) {
     board_compute_horizontal_cross_checks(ctx->board, ctx->dawg, ctx->cross_checks);
 
-    for (int r = 0; r < BOARD_SIZE; r++) {
-        for (int c = 0; c < BOARD_SIZE; c++) {
-            if (!board_is_anchor(ctx->board, r, c)) continue;
+    for (int w = 0; w < 4; w++) {
+        uint64_t mask = ctx->board->anchors.b[w];
+        while (mask) {
+            int bit = __builtin_ctzll(mask);
+            mask &= mask - 1;
+            int sq = (w << 6) + bit;
+            if (sq >= TOTAL_SQUARES) break;
+            int r = sq / BOARD_SIZE;
+            int c = sq % BOARD_SIZE;
 
             /* Check if square to the left is occupied */
             if (c > 0 && ctx->board->cells[r][c - 1].tile != 0) {

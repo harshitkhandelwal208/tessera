@@ -4,6 +4,33 @@
 #include <string.h>
 #include <ctype.h>
 
+Bitboard256 BB_TW = {0};
+Bitboard256 BB_DW = {0};
+Bitboard256 BB_TL = {0};
+Bitboard256 BB_DL = {0};
+Bitboard256 BB_CENTER = {0};
+
+__attribute__((constructor))
+static void init_multiplier_bitboards(void) {
+    memset(&BB_TW, 0, sizeof(Bitboard256));
+    memset(&BB_DW, 0, sizeof(Bitboard256));
+    memset(&BB_TL, 0, sizeof(Bitboard256));
+    memset(&BB_DL, 0, sizeof(Bitboard256));
+    memset(&BB_CENTER, 0, sizeof(Bitboard256));
+
+    bb_set(&BB_CENTER, 7, 7);
+
+    for (int r = 0; r < BOARD_SIZE; r++) {
+        for (int c = 0; c < BOARD_SIZE; c++) {
+            MultiplierType m = board_get_multiplier(r, c);
+            if (m == MULT_TW) bb_set(&BB_TW, r, c);
+            else if (m == MULT_DW) bb_set(&BB_DW, r, c);
+            else if (m == MULT_TL) bb_set(&BB_TL, r, c);
+            else if (m == MULT_DL) bb_set(&BB_DL, r, c);
+        }
+    }
+}
+
 /* Multiplier grid lookup */
 MultiplierType board_get_multiplier(int row, int col) {
     if (row < 0 || row >= BOARD_SIZE || col < 0 || col >= BOARD_SIZE) {
@@ -47,6 +74,49 @@ void board_init(Board *b) {
             b->cells[r][c].tile = 0;
             b->cells[r][c].is_blank = false;
             b->cells[r][c].mult = board_get_multiplier(r, c);
+        }
+    }
+    bb_set(&b->anchors, 7, 7);
+}
+
+void board_recompute_bitboards(Board *b) {
+    memset(&b->occupied, 0, sizeof(Bitboard256));
+    memset(&b->anchors, 0, sizeof(Bitboard256));
+    memset(&b->blanks, 0, sizeof(Bitboard256));
+    b->is_empty = true;
+
+    for (int r = 0; r < BOARD_SIZE; r++) {
+        for (int c = 0; c < BOARD_SIZE; c++) {
+            if (b->cells[r][c].tile != 0) {
+                b->is_empty = false;
+                bb_set(&b->occupied, r, c);
+                if (b->cells[r][c].is_blank) {
+                    bb_set(&b->blanks, r, c);
+                }
+            }
+        }
+    }
+
+    if (b->is_empty) {
+        bb_set(&b->anchors, 7, 7);
+        return;
+    }
+
+    int dr[4] = {-1, 1, 0, 0};
+    int dc[4] = {0, 0, -1, 1};
+    for (int r = 0; r < BOARD_SIZE; r++) {
+        for (int c = 0; c < BOARD_SIZE; c++) {
+            if (bb_test(&b->occupied, r, c)) {
+                for (int d = 0; d < 4; d++) {
+                    int nr = r + dr[d];
+                    int nc = c + dc[d];
+                    if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
+                        if (!bb_test(&b->occupied, nr, nc)) {
+                            bb_set(&b->anchors, nr, nc);
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -93,19 +163,8 @@ void board_print(const Board *b) {
 }
 
 bool board_is_anchor(const Board *b, int row, int col) {
-    if (b->cells[row][col].tile != 0) return false;
-
-    if (b->is_empty) {
-        return (row == 7 && col == 7);
-    }
-
-    /* Adjacent to an occupied cell */
-    if (row > 0 && b->cells[row - 1][col].tile != 0) return true;
-    if (row < BOARD_SIZE - 1 && b->cells[row + 1][col].tile != 0) return true;
-    if (col > 0 && b->cells[row][col - 1].tile != 0) return true;
-    if (col < BOARD_SIZE - 1 && b->cells[row][col + 1].tile != 0) return true;
-
-    return false;
+    if (row < 0 || row >= BOARD_SIZE || col < 0 || col >= BOARD_SIZE) return false;
+    return bb_test(&b->anchors, row, col);
 }
 
 /*
@@ -455,12 +514,31 @@ int board_score_move(const Board *b, const Dawg *dawg, const Move *move) {
 bool board_apply_move(Board *b, const Move *move) {
     if (move->type != MOVE_PLAY) return true;
 
+    int dr[4] = {-1, 1, 0, 0};
+    int dc[4] = {0, 0, -1, 1};
+
     for (int i = 0; i < move->num_placed; i++) {
         int r = move->placed[i].row;
         int c = move->placed[i].col;
         b->cells[r][c].tile = move->placed[i].letter;
         b->cells[r][c].is_blank = move->placed[i].is_blank;
         b->cells[r][c].mult = MULT_NONE; /* Multiplier is consumed */
+
+        bb_set(&b->occupied, r, c);
+        bb_clear(&b->anchors, r, c);
+        if (move->placed[i].is_blank) {
+            bb_set(&b->blanks, r, c);
+        }
+
+        for (int d = 0; d < 4; d++) {
+            int nr = r + dr[d];
+            int nc = c + dc[d];
+            if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
+                if (b->cells[nr][nc].tile == 0) {
+                    bb_set(&b->anchors, nr, nc);
+                }
+            }
+        }
     }
 
     b->is_empty = false;

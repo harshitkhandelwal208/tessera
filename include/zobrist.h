@@ -17,6 +17,9 @@ void zobrist_init(void);
 /* Computes 64-bit Zobrist hash of board */
 uint64_t zobrist_compute_board(const Board *board, int turn);
 
+/* Computes 64-bit Zobrist hash of a player's rack */
+uint64_t zobrist_compute_rack(const Rack *rack, int player_idx);
+
 /* Incremental update for a placed tile */
 uint64_t zobrist_update_tile(uint64_t hash, int row, int col, char letter, bool is_blank);
 

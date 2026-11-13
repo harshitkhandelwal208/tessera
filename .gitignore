@@ -1,27 +1,34 @@
 # Object files and build artifacts
 *.o
+*.so
 src/*.o
 tessera
+libtessera.so
 tests/test_dict
 tests/test_eval
 tests/test_movegen
 tests/test_lattice_proof
 tests/test_endgame
+tests/test_incremental_nnue
 test_dict
 test_eval
 test_movegen
 tools/match_benchmark
 tools/generate_dataset
 tools/train_nnue
+tools/quackle_benchmark
+tools/test_bingo_hunter
 
 # Python & caches
 __pycache__/
 *.pyc
 
 # Local data caches & training scratch
-data/train_data.bin
-data/test_data.bin
+data/train_data*.bin
+data/test_data*.bin
 data/nnue_backup.bin
+data/nnue_pre*.bin
+data/fresh_samples.bin
 data/*.log
 data/7bot_*.txt
 data/*_tournament.txt

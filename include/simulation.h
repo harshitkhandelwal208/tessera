@@ -19,6 +19,7 @@ typedef struct {
     bool use_palimpsest;        /* Whether evaluator rewrites itself mid-move */
     bool use_endgame_solver;    /* Exact playout solver when bag is empty */
     void *persistent_tracker;   /* Optional persistent BayesRackTracker across game turns */
+    int score_diff;             /* Live score differential (active_player - opponent) */
 } EngineConfig;
 
 typedef struct {
@@ -51,5 +52,8 @@ int sim_get_unseen_tiles(const Board *board, const Rack *player_rack, char unsee
 Move sim_find_best_move(const Board *board, const Dawg *dawg, const Rack *rack,
                         const TileBag *bag, void *unused_config,
                         MoveList *all_moves);
+
+/* Cleanup thread-local lattice memory */
+void simulation_cleanup(void);
 
 #endif /* SIMULATION_H */

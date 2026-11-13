@@ -216,6 +216,7 @@ void protocol_run_server_loop(const Dawg *dawg) {
 
             EngineConfig cfg;
             engine_config_default(&cfg);
+            cfg.score_diff = game.ai_score - game.player_score;
             EngineMetrics metrics;
 
             MoveList moves = {0};

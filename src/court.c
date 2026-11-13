@@ -44,10 +44,10 @@ CourtVerdict court_deliberate(const Lattice *lat, uint32_t root_idx) {
         return v;
     }
 
-    /* 1. Identify current empirical argmax: Edge 0 is default unless proven or deliberated better */
-    int argmax_idx = 0;
-    float max_q = root->edges[0].q_value;
-    for (int i = 1; i < root->num_edges; i++) {
+    /* 1. Identify current empirical argmax */
+    int argmax_idx = -1;
+    float max_q = -1e9f;
+    for (int i = 0; i < root->num_edges; i++) {
         uint32_t t = root->edges[i].target_node_idx;
         bool is_proven_win = (t > 0 && t < lat->num_nodes && lat->nodes[t].belief.is_proven && lat->nodes[t].belief.proof_sign < 0);
 
@@ -59,6 +59,9 @@ CourtVerdict court_deliberate(const Lattice *lat, uint32_t root_idx) {
             max_q = root->edges[i].q_value;
             argmax_idx = i;
         }
+    }
+    if (argmax_idx < 0) {
+        argmax_idx = 0; /* Fallback to prior best if no edges visited yet */
     }
     v.best_edge_idx = argmax_idx;
 
@@ -87,7 +90,7 @@ CourtVerdict court_deliberate(const Lattice *lat, uint32_t root_idx) {
         float best_sample_val = -100000.0f;
 
         for (int i = 0; i < n_edges; i++) {
-            if (i > 0 && root->edges[i].visits == 0) continue;
+            if (root->edges[i].visits == 0) continue;
             float sample = root->edges[i].q_value + (std_devs[i] * sample_standard_normal());
             if (sample > best_sample_val) {
                 best_sample_val = sample;

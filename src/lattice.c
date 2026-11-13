@@ -8,7 +8,12 @@
 #include <string.h>
 #include <math.h>
 
-#define INITIAL_PARENT_CAP 4
+static inline uint64_t tt_pack_data(uint32_t node_idx, uint16_t depth, uint8_t generation, uint8_t flags) {
+    return ((uint64_t)node_idx) |
+           (((uint64_t)depth) << 32) |
+           (((uint64_t)generation) << 48) |
+           (((uint64_t)flags) << 56);
+}
 
 Lattice* lattice_create(uint32_t capacity) {
     if (capacity < 1024) capacity = LATTICE_DEFAULT_CAPACITY;
@@ -16,6 +21,12 @@ Lattice* lattice_create(uint32_t capacity) {
     Lattice *lat = (Lattice*)calloc(1, sizeof(Lattice));
     lat->capacity = capacity;
     lat->nodes = (LatticeNode*)calloc(capacity, sizeof(LatticeNode));
+    lat->edge_pool_capacity = capacity * MAX_LATTICE_EDGES;
+    lat->edge_pool = (LatticeEdge*)calloc(lat->edge_pool_capacity, sizeof(LatticeEdge));
+    lat->clusters = (TTCluster*)aligned_alloc(64, TT_NUM_CLUSTERS * sizeof(TTCluster));
+    memset(lat->clusters, 0, TT_NUM_CLUSTERS * sizeof(TTCluster));
+    lat->search_generation = 1;
+    lat->num_edges_allocated = 0;
     lat->num_nodes = 1; /* Reserve index 0 as null/sentinel */
     lat->root_index = 0;
     lat->total_transpositions_merged = 0;
@@ -24,26 +35,20 @@ Lattice* lattice_create(uint32_t capacity) {
 
 void lattice_clear(Lattice *lat) {
     if (!lat) return;
-    for (uint32_t i = 1; i < lat->num_nodes; i++) {
-        if (lat->nodes[i].edges) {
-            free(lat->nodes[i].edges);
-            lat->nodes[i].edges = NULL;
-        }
-        if (lat->nodes[i].parent_indices) {
-            free(lat->nodes[i].parent_indices);
-            lat->nodes[i].parent_indices = NULL;
-        }
-    }
-    memset(lat->hash_buckets, 0, sizeof(lat->hash_buckets));
+    memset(lat->clusters, 0, TT_NUM_CLUSTERS * sizeof(TTCluster));
+    lat->search_generation++;
+    if (lat->search_generation == 0) lat->search_generation = 1;
     lat->num_nodes = 1;
+    lat->num_edges_allocated = 0;
     lat->root_index = 0;
     lat->total_transpositions_merged = 0;
 }
 
 void lattice_free(Lattice *lat) {
     if (!lat) return;
-    lattice_clear(lat);
     if (lat->nodes) free(lat->nodes);
+    if (lat->edge_pool) free(lat->edge_pool);
+    if (lat->clusters) free(lat->clusters);
     free(lat);
 }
 
@@ -53,55 +58,106 @@ static bool boards_equal(const Board *a, const Board *b) {
 
 uint32_t lattice_find_or_insert(Lattice *lat, const Board *board, int turn, bool *created) {
     uint64_t key = zobrist_compute_board(board, turn);
-    uint32_t bucket = (uint32_t)(key & (LATTICE_HASH_SIZE - 1));
+    uint32_t cluster_idx = (uint32_t)(key & (TT_NUM_CLUSTERS - 1));
 
-    /* Probe hash table */
-    for (uint32_t probe = 0; probe < LATTICE_HASH_SIZE; probe++) {
-        uint32_t idx = (bucket + probe) & (LATTICE_HASH_SIZE - 1);
-        uint32_t node_idx = lat->hash_buckets[idx];
+    /* Probe 64-byte primary cluster */
+    TTCluster *cl = &lat->clusters[cluster_idx];
+    TTEntry *best_victim = NULL;
+    int lowest_priority = 9999999;
 
-        if (node_idx == 0) {
-            /* Empty slot: insert new node */
-            if (lat->num_nodes >= lat->capacity) {
-                if (created) *created = false;
-                return 0; /* Lattice full */
-            }
-
-            uint32_t new_idx = lat->num_nodes++;
-            LatticeNode *n = &lat->nodes[new_idx];
-            memset(n, 0, sizeof(LatticeNode));
-            n->zobrist_key = key;
-            board_copy(&n->board, board);
-            n->turn = turn;
-
-            /* Default initial belief prior */
-            n->belief.mean = (turn == 1) ? BASELINE_OPP_SCORE : 0.0f;
-            n->belief.variance = 36.0f; /* Prior standard deviation ~6.0 pts */
-            n->belief.samples = 0;
-            n->belief.is_proven = false;
-            n->belief.proof_sign = 0;
-
-            n->raw_prior_mean = n->belief.mean;
-            n->raw_prior_var = 36.0f;
-
-            lat->hash_buckets[idx] = new_idx;
-            if (created) *created = true;
-            return new_idx;
+    for (int i = 0; i < TT_CLUSTER_SIZE; i++) {
+        TTEntry *e = &cl->entries[i];
+        if (e->node_idx == 0) {
+            if (!best_victim) best_victim = e;
+            continue;
         }
 
-        /* Check if match */
-        if (lat->nodes[node_idx].zobrist_key == key &&
-            lat->nodes[node_idx].turn == turn &&
-            boards_equal(&lat->nodes[node_idx].board, board)) {
-            /* Transposition hit! Merged by construction */
-            lat->total_transpositions_merged++;
-            if (created) *created = false;
-            return node_idx;
+        uint64_t data = tt_pack_data(e->node_idx, e->depth, e->generation, e->flags);
+        if ((e->key_xor_data ^ data) == key) {
+            uint32_t node_idx = e->node_idx;
+            if (node_idx < lat->num_nodes) {
+                LatticeNode *n = &lat->nodes[node_idx];
+                if (n->turn == turn && boards_equal(&n->board, board)) {
+                    /* Transposition hit! Merged by construction */
+                    lat->total_transpositions_merged++;
+                    e->generation = lat->search_generation;
+                    e->key_xor_data = key ^ tt_pack_data(e->node_idx, e->depth, e->generation, e->flags);
+                    if (created) *created = false;
+                    return node_idx;
+                }
+            }
+        }
+
+        int priority = (e->generation == lat->search_generation ? 1000 : 0) + e->depth;
+        if (priority < lowest_priority) {
+            lowest_priority = priority;
+            best_victim = e;
         }
     }
 
-    if (created) *created = false;
-    return 0;
+    /* Secondary probe: check adjacent cluster if primary cluster was completely full */
+    if (!best_victim || best_victim->node_idx != 0) {
+        TTCluster *cl2 = &lat->clusters[(cluster_idx + 1) & (TT_NUM_CLUSTERS - 1)];
+        for (int i = 0; i < TT_CLUSTER_SIZE; i++) {
+            TTEntry *e = &cl2->entries[i];
+            if (e->node_idx == 0) {
+                best_victim = e;
+                break;
+            }
+            uint64_t data = tt_pack_data(e->node_idx, e->depth, e->generation, e->flags);
+            if ((e->key_xor_data ^ data) == key) {
+                uint32_t node_idx = e->node_idx;
+                if (node_idx < lat->num_nodes) {
+                    LatticeNode *n = &lat->nodes[node_idx];
+                    if (n->turn == turn && boards_equal(&n->board, board)) {
+                        lat->total_transpositions_merged++;
+                        e->generation = lat->search_generation;
+                        e->key_xor_data = key ^ tt_pack_data(e->node_idx, e->depth, e->generation, e->flags);
+                        if (created) *created = false;
+                        return node_idx;
+                    }
+                }
+            }
+            int priority = (e->generation == lat->search_generation ? 1000 : 0) + e->depth;
+            if (priority < lowest_priority) {
+                lowest_priority = priority;
+                best_victim = e;
+            }
+        }
+    }
+
+    /* Insert new node into Lattice */
+    if (lat->num_nodes >= lat->capacity) {
+        if (created) *created = false;
+        return 0; /* Lattice full */
+    }
+
+    uint32_t new_idx = lat->num_nodes++;
+    LatticeNode *n = &lat->nodes[new_idx];
+    memset(n, 0, sizeof(LatticeNode));
+    n->zobrist_key = key;
+    board_copy(&n->board, board);
+    n->turn = turn;
+
+    /* Default initial belief prior */
+    n->belief.mean = (turn == 1) ? BASELINE_OPP_SCORE : 0.0f;
+    n->belief.variance = 36.0f;
+    n->belief.samples = 0;
+    n->belief.is_proven = false;
+    n->belief.proof_sign = 0;
+    n->raw_prior_mean = n->belief.mean;
+    n->raw_prior_var = 36.0f;
+
+    if (best_victim) {
+        best_victim->node_idx = new_idx;
+        best_victim->depth = 0;
+        best_victim->generation = lat->search_generation;
+        best_victim->flags = 0;
+        best_victim->key_xor_data = key ^ tt_pack_data(new_idx, 0, lat->search_generation, 0);
+    }
+
+    if (created) *created = true;
+    return new_idx;
 }
 
 void lattice_add_parent(Lattice *lat, uint32_t child_idx, uint32_t parent_idx) {
@@ -115,15 +171,9 @@ void lattice_add_parent(Lattice *lat, uint32_t child_idx, uint32_t parent_idx) {
         if (child->parent_indices[i] == parent_idx) return;
     }
 
-    if (child->num_parents >= child->parent_cap) {
-        uint16_t new_cap = child->parent_cap == 0 ? INITIAL_PARENT_CAP : child->parent_cap * 2;
-        uint32_t *new_arr = (uint32_t*)realloc(child->parent_indices, sizeof(uint32_t) * new_cap);
-        if (!new_arr) return;
-        child->parent_indices = new_arr;
-        child->parent_cap = new_cap;
+    if (child->num_parents < MAX_LATTICE_PARENTS) {
+        child->parent_indices[child->num_parents++] = parent_idx;
     }
-
-    child->parent_indices[child->num_parents++] = parent_idx;
 }
 
 void lattice_expand_node(Lattice *lat, uint32_t node_idx, const Dawg *dawg,
@@ -165,13 +215,25 @@ void lattice_expand_node(Lattice *lat, uint32_t node_idx, const Dawg *dawg,
         }
     }
 
-    /* Compute static equity for candidate moves */
+    /* Compute static equity for candidate moves with Stockfish HalfKP-style incremental accumulator */
+    NNUEAccumulator base_acc;
+    bool has_base_acc = false;
+    if (g_nnue.is_loaded) {
+        nnue_accumulator_build_base(&g_nnue, &node->board, rack, bag_count, lat->score_diff, &base_acc);
+        has_base_acc = true;
+    }
+
     for (int i = 0; i < all_moves.count; i++) {
         if (bag_count == 0 && all_moves.moves[i].num_placed == rack->count) {
             /* Outplay game-out: banked score + 2 * opponent rack value */
             all_moves.moves[i].leave_equity = (float)all_moves.moves[i].score + 2.0f * (float)opp_rack_val;
         } else {
-            float base_eq = eval_move_static_bucketed(&node->board, &all_moves.moves[i], bag_count);
+            float base_eq;
+            if (has_base_acc) {
+                base_eq = eval_move_static_incremental(&node->board, &all_moves.moves[i], &base_acc, bag_count, lat->score_diff);
+            } else {
+                base_eq = eval_move_static_with_score(&node->board, &all_moves.moves[i], bag_count, lat->score_diff);
+            }
             all_moves.moves[i].leave_equity = base_eq + palimpsest_bias;
         }
     }
@@ -181,7 +243,13 @@ void lattice_expand_node(Lattice *lat, uint32_t node_idx, const Dawg *dawg,
     if (num_candidates > MAX_LATTICE_EDGES) {
         num_candidates = MAX_LATTICE_EDGES;
     }
-    node->edges = (LatticeEdge*)calloc(num_candidates, sizeof(LatticeEdge));
+    if (lat->num_edges_allocated + num_candidates > lat->edge_pool_capacity) {
+        num_candidates = (lat->edge_pool_capacity > lat->num_edges_allocated) ?
+                         (lat->edge_pool_capacity - lat->num_edges_allocated) : 0;
+    }
+    node->edges = &lat->edge_pool[lat->num_edges_allocated];
+    lat->num_edges_allocated += (uint32_t)num_candidates;
+    memset(node->edges, 0, num_candidates * sizeof(LatticeEdge));
     node->num_edges = (uint16_t)num_candidates;
 
     /* Softmax priors over candidate static equities */

@@ -49,7 +49,7 @@ int main(int argc, char *argv[]) {
     Dawg *dawg = get_or_load_dawg();
 
     if (nnue_load(&g_nnue, "data/nnue.bin")) {
-        fprintf(stderr, "[INFO] Deep NNUE Evaluator loaded successfully (448->128->32->1, 246 KB)\n");
+        fprintf(stderr, "[INFO] Supercharged Deep NNUE Evaluator loaded successfully (768->256->64->Dual-Head, 853 KB)\n");
     } else {
         fprintf(stderr, "[INFO] NNUE model data/nnue.bin not found. Using hand-tuned Grandmaster Evaluator.\n");
     }

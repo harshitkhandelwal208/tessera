@@ -56,7 +56,7 @@ static void play_single_game(const Dawg *dawg, BotType opp_type, int game_idx,
 
     EngineConfig cfg;
     engine_config_default(&cfg);
-    cfg.max_deliberation_steps = 20;
+    cfg.max_deliberation_steps = 35;
 
     BayesRackTracker tracker;
     bayes_rack_init(&tracker);
@@ -65,6 +65,7 @@ static void play_single_game(const Dawg *dawg, BotType opp_type, int game_idx,
     while (consecutive_passes < 2) {
         if (turn == 0) {
             /* Tessera's turn */
+            cfg.score_diff = tessera_score - opp_score;
             Move best = lattice_search(&board, dawg, &tessera_rack, &bag, &cfg, NULL, NULL);
 
             if (best.type == MOVE_PLAY) {
@@ -179,7 +180,7 @@ int main(int argc, char **argv) {
     }
 
     if (nnue_load(&g_nnue, "data/nnue.bin")) {
-        printf("[INFO] Deep NNUE Evaluator loaded successfully (448->128->32->1, 246 KB)\n\n");
+        printf("[INFO] Supercharged Deep NNUE Evaluator loaded successfully (768->256->64->Dual-Head, 853 KB)\n\n");
     } else {
         printf("[INFO] NNUE model data/nnue.bin not found. Using hand-tuned Evaluator.\n\n");
     }

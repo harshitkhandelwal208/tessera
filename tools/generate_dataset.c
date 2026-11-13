@@ -3,6 +3,7 @@
 #include "movegen.h"
 #include "eval.h"
 #include "nnue.h"
+#include "bot_archetypes.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,7 +16,8 @@
 
 typedef struct {
     float features[NNUE_INPUT_DIM];
-    float target; /* Normalized residual equity in [-1.0, +1.0] */
+    float target;     /* Normalized residual equity in [-1.0, +1.0] */
+    float win_target; /* 1.0 = win, 0.0 = loss, 0.5 = tie */
 } TrainingSample;
 
 typedef struct {
@@ -25,10 +27,11 @@ typedef struct {
     int bag_count;
     int player; /* 0 = Player A, 1 = Player B */
     int score;
+    int score_diff; /* player - opponent before this move */
 } TurnRecord;
 
 static Move pick_selfplay_move(const Board *board, const Dawg *dawg, const Rack *rack,
-                               int bag_count, unsigned int *seed) {
+                               int bag_count, int score_diff, unsigned int *seed) {
     MoveList moves = {0};
     movegen_generate_all(board, dawg, rack, &moves);
 
@@ -40,11 +43,29 @@ static Move pick_selfplay_move(const Board *board, const Dawg *dawg, const Rack 
         return pass;
     }
 
-    /* Evaluate candidate moves */
+    /* Evaluate candidate moves with incremental accumulator */
+    NNUEAccumulator base_acc;
+    bool has_base_acc = false;
+    if (g_nnue.is_loaded) {
+        nnue_accumulator_build_base(&g_nnue, board, rack, bag_count, score_diff, &base_acc);
+        has_base_acc = true;
+    }
+
     for (int i = 0; i < moves.count; i++) {
-        moves.moves[i].leave_equity = eval_move_static_bucketed(board, &moves.moves[i], bag_count);
+        if (has_base_acc) {
+            moves.moves[i].leave_equity = eval_move_static_incremental(board, &moves.moves[i], &base_acc, bag_count, score_diff);
+        } else {
+            moves.moves[i].leave_equity = eval_move_static_with_score(board, &moves.moves[i], bag_count, score_diff);
+        }
     }
     eval_sort_moves(&moves);
+
+    /* Check exchange if initial play equity is poor */
+    Move ex_move;
+    if (eval_should_exchange(board, rack, bag_count, moves.moves[0].leave_equity, &ex_move)) {
+        move_list_destroy(&moves);
+        return ex_move;
+    }
 
     /* Epsilon-softmax exploration over top 6 candidate moves */
     int num_cands = moves.count < 6 ? moves.count : 6;
@@ -110,7 +131,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    clock_t start_time = clock();
+    double start_time = omp_get_wtime();
     long total_samples = 0;
 
     #pragma omp parallel
@@ -118,7 +139,7 @@ int main(int argc, char *argv[]) {
         int tid = omp_get_thread_num();
         unsigned int seed = (unsigned int)(1337 + tid * 10007 + time(NULL));
 
-        #pragma omp for schedule(dynamic, 64) reduction(+:total_samples)
+        #pragma omp for schedule(dynamic, 16) reduction(+:total_samples)
         for (int g = 0; g < num_games; g++) {
             Board board;
             board_init(&board);
@@ -138,6 +159,14 @@ int main(int argc, char *argv[]) {
             int turn_count = 0;
             int current_player = g % 2;
             int consecutive_passes = 0;
+            int cur_p0 = 0, cur_p1 = 0;
+
+            /* Strategically diverse training match distribution:
+             * 50% Pure Neural / Dual-Accumulator Self-Play with temperature exploration
+             * 25% Heuristic Grandmaster Static
+             * 25% High-Bonus Bingo Hunter */
+            int opp_mode = g % 4;
+            BotType opp_archetype = (opp_mode == 3) ? BOT_BINGO_HUNTER : BOT_HEURISTIC_STATIC;
 
             while (consecutive_passes < 2 && turn_count < MAX_GAME_TURNS) {
                 Rack *active_rack = &racks[current_player];
@@ -146,14 +175,23 @@ int main(int argc, char *argv[]) {
                 rec->rack = *active_rack;
                 rec->bag_count = bag.count;
                 rec->player = current_player;
+                rec->score_diff = (current_player == 0) ? (cur_p0 - cur_p1) : (cur_p1 - cur_p0);
 
-                Move m = pick_selfplay_move(&board, dawg, active_rack, bag.count, &seed);
+                Move m;
+                if (current_player == 0 || opp_mode <= 1) {
+                    m = pick_selfplay_move(&board, dawg, active_rack, bag.count, rec->score_diff, &seed);
+                } else {
+                    /* Opponent uses championship tournament archetype */
+                    m = bot_archetype_select_move(opp_archetype, &board, dawg, active_rack, bag.count);
+                }
                 rec->move = m;
                 rec->score = m.score;
 
                 if (m.type == MOVE_PLAY) {
                     consecutive_passes = 0;
                     board_apply_move(&board, &m);
+                    if (current_player == 0) cur_p0 += m.score;
+                    else cur_p1 += m.score;
 
                     for (int p = 0; p < m.num_placed; p++) {
                         char t = m.placed[p].is_blank ? '?' : m.placed[p].letter;
@@ -238,10 +276,20 @@ int main(int argc, char *argv[]) {
                 /* Calibrated TD-blended target: sharp tactical surplus (85%) + gentle game margin (15%) */
                 float blended_target = (0.85f * norm_immediate) + (0.15f * norm_margin);
 
-                nnue_extract_features(&turns[t].board_before, &turns[t].move,
-                                      &turns[t].rack, turns[t].bag_count,
-                                      local_samples[num_local].features);
+                /* Calibrated binary win outcome */
+                float win_target = 0.5f;
+                if (turns[t].player == 0) {
+                    win_target = (p0_score > p1_score) ? 1.0f : ((p0_score < p1_score) ? 0.0f : 0.5f);
+                } else {
+                    win_target = (p1_score > p0_score) ? 1.0f : ((p1_score < p0_score) ? 0.0f : 0.5f);
+                }
+
+                nnue_extract_features_with_score(&turns[t].board_before, &turns[t].move,
+                                                 &turns[t].rack, turns[t].bag_count,
+                                                 turns[t].score_diff,
+                                                 local_samples[num_local].features);
                 local_samples[num_local].target = blended_target;
+                local_samples[num_local].win_target = win_target;
                 num_local++;
             }
 
@@ -259,7 +307,7 @@ int main(int argc, char *argv[]) {
     fclose(fout);
     dawg_free(dawg);
 
-    double elapsed_s = (double)(clock() - start_time) / (double)CLOCKS_PER_SEC;
+    double elapsed_s = omp_get_wtime() - start_time;
     printf("\n>>> Self-play data generation complete!\n");
     printf("  Total Samples Generated: %ld\n", total_samples);
     printf("  Dataset File Size:        %.2f MB\n", (double)(total_samples * sizeof(TrainingSample)) / (1024.0 * 1024.0));

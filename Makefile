@@ -1,24 +1,35 @@
 CC = gcc
-CFLAGS = -O3 -march=native -flto -Wall -Wextra -std=c11 -Iinclude
+CFLAGS = -O3 -march=native -fPIC -flto -Wall -Wextra -std=c11 -Iinclude
 LDFLAGS = -flto -lm
 OMP_CFLAGS = -O3 -march=native -fopenmp -Wall -Wextra -std=c11 -Iinclude
 OMP_LDFLAGS = -fopenmp -lm
 
-SRCS = src/dict.c src/board.c src/movegen.c src/eval.c src/nnue.c src/zobrist.c src/palimpsest.c src/lattice.c src/settle.c src/broker.c src/court.c src/simulation.c src/protocol.c src/endgame.c src/bayes_rack.c src/bot_archetypes.c
+CXX = g++
+CXXFLAGS = -O3 -march=native -std=c++17 -pthread -I/tmp/quackle -Iinclude
+QUACKLE_LIB = /tmp/quackle/build/libquackle.a /tmp/quackle/test/trademarkedboards.cpp -lpthread -lm
+
+SRCS = src/dict.c src/board.c src/movegen.c src/eval.c src/nnue.c src/zobrist.c src/palimpsest.c src/lattice.c src/settle.c src/broker.c src/court.c src/simulation.c src/protocol.c src/endgame.c src/bayes_rack.c src/bot_archetypes.c src/quackle_bridge.c
 OBJS = $(SRCS:.c=.o)
 TARGET = tessera
 
 TEST_SRCS = $(wildcard tests/*.c)
 TEST_BINS = $(TEST_SRCS:.c=)
 
-.PHONY: all clean test bench match-bench dataset train zig zig-test zig-bench zig-cross
+.PHONY: all clean test bench match-bench dataset train zig zig-test zig-bench zig-cross lib
 
-all: $(TARGET)
+all: $(TARGET) lib
+
+lib: libtessera.so
+
+libtessera.so: $(OBJS)
+	$(CC) -shared $(OBJS) -o $@ $(LDFLAGS)
 
 $(TARGET): $(OBJS) src/main.o
 	$(CC) $(OBJS) src/main.o -o $@ $(LDFLAGS)
 
-%.o: %.c
+HEADERS = $(wildcard include/*.h)
+
+%.o: %.c $(HEADERS)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 test: $(TARGET) $(TEST_BINS)
@@ -26,6 +37,7 @@ test: $(TARGET) $(TEST_BINS)
 	@./tests/test_dict
 	@./tests/test_movegen
 	@./tests/test_eval
+	@./tests/test_incremental_nnue
 	@./tests/test_lattice_proof
 	@./tests/test_endgame
 	@echo "All tests passed successfully!"
@@ -66,5 +78,8 @@ zig-bench:
 zig-cross:
 	@./tools/cross_compile.sh
 
+tools/quackle_benchmark: tools/quackle_benchmark.cpp $(OBJS)
+	$(CXX) $(CXXFLAGS) $< $(OBJS) $(QUACKLE_LIB) -o $@
+
 clean:
-	rm -rf src/*.o tests/*.o tools/match_benchmark tools/generate_dataset tools/train_nnue $(TARGET) tests/test_dict tests/test_movegen tests/test_eval tests/test_lattice_proof tests/test_endgame .zig-cache zig-out dist
+	rm -rf src/*.o tests/*.o tools/match_benchmark tools/generate_dataset tools/train_nnue tools/quackle_benchmark $(TARGET) libtessera.so tests/test_dict tests/test_movegen tests/test_eval tests/test_incremental_nnue tests/test_lattice_proof tests/test_endgame .zig-cache zig-out dist

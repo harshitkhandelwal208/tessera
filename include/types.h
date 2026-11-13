@@ -48,34 +48,35 @@ typedef struct {
     int count;
 } Rack;
 
-/* Single placed tile in a move */
+/* Single placed tile in a move - compact 4-byte footprint */
 typedef struct {
-    int row;
-    int col;
+    uint8_t row;        /* 0..14 */
+    uint8_t col;        /* 0..14 */
     char letter;        /* The letter displayed ('A'-'Z') */
     bool is_blank;      /* True if played using a blank tile */
 } PlacedTile;
 
-/* Move description */
+/* Move description - packed to fit compact cache boundaries */
 typedef struct {
-    MoveType type;
-    Direction dir;
-    int row;            /* Start row (0-14) */
-    int col;            /* Start col (0-14) */
-    char word[MAX_WORD_LEN + 1]; /* Full word formed in primary direction */
-    PlacedTile placed[RACK_CAPACITY];
-    int num_placed;
-    int score;          /* Points earned on this turn */
-    char leave[RACK_CAPACITY + 1]; /* Remaining tiles in rack */
-    float leave_equity; /* Heuristic leave value */
-    float sim_equity;   /* Monte Carlo simulated net equity */
+    float leave_equity;          /* Heuristic leave value: 4 bytes */
+    float sim_equity;            /* Monte Carlo simulated net equity: 4 bytes */
+    int score;                   /* Points earned on this turn: 4 bytes */
+    int num_placed;              /* Number of placed tiles: 4 bytes */
+    MoveType type;               /* Move type: 4 bytes */
+    Direction dir;               /* Direction: 4 bytes */
+    int row;                     /* Start row (0-14): 4 bytes */
+    int col;                     /* Start col (0-14): 4 bytes */
+    char word[MAX_WORD_LEN + 1]; /* Full word formed in primary direction: 16 bytes */
+    PlacedTile placed[RACK_CAPACITY]; /* 7 * 4 = 28 bytes */
+    char leave[RACK_CAPACITY + 1]; /* Remaining tiles in rack: 8 bytes */
 } Move;
 
-/* Dynamic move list (moves are never capped; dynamically resized if needed) */
+/* Dynamic move list (arena-backed zero-allocation search or heap-backed) */
 typedef struct {
     Move *moves;
     int count;
     int capacity;
+    int arena_slot;              /* 0 if heap-allocated, >0 if thread-local arena */
 } MoveList;
 
 /* Bag of tiles */

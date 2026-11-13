@@ -4,10 +4,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdalign.h>
 
-#define ENDGAME_TT_SIZE 32768
+#define ENDGAME_TT_CLUSTERS    8192 /* 8,192 * 64 bytes = 512 KB (L2 cache friendly) */
+#define ENDGAME_TT_CLUSTER_SIZE 4
 #define ENDGAME_INF 100000
-#define MAX_ENDGAME_DEPTH 8
+#define MAX_ENDGAME_DEPTH 14
 
 typedef enum {
     TT_EXACT = 0,
@@ -15,36 +17,48 @@ typedef enum {
     TT_UPPER = 2
 } TTFlag;
 
+/* 16-byte packed Transposition Table entry with Zobrist XOR verification */
 typedef struct {
-    uint64_t key;
-    int depth;
-    int value;
-    TTFlag flag;
-    Move best_move;
+    uint64_t key_xor_data;
+    int16_t  value;
+    int8_t   depth;
+    uint8_t  flag;
+    uint32_t generation;
 } EndgameTTEntry;
 
+/* Exactly 64-byte cluster (1 CPU cacheline) containing 4 entries */
 typedef struct {
-    EndgameTTEntry tt[ENDGAME_TT_SIZE];
+    alignas(64) EndgameTTEntry entries[ENDGAME_TT_CLUSTER_SIZE];
+} EndgameTTCluster;
+
+typedef struct {
+    EndgameTTCluster tt[ENDGAME_TT_CLUSTERS];
     bool initialized;
     MoveList moves_pool[MAX_ENDGAME_DEPTH + 2];
     int solve_count;
+    uint32_t generation;
+    Move root_best_move;
 } EndgameThreadContext;
 
 static _Thread_local EndgameThreadContext g_endgame_ctx;
 
+static inline uint64_t endgame_pack_data(int16_t value, int8_t depth, uint8_t flag, uint32_t generation) {
+    return ((uint64_t)(uint16_t)value) |
+           (((uint64_t)(uint8_t)depth) << 16) |
+           (((uint64_t)flag) << 24) |
+           (((uint64_t)generation) << 32);
+}
+
 static void endgame_tt_clear(void) {
     memset(g_endgame_ctx.tt, 0, sizeof(g_endgame_ctx.tt));
     g_endgame_ctx.initialized = true;
+    g_endgame_ctx.generation = 1;
 }
 
 static uint64_t compute_endgame_key(const Board *board, const Rack *r1, const Rack *r2, int turn) {
     uint64_t k = zobrist_compute_board(board, turn);
-    for (int i = 0; i < r1->count; i++) {
-        k ^= (uint64_t)r1->tiles[i] * 1000003UL;
-    }
-    for (int i = 0; i < r2->count; i++) {
-        k ^= (uint64_t)r2->tiles[i] * 3000017UL;
-    }
+    k ^= zobrist_compute_rack(r1, 0);
+    k ^= zobrist_compute_rack(r2, 1);
     return k;
 }
 
@@ -93,17 +107,37 @@ static int negamax_dag(const Board *board, const Dawg *dawg,
     }
 
     uint64_t key = compute_endgame_key(board, my_rack, opp_rack, depth % 2);
-    uint32_t tt_idx = (uint32_t)(key & (ENDGAME_TT_SIZE - 1));
-    EndgameTTEntry *entry = &g_endgame_ctx.tt[tt_idx];
+    uint32_t cluster_idx = (uint32_t)(key & (ENDGAME_TT_CLUSTERS - 1));
+    EndgameTTCluster *cl = &g_endgame_ctx.tt[cluster_idx];
+    EndgameTTEntry *victim = &cl->entries[0];
+    int lowest_depth = 999;
 
-    if (entry->key == key && entry->depth >= (MAX_ENDGAME_DEPTH - depth)) {
-        if (entry->flag == TT_EXACT) {
-            if (out_best && depth == 0) *out_best = entry->best_move;
-            return entry->value;
-        } else if (entry->flag == TT_LOWER && entry->value >= beta) {
-            return entry->value;
-        } else if (entry->flag == TT_UPPER && entry->value <= alpha) {
-            return entry->value;
+    for (int i = 0; i < ENDGAME_TT_CLUSTER_SIZE; i++) {
+        EndgameTTEntry *e = &cl->entries[i];
+        if (e->generation == 0) {
+            victim = e;
+            break;
+        }
+        uint64_t data = endgame_pack_data(e->value, e->depth, e->flag, e->generation);
+        if ((e->key_xor_data ^ data) == key) {
+            if (e->depth >= (MAX_ENDGAME_DEPTH - depth)) {
+                if (e->flag == TT_EXACT) {
+                    if (out_best && depth == 0) *out_best = g_endgame_ctx.root_best_move;
+                    return e->value;
+                } else if (e->flag == TT_LOWER && e->value >= beta) {
+                    return e->value;
+                } else if (e->flag == TT_UPPER && e->value <= alpha) {
+                    return e->value;
+                }
+            }
+            victim = e;
+            break;
+        }
+
+        int prio = (e->generation != g_endgame_ctx.generation ? 0 : 100) + e->depth;
+        if (prio < lowest_depth) {
+            lowest_depth = prio;
+            victim = e;
         }
     }
 
@@ -122,17 +156,29 @@ static int negamax_dag(const Board *board, const Dawg *dawg,
         return score;
     }
 
-    /* Sort moves by score descending for optimal alpha-beta pruning */
+    /* Move ordering: prioritize moves that empty the rack (instant outplay), then by score */
+    for (int i = 0; i < moves->count; i++) {
+        if (moves->moves[i].num_placed == my_rack->count) {
+            moves->moves[i].score += (2 * opp_rack_val); /* Temporary sort boost for outplay */
+        }
+    }
     if (moves->count > 1) {
         qsort(moves->moves, moves->count, sizeof(Move), compare_moves_desc);
+    }
+    for (int i = 0; i < moves->count; i++) {
+        if (moves->moves[i].num_placed == my_rack->count) {
+            moves->moves[i].score -= (2 * opp_rack_val); /* Restore actual score */
+        }
     }
 
     int best_score = -ENDGAME_INF;
     Move best_move = moves->moves[0];
     int orig_alpha = alpha;
 
-    /* Search beam: inspect up to 16 best candidate plays in endgame */
-    int beam = moves->count < 16 ? moves->count : 16;
+    /* Dynamic search beam: thorough at root/low depth, focused at deeper plies */
+    int beam = moves->count;
+    int max_beam = (depth == 0) ? 64 : (depth <= 2 ? 40 : 24);
+    if (beam > max_beam) beam = max_beam;
 
     for (int i = 0; i < beam; i++) {
         Move *m = &moves->moves[i];
@@ -172,21 +218,24 @@ static int negamax_dag(const Board *board, const Dawg *dawg,
         if (alpha >= beta) break; /* Beta cutoff */
     }
 
-    /* Transposition DAG entry update */
-    entry->key = key;
-    entry->depth = MAX_ENDGAME_DEPTH - depth;
-    entry->value = best_score;
-    entry->best_move = best_move;
+    /* Transposition DAG entry update with Zobrist XOR verification */
+    uint8_t flag = TT_EXACT;
     if (best_score <= orig_alpha) {
-        entry->flag = TT_UPPER;
+        flag = TT_UPPER;
     } else if (best_score >= beta) {
-        entry->flag = TT_LOWER;
-    } else {
-        entry->flag = TT_EXACT;
+        flag = TT_LOWER;
     }
 
-    if (out_best && depth == 0) {
-        *out_best = best_move;
+    int8_t entry_depth = (int8_t)(MAX_ENDGAME_DEPTH - depth);
+    victim->value = (int16_t)best_score;
+    victim->depth = entry_depth;
+    victim->flag = flag;
+    victim->generation = g_endgame_ctx.generation;
+    victim->key_xor_data = key ^ endgame_pack_data((int16_t)best_score, entry_depth, flag, g_endgame_ctx.generation);
+
+    if (depth == 0) {
+        g_endgame_ctx.root_best_move = best_move;
+        if (out_best) *out_best = best_move;
     }
 
     return best_score;

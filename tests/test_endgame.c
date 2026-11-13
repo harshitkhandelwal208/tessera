@@ -60,6 +60,14 @@ int main(void) {
     /* Check that solving is sub-millisecond */
     assert(elapsed_ms < 50.0);
 
+    /* Test duplicate letters on rack: e.g. "EER" vs "QI" (previously could collide due to XOR cancellation) */
+    Rack dup_rack;
+    init_rack_str(&dup_rack, "EER");
+    solved = endgame_solve_exact(&board, dawg, &dup_rack, &opp_rack, &best_move, &net_margin);
+    assert(solved);
+    assert(best_move.type == MOVE_PLAY);
+    printf("  Duplicate-tile endgame solved! Move: %s, Margin: %+d\n", best_move.word, net_margin);
+
     printf("[TEST] Endgame DAG solver test PASSED flawlessly!\n");
 
     endgame_cleanup();

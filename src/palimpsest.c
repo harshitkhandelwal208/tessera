@@ -40,18 +40,9 @@ int palimpsest_classify(const Rack *rack, const Board *board) {
     if (vowels > 7) vowels = 7;
     if (heavies > 3) heavies = 3;
 
-    /* 2. Board Openness (0..3) */
-    int occupied_count = 0;
-    int tw_open_count = 0;
-    for (int r = 0; r < BOARD_SIZE; r++) {
-        for (int c = 0; c < BOARD_SIZE; c++) {
-            if (board->cells[r][c].tile != 0) {
-                occupied_count++;
-            } else if (board_get_multiplier(r, c) == MULT_TW && board_is_anchor(board, r, c)) {
-                tw_open_count++;
-            }
-        }
-    }
+    /* 2. Board Openness (0..3) using bitboards */
+    int occupied_count = bb_popcount(&board->occupied);
+    int tw_open_count = bb_popcount_and(&board->anchors, &BB_TW);
 
     int openness = 0;
     if (occupied_count < 10) openness = 0;       /* Opening phase */

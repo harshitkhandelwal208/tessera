@@ -173,18 +173,8 @@ PhaseBucket eval_classify_phase(int bag_count) {
 }
 
 OpennessBucket eval_classify_openness(const Board *board) {
-    int occupied = 0;
-    int tw_exposed = 0;
-
-    for (int r = 0; r < BOARD_SIZE; r++) {
-        for (int c = 0; c < BOARD_SIZE; c++) {
-            if (board->cells[r][c].tile != 0) {
-                occupied++;
-            } else if (board_get_multiplier(r, c) == MULT_TW && board_is_anchor(board, r, c)) {
-                tw_exposed++;
-            }
-        }
-    }
+    int occupied = bb_popcount(&board->occupied);
+    int tw_exposed = bb_popcount_and(&board->anchors, &BB_TW);
 
     if (occupied < 8) return OPENNESS_CLOSED;
     if (tw_exposed >= 3) return OPENNESS_WIDE;
@@ -197,72 +187,231 @@ static bool is_vowel_c(char c) {
     return (c == 'A' || c == 'E' || c == 'I' || c == 'O' || c == 'U');
 }
 
+typedef struct {
+    const char *stem;
+    float value;
+} StemBonus;
+
+static int compare_stem(const void *key, const void *elem) {
+    const char *k = (const char *)key;
+    const StemBonus *sb = (const StemBonus *)elem;
+    return strcmp(k, sb->stem);
+}
+
+/* 6-letter top championship bingo stems (sorted alphabetically for bsearch) */
+static const StemBonus STEMS_6[] = {
+    {"AAERST", 19.0f},
+    {"ABENRT", 18.5f},
+    {"ACENRT", 20.5f},
+    {"ACERST", 21.0f},
+    {"ACEIST", 19.5f},
+    {"ADEINR", 22.0f},
+    {"ADEINT", 22.5f},
+    {"ADEIRS", 23.0f},
+    {"ADEIRT", 22.5f},
+    {"ADEIST", 22.0f},
+    {"ADENRS", 24.0f},
+    {"ADENRT", 23.5f},
+    {"ADENST", 23.0f},
+    {"ADERST", 23.0f},
+    {"AEGINR", 21.0f},
+    {"AEGINS", 21.5f},
+    {"AEGIST", 19.5f},
+    {"AEGNRT", 20.5f},
+    {"AEILNR", 23.0f},
+    {"AEILNS", 22.5f},
+    {"AEILNT", 23.0f},
+    {"AEILRS", 22.5f},
+    {"AEILRT", 23.5f},
+    {"AEILST", 23.0f},
+    {"AEIMNR", 20.5f},
+    {"AEIMNT", 20.5f},
+    {"AEIMRS", 20.5f},
+    {"AEIMST", 20.0f},
+    {"AEINPR", 21.5f},
+    {"AEINPT", 21.0f},
+    {"AEINRS", 28.0f},
+    {"AEINRT", 29.5f},
+    {"AEINST", 30.5f}, /* SATINE / TISANE */
+    {"AEIPRS", 21.0f},
+    {"AEIPRT", 21.5f},
+    {"AEIPST", 20.5f},
+    {"AEIRRS", 20.0f},
+    {"AEIRRT", 20.5f},
+    {"AEIRST", 26.5f},
+    {"AELNRT", 22.5f},
+    {"AELNST", 22.0f},
+    {"AELRST", 25.0f},
+    {"AEMORT", 18.0f},
+    {"AENORT", 22.0f},
+    {"AENRST", 25.5f},
+    {"AEOPRS", 19.5f},
+    {"AEORRS", 19.0f},
+    {"AEORST", 24.5f},
+    {"AGINRS", 22.0f},
+    {"AGINRT", 21.5f},
+    {"AGINST", 21.5f},
+    {"AINRST", 22.5f},
+    {"CEINRS", 20.5f},
+    {"CEINRT", 21.0f},
+    {"CEINST", 20.5f},
+    {"DEINRS", 22.5f},
+    {"DEINRT", 22.5f},
+    {"DEINST", 22.0f},
+    {"EEINRS", 23.0f},
+    {"EEINRT", 23.5f},
+    {"EEINST", 24.0f},
+    {"EILNRT", 21.5f},
+    {"EILNST", 21.0f},
+    {"EILRST", 22.5f},
+    {"EIMNRT", 20.0f},
+    {"EINORT", 21.0f},
+    {"EINPRT", 20.5f},
+    {"EINRST", 27.0f},
+    {"EIORST", 22.0f},
+    {"ENORST", 22.0f}
+};
+
+/* 5-letter top championship bingo stems (sorted alphabetically for bsearch) */
+static const StemBonus STEMS_5[] = {
+    {"ACEIN", 12.0f},
+    {"ACERS", 12.5f},
+    {"ACERT", 12.5f},
+    {"ADEIN", 13.0f},
+    {"ADEIR", 13.5f},
+    {"ADEIS", 13.5f},
+    {"ADEIT", 13.5f},
+    {"ADERS", 14.0f},
+    {"AEINR", 15.5f},
+    {"AEINS", 15.5f},
+    {"AEINT", 15.5f},
+    {"AEIRS", 16.5f},
+    {"AEIRT", 16.5f},
+    {"AELRT", 14.5f},
+    {"AELST", 14.5f},
+    {"AENRS", 16.0f},
+    {"AENST", 16.0f},
+    {"AEORS", 14.0f},
+    {"AEORT", 14.0f},
+    {"AEPRS", 12.5f},
+    {"AEPRT", 12.5f},
+    {"AERST", 18.0f},
+    {"AGIN",  10.5f},
+    {"AGINS", 13.5f},
+    {"AGIRT", 12.0f},
+    {"AINRS", 14.0f},
+    {"AINST", 14.5f},
+    {"DENRS", 13.5f},
+    {"EGIRT", 13.0f},
+    {"EGNST", 13.0f},
+    {"EILRS", 14.0f},
+    {"EILRT", 14.0f},
+    {"EILST", 14.0f},
+    {"EINRS", 17.0f},
+    {"EINRT", 16.0f},
+    {"EINST", 17.5f},
+    {"EIRST", 15.0f},
+    {"ELNST", 14.0f},
+    {"ENORT", 14.0f},
+    {"ENOST", 13.5f},
+    {"ENRST", 15.5f},
+    {"EORST", 14.5f},
+    {"INRST", 15.0f}
+};
+
+/* 4-letter top cores (sorted alphabetically for bsearch) */
+static const StemBonus STEMS_4[] = {
+    {"ACER",  7.5f},
+    {"ACES",  7.5f},
+    {"ACET",  7.5f},
+    {"AEIN",  9.5f},
+    {"AEIR",  9.5f},
+    {"AEIS",  9.5f},
+    {"AEIT",  9.5f},
+    {"AERS", 10.5f},
+    {"AERT", 10.0f},
+    {"AEST", 10.5f},
+    {"AIRS",  9.5f},
+    {"AIST",  9.0f},
+    {"ANST",  9.0f},
+    {"APER",  7.5f},
+    {"APES",  7.5f},
+    {"APET",  7.5f},
+    {"DERS",  8.0f},
+    {"DEST",  8.0f},
+    {"EINT",  9.5f},
+    {"EINR",  9.5f},
+    {"EINS", 10.0f},
+    {"EIRS", 10.5f},
+    {"ELRT",  8.5f},
+    {"ELST",  8.5f},
+    {"ENRS",  9.0f},
+    {"ENST", 10.0f},
+    {"EORS",  8.5f},
+    {"EORT",  8.5f},
+    {"ERST", 11.5f},
+    {"INRS",  9.0f},
+    {"INRT",  9.0f},
+    {"INST",  9.5f},
+    {"IRST",  9.5f},
+    {"LNST",  8.0f},
+    {"NRST",  8.5f},
+    {"ORST",  8.5f}
+};
+
+/* 3-letter top cores (sorted alphabetically for bsearch) */
+static const StemBonus STEMS_3[] = {
+    {"AER",  4.5f},
+    {"AES",  4.5f},
+    {"AET",  4.5f},
+    {"AIR",  3.8f},
+    {"AIS",  3.8f},
+    {"AIT",  3.8f},
+    {"EIN",  4.0f},
+    {"EIR",  4.0f},
+    {"EIS",  4.0f},
+    {"EIT",  4.0f},
+    {"ENT",  4.0f},
+    {"ERS",  5.5f},
+    {"EST",  5.0f},
+    {"ING",  4.8f},
+    {"INR",  3.8f},
+    {"INS",  3.8f},
+    {"INT",  4.0f},
+    {"LRT",  3.5f},
+    {"LST",  3.5f},
+    {"NST",  3.5f},
+    {"RST",  5.0f},
+    {"SIN",  4.0f},
+    {"TIN",  4.0f}
+};
+
 /*
  * Higher-Order Super-Leave & Stem Recognition:
- * Matches sorted leave substrings against top championship bingo stems.
+ * Binary searches sorted leave substrings against championship bingo stems.
  */
 static float eval_super_leave_stems(const char *sorted_leave, int len) {
     if (len < 3 || len > 6) return 0.0f;
 
-    /* 6-letter legendary bingo stems */
     if (len == 6) {
-        if (strcmp(sorted_leave, "AEINST") == 0) return 30.5f; /* SATINE / TISANE */
-        if (strcmp(sorted_leave, "AEINRT") == 0) return 29.5f; /* RETINA / RETAIN */
-        if (strcmp(sorted_leave, "ADENRS") == 0) return 24.0f; /* SNARED */
-        if (strcmp(sorted_leave, "AELRST") == 0) return 25.0f; /* TALERS */
-        if (strcmp(sorted_leave, "AEORST") == 0) return 24.5f; /* AORTES */
-        if (strcmp(sorted_leave, "ADEIRS") == 0) return 23.0f; /* RAISED */
-        if (strcmp(sorted_leave, "EINRST") == 0) return 27.0f; /* INTERS */
-        if (strcmp(sorted_leave, "AEIRST") == 0) return 26.5f; /* AISTER */
-        return 0.0f;
+        StemBonus *found = (StemBonus*)bsearch(sorted_leave, STEMS_6, sizeof(STEMS_6)/sizeof(STEMS_6[0]),
+                                               sizeof(StemBonus), compare_stem);
+        return found ? (found->value * 0.15f) : 0.0f;
     }
-
-    /* 5-letter top bingo stems */
     if (len == 5) {
-        if (strcmp(sorted_leave, "AERST") == 0) return 18.0f;
-        if (strcmp(sorted_leave, "EINST") == 0) return 17.5f;
-        if (strcmp(sorted_leave, "EINRS") == 0) return 17.0f;
-        if (strcmp(sorted_leave, "AEIRT") == 0) return 16.5f;
-        if (strcmp(sorted_leave, "AEIRS") == 0) return 16.5f;
-        if (strcmp(sorted_leave, "AENST") == 0) return 16.0f;
-        if (strcmp(sorted_leave, "AEINS") == 0) return 15.5f;
-        if (strcmp(sorted_leave, "AELST") == 0) return 14.5f;
-        if (strcmp(sorted_leave, "AELRT") == 0) return 14.5f;
-        if (strcmp(sorted_leave, "ADERS") == 0) return 14.0f;
-        if (strcmp(sorted_leave, "ELNST") == 0) return 14.0f;
-        if (strcmp(sorted_leave, "AINST") == 0) return 14.5f;
-        return 0.0f;
+        StemBonus *found = (StemBonus*)bsearch(sorted_leave, STEMS_5, sizeof(STEMS_5)/sizeof(STEMS_5[0]),
+                                               sizeof(StemBonus), compare_stem);
+        return found ? (found->value * 0.15f) : 0.0f;
     }
-
-    /* 4-letter top cores */
     if (len == 4) {
-        if (strcmp(sorted_leave, "ERST") == 0) return 11.5f;
-        if (strcmp(sorted_leave, "AERT") == 0) return 10.0f;
-        if (strcmp(sorted_leave, "AERS") == 0) return 10.5f;
-        if (strcmp(sorted_leave, "AEST") == 0) return 10.5f;
-        if (strcmp(sorted_leave, "EINS") == 0) return 10.0f;
-        if (strcmp(sorted_leave, "EIRS") == 0) return 10.5f;
-        if (strcmp(sorted_leave, "ENST") == 0) return 10.0f;
-        if (strcmp(sorted_leave, "INST") == 0) return 9.5f;
-        if (strcmp(sorted_leave, "AIRS") == 0) return 9.5f;
-        if (strcmp(sorted_leave, "ANST") == 0) return 9.0f;
-        if (strcmp(sorted_leave, "ELST") == 0) return 8.5f;
-        if (strcmp(sorted_leave, "DERS") == 0) return 8.0f;
-        return 0.0f;
+        StemBonus *found = (StemBonus*)bsearch(sorted_leave, STEMS_4, sizeof(STEMS_4)/sizeof(STEMS_4[0]),
+                                               sizeof(StemBonus), compare_stem);
+        return found ? (found->value * 0.15f) : 0.0f;
     }
-
-    /* 3-letter top cores */
     if (len == 3) {
-        if (strcmp(sorted_leave, "ERS") == 0) return 5.5f;
-        if (strcmp(sorted_leave, "ING") == 0) return 4.5f;
-        if (strcmp(sorted_leave, "EST") == 0) return 5.0f;
-        if (strcmp(sorted_leave, "RST") == 0) return 5.0f;
-        if (strcmp(sorted_leave, "AER") == 0) return 4.5f;
-        if (strcmp(sorted_leave, "AES") == 0) return 4.5f;
-        if (strcmp(sorted_leave, "ENT") == 0) return 4.0f;
-        if (strcmp(sorted_leave, "INT") == 0) return 4.0f;
-        if (strcmp(sorted_leave, "TIN") == 0) return 4.0f;
-        return 0.0f;
+        StemBonus *found = (StemBonus*)bsearch(sorted_leave, STEMS_3, sizeof(STEMS_3)/sizeof(STEMS_3[0]),
+                                               sizeof(StemBonus), compare_stem);
+        return found ? (found->value * 0.15f) : 0.0f;
     }
 
     return 0.0f;
@@ -350,6 +499,23 @@ float eval_rack_leave_bucketed(const char *leave, PhaseBucket phase) {
     if (counts['I' - 'A'] > 2) equity -= (counts['I' - 'A'] - 2) * 5.5f;
     if (counts['O' - 'A'] > 2) equity -= (counts['O' - 'A'] - 2) * 5.0f;
     if (counts['U' - 'A'] > 1) equity -= (counts['U' - 'A'] - 1) * 4.0f;
+
+    /* Duplicate S penalties (1 S is golden; 2 S is slightly redundant; 3+ S is toxic) */
+    if (counts['S' - 'A'] == 2) equity -= 2.5f;
+    else if (counts['S' - 'A'] == 3) equity -= 18.0f;
+    else if (counts['S' - 'A'] >= 4) equity -= 35.0f;
+
+    /* Duplicate consonant penalties across other consonants */
+    const char dupe_cons[] = "BCDFGHJKLMNPRTVWYZ";
+    for (size_t dc = 0; dc < sizeof(dupe_cons) - 1; dc++) {
+        int c_idx = dupe_cons[dc] - 'A';
+        if (counts[c_idx] >= 2) {
+            equity -= (counts[c_idx] - 1) * 3.5f;
+        }
+        if (counts[c_idx] >= 3) {
+            equity -= 10.0f;
+        }
+    }
 
     /* Double V / W / J / Q / Z devastating rack penalties */
     if (counts['V' - 'A'] >= 2) equity -= 8.0f; /* Combined with diagonal: total ~ -20 pts */
@@ -442,12 +608,46 @@ float eval_board_risk_bucketed(const Board *board, const Move *move, OpennessBuc
     return risk;
 }
 
+float eval_win_probability(int score_diff, int bag_count) {
+    float spread_std = 15.0f + 0.40f * (float)bag_count;
+    float z = (float)score_diff / spread_std;
+    return 1.0f / (1.0f + expf(-z));
+}
+
+float eval_score_margin_risk_multiplier(int score_diff) {
+    if (score_diff >= 60) return 2.2f;   /* Heavy lead: maximum defense */
+    if (score_diff >= 30) return 1.6f;   /* Moderate lead: conservative */
+    if (score_diff >= 10) return 1.2f;
+    if (score_diff <= -60) return 0.35f; /* Heavy deficit: aggressive offense */
+    if (score_diff <= -30) return 0.55f; /* Moderate deficit: open board */
+    if (score_diff <= -10) return 0.80f;
+    return 1.0f;                         /* Close game: balanced */
+}
+
+float eval_board_risk_with_score(const Board *board, const Move *move, OpennessBucket openness, int score_diff) {
+    float base_risk = eval_board_risk_bucketed(board, move, openness);
+    float mult = eval_score_margin_risk_multiplier(score_diff);
+    return base_risk * mult;
+}
+
+float eval_rack_leave_bucketed_with_score(const char *leave, PhaseBucket phase, int score_diff) {
+    float eq = eval_rack_leave_bucketed(leave, phase);
+    /* Trailing: amplify stem/bingo retention for comeback */
+    if (score_diff <= -30 && eq > 10.0f) {
+        eq *= 1.25f;
+    } else if (score_diff >= 40 && eq > 15.0f) {
+        /* Leading: slight discount on speculative bingo stems in favor of immediate score */
+        eq *= 0.90f;
+    }
+    return eq;
+}
+
 float eval_board_risk(const Board *board, const Move *move) {
     OpennessBucket open = eval_classify_openness(board);
     return eval_board_risk_bucketed(board, move, open);
 }
 
-DualAccumulator eval_move_accumulate(const Board *board, const Move *move, int bag_count) {
+DualAccumulator eval_move_accumulate_with_score(const Board *board, const Move *move, int bag_count, int score_diff) {
     DualAccumulator acc;
     acc.board_acc = 0.0f;
     acc.rack_acc = 0.0f;
@@ -458,17 +658,19 @@ DualAccumulator eval_move_accumulate(const Board *board, const Move *move, int b
     PhaseBucket phase = eval_classify_phase(bag_count);
     OpennessBucket openness = eval_classify_openness(board);
 
-    /* Hand-tuned Grandmaster Heuristic: board risk + 8-phase rack leave tables */
-    float board_risk = eval_board_risk_bucketed(board, move, openness);
-    float rack_leave = eval_rack_leave_bucketed(move->leave, phase);
+    /* Hand-tuned Grandmaster Heuristic: board risk + 8-phase rack leave tables with score context */
+    float board_risk = eval_board_risk_with_score(board, move, openness, score_diff);
+    float rack_leave = eval_rack_leave_bucketed_with_score(move->leave, phase, score_diff);
     float hand_equity = (float)move->score + board_risk + (0.85f * rack_leave);
 
     /* If NNUE is loaded, combine Hand-Tuned Heuristic and Deep NNUE into a hybrid ensemble */
     if (g_nnue.is_loaded) {
-        float nnue_val = nnue_evaluate_move(&g_nnue, board, move, NULL, bag_count);
-        float hybrid = (0.50f * hand_equity) + (0.50f * nnue_val);
-        acc.board_acc = (float)move->score + (0.50f * board_risk);
-        acc.rack_acc = hybrid - acc.board_acc;
+        alignas(64) float features[NNUE_INPUT_DIM];
+        nnue_extract_features_with_score(board, move, NULL, bag_count, score_diff, features);
+        float nnue_pred = nnue_forward(&g_nnue, features);
+        float hybrid = hand_equity + (0.30f * nnue_pred);
+        acc.board_acc = (float)move->score + board_risk;
+        acc.rack_acc = (0.85f * rack_leave) + (0.30f * nnue_pred);
         acc.net_equity = hybrid;
         return acc;
     }
@@ -477,6 +679,47 @@ DualAccumulator eval_move_accumulate(const Board *board, const Move *move, int b
     acc.rack_acc = rack_leave;
     acc.net_equity = hand_equity;
     return acc;
+}
+
+DualAccumulator eval_move_accumulate(const Board *board, const Move *move, int bag_count) {
+    return eval_move_accumulate_with_score(board, move, bag_count, 0);
+}
+
+DualAccumulator eval_move_accumulate_with_score_incremental(const Board *board, const Move *move,
+                                                           const NNUEAccumulator *base_acc,
+                                                           int bag_count, int score_diff) {
+    DualAccumulator acc = {0};
+    if (move->type != MOVE_PLAY) return acc;
+
+    PhaseBucket phase = eval_classify_phase(bag_count);
+    OpennessBucket openness = eval_classify_openness(board);
+
+    float board_risk = eval_board_risk_with_score(board, move, openness, score_diff);
+    float rack_leave = eval_rack_leave_bucketed_with_score(move->leave, phase, score_diff);
+    float hand_equity = (float)move->score + board_risk + (0.85f * rack_leave);
+
+    if (g_nnue.is_loaded && base_acc) {
+        float nnue_pred = nnue_forward_move_incremental(&g_nnue, base_acc, board, move, bag_count, score_diff);
+        float hybrid = hand_equity + (0.30f * nnue_pred);
+        acc.board_acc = (float)move->score + board_risk;
+        acc.rack_acc = (0.85f * rack_leave) + (0.30f * nnue_pred);
+        acc.net_equity = hybrid;
+        return acc;
+    }
+
+    return eval_move_accumulate_with_score(board, move, bag_count, score_diff);
+}
+
+float eval_move_static_incremental(const Board *board, const Move *move,
+                                  const NNUEAccumulator *base_acc,
+                                  int bag_count, int score_diff) {
+    DualAccumulator acc = eval_move_accumulate_with_score_incremental(board, move, base_acc, bag_count, score_diff);
+    return acc.net_equity;
+}
+
+float eval_move_static_with_score(const Board *board, const Move *move, int bag_count, int score_diff) {
+    DualAccumulator acc = eval_move_accumulate_with_score(board, move, bag_count, score_diff);
+    return acc.net_equity;
 }
 
 float eval_move_static_bucketed(const Board *board, const Move *move, int bag_count) {

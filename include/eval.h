@@ -4,6 +4,7 @@
 #include "types.h"
 #include "board.h"
 #include "dict.h"
+#include "nnue.h"
 
 /* 8 Game-Phase Buckets (inspired by Reckless bucketing) */
 typedef enum {
@@ -43,6 +44,7 @@ const char*    eval_openness_name(OpennessBucket openness);
  * Evaluates the rack leave equity with 8 phase buckets, pairwise synergy kernels,
  * higher-order super-leave stem tables, and duplicate/toxic tile penalties.
  */
+float eval_rack_leave_bucketed_with_score(const char *leave, PhaseBucket phase, int score_diff);
 float eval_rack_leave_bucketed(const char *leave, PhaseBucket phase);
 float eval_rack_leave(const char *leave);
 float eval_move_heuristic_fast(const Board *board, const Move *move, int bag_count);
@@ -52,13 +54,28 @@ float eval_move_heuristic_fast(const Board *board, const Move *move, int bag_cou
  * Evaluates premium capture, defensive risk, and floating vowel vulnerability.
  */
 float eval_board_risk_bucketed(const Board *board, const Move *move, OpennessBucket openness);
+float eval_board_risk_with_score(const Board *board, const Move *move, OpennessBucket openness, int score_diff);
 float eval_board_risk(const Board *board, const Move *move);
+
+/*
+ * Tournament Win Probability and Score Margin Controls:
+ */
+float eval_win_probability(int score_diff, int bag_count);
+float eval_score_margin_risk_multiplier(int score_diff);
 
 /*
  * Dual-Accumulator Move Evaluation:
  * Computes the total static evaluation of a candidate move.
  */
+DualAccumulator eval_move_accumulate_with_score(const Board *board, const Move *move, int bag_count, int score_diff);
+DualAccumulator eval_move_accumulate_with_score_incremental(const Board *board, const Move *move,
+                                                           const NNUEAccumulator *base_acc,
+                                                           int bag_count, int score_diff);
 DualAccumulator eval_move_accumulate(const Board *board, const Move *move, int bag_count);
+float eval_move_static_with_score(const Board *board, const Move *move, int bag_count, int score_diff);
+float eval_move_static_incremental(const Board *board, const Move *move,
+                                  const NNUEAccumulator *base_acc,
+                                  int bag_count, int score_diff);
 float eval_move_static_bucketed(const Board *board, const Move *move, int bag_count);
 float eval_move_static(const Board *board, const Move *move);
 

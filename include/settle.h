@@ -7,8 +7,8 @@
 #include "palimpsest.h"
 
 #define SETTLE_EPS 0.05f     /* Minimum belief change to enqueue parents */
-#define SETTLE_GAMMA 0.35f   /* Calibrated defensive counterplay discount factor */
-#define BASELINE_OPP_SCORE 26.0f /* Expected average opponent counterplay equity */
+#define SETTLE_GAMMA 0.70f   /* Balanced defensive counterplay discount factor */
+#define BASELINE_OPP_SCORE 31.0f /* Expected average opponent counterplay equity */
 #define DIRTY_QUEUE_CAPACITY 8192
 
 typedef struct {

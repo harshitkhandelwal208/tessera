@@ -12,7 +12,7 @@ static const char *BOT_NAMES[BOT_TYPE_COUNT] = {
     "Defensive Turtler",
     "Bingo Hunter",
     "Heuristic Grandmaster",
-    "Neural Static (448-dim NNUE)",
+    "Neural Static (768-dim NNUE)",
     "Quackle Simulation",
     "MAGPIE (2-Ply Realization)"
 };
@@ -169,7 +169,7 @@ static Move select_heuristic_move(const Board *board, const Dawg *dawg, const Ra
     return result;
 }
 
-/* 5. Neural Static Bot (Raw 448-dim NNUE 1-ply) */
+/* 5. Neural Static Bot (Raw 768-dim NNUE 1-ply) */
 static Move select_neural_static_move(const Board *board, const Dawg *dawg, const Rack *rack, int bag_count) {
     MoveList moves = {0};
     movegen_generate_all(board, dawg, rack, &moves);
@@ -183,7 +183,12 @@ static Move select_neural_static_move(const Board *board, const Dawg *dawg, cons
     float best_eq = -10000.0f;
     int best_idx = 0;
     for (int i = 0; i < moves.count; i++) {
-        float eq = eval_move_static_bucketed(board, &moves.moves[i], bag_count);
+        float eq = 0.0f;
+        if (g_nnue.is_loaded) {
+            eq = nnue_evaluate_move(&g_nnue, board, &moves.moves[i], rack, bag_count);
+        } else {
+            eq = eval_move_static_bucketed(board, &moves.moves[i], bag_count);
+        }
         if (eq > best_eq) {
             best_eq = eq;
             best_idx = i;

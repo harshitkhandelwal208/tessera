@@ -58,36 +58,46 @@ void bayes_rack_update_unseen(BayesRackTracker *tracker, const Board *board, con
 }
 
 void bayes_rack_observe_opponent(BayesRackTracker *tracker, const Board *board_before, const Move *opp_move) {
-    (void)board_before;
     if (!opp_move) return;
 
     if (opp_move->type == MOVE_PASS || opp_move->type == MOVE_EXCHANGE) {
         /* Opponent exchanged or passed: high likelihood of clunky/heavy consonants */
         int heavy_tiles[] = {'Q' - 'A', 'Z' - 'A', 'X' - 'A', 'J' - 'A', 'V' - 'A', 'W' - 'A'};
         for (size_t i = 0; i < sizeof(heavy_tiles)/sizeof(heavy_tiles[0]); i++) {
-            tracker->tile_weights[heavy_tiles[i]] = fminf(3.5f, tracker->tile_weights[heavy_tiles[i]] * 1.35f);
+            tracker->tile_weights[heavy_tiles[i]] = fminf(4.0f, tracker->tile_weights[heavy_tiles[i]] * 1.50f);
         }
         /* Lower probability of holding a blank or S */
-        tracker->tile_weights[26] = fmaxf(0.2f, tracker->tile_weights[26] * 0.50f);
-        tracker->tile_weights['S' - 'A'] = fmaxf(0.3f, tracker->tile_weights['S' - 'A'] * 0.65f);
+        tracker->tile_weights[26] = fmaxf(0.15f, tracker->tile_weights[26] * 0.40f);
+        tracker->tile_weights['S' - 'A'] = fmaxf(0.25f, tracker->tile_weights['S' - 'A'] * 0.55f);
         return;
     }
 
     if (opp_move->type == MOVE_PLAY) {
-        /* If opponent played a low scoring play (< 22 pts), discount power tiles */
-        if (opp_move->score < 22 && opp_move->num_placed <= 3) {
-            tracker->tile_weights['Q' - 'A'] = fmaxf(0.25f, tracker->tile_weights['Q' - 'A'] * 0.70f);
-            tracker->tile_weights['Z' - 'A'] = fmaxf(0.30f, tracker->tile_weights['Z' - 'A'] * 0.75f);
-            tracker->tile_weights['X' - 'A'] = fmaxf(0.30f, tracker->tile_weights['X' - 'A'] * 0.75f);
-            tracker->tile_weights[26]        = fmaxf(0.35f, tracker->tile_weights[26] * 0.80f);
-            /* Increase likelihood of holding stem consonants (saving for bingo) */
-            tracker->tile_weights['R' - 'A'] = fminf(2.5f, tracker->tile_weights['R' - 'A'] * 1.15f);
-            tracker->tile_weights['S' - 'A'] = fminf(2.5f, tracker->tile_weights['S' - 'A'] * 1.20f);
-            tracker->tile_weights['T' - 'A'] = fminf(2.5f, tracker->tile_weights['T' - 'A'] * 1.15f);
+        /* Check board openness before the opponent's play using bitboards */
+        int open_tw = board_before ? bb_popcount_and(&board_before->anchors, &BB_TW) : 0;
+
+        /* If opponent played a low scoring play (< 24 pts) with <= 3 tiles */
+        if (opp_move->score < 24 && opp_move->num_placed <= 3) {
+            /* If an open TW hotspot existed and opponent didn't use it, power tiles are highly improbable */
+            float discount = (open_tw > 0) ? 0.50f : 0.70f;
+            tracker->tile_weights['Q' - 'A'] = fmaxf(0.15f, tracker->tile_weights['Q' - 'A'] * discount);
+            tracker->tile_weights['Z' - 'A'] = fmaxf(0.20f, tracker->tile_weights['Z' - 'A'] * discount);
+            tracker->tile_weights['X' - 'A'] = fmaxf(0.20f, tracker->tile_weights['X' - 'A'] * discount);
+            tracker->tile_weights['J' - 'A'] = fmaxf(0.25f, tracker->tile_weights['J' - 'A'] * discount);
+            tracker->tile_weights[26]        = fmaxf(0.25f, tracker->tile_weights[26] * discount);
+
+            /* Increase likelihood of holding stem consonants (preserving a 4-5 tile bingo stem) */
+            tracker->tile_weights['E' - 'A'] = fminf(2.5f, tracker->tile_weights['E' - 'A'] * 1.15f);
+            tracker->tile_weights['R' - 'A'] = fminf(2.5f, tracker->tile_weights['R' - 'A'] * 1.20f);
+            tracker->tile_weights['S' - 'A'] = fminf(2.5f, tracker->tile_weights['S' - 'A'] * 1.25f);
+            tracker->tile_weights['T' - 'A'] = fminf(2.5f, tracker->tile_weights['T' - 'A'] * 1.20f);
+            tracker->tile_weights['I' - 'A'] = fminf(2.5f, tracker->tile_weights['I' - 'A'] * 1.15f);
+            tracker->tile_weights['N' - 'A'] = fminf(2.5f, tracker->tile_weights['N' - 'A'] * 1.15f);
+            tracker->tile_weights['A' - 'A'] = fminf(2.5f, tracker->tile_weights['A' - 'A'] * 1.15f);
         } else if (opp_move->score >= 45 || opp_move->num_placed >= 6) {
             /* High scoring or bingo: opponent expended key assets, reset to uniform */
             for (int i = 0; i < NUM_DISTINCT_TILES; i++) {
-                tracker->tile_weights[i] = (tracker->tile_weights[i] * 0.5f) + 0.5f;
+                tracker->tile_weights[i] = (tracker->tile_weights[i] * 0.4f) + 0.6f;
             }
         }
     }

@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdalign.h>
 #include "types.h"
 #include "board.h"
 #include "dict.h"
@@ -10,8 +11,28 @@
 #include "palimpsest.h"
 
 #define LATTICE_DEFAULT_CAPACITY 32768
-#define LATTICE_HASH_SIZE        65536 /* Power of 2 */
+#define TT_CLUSTER_SIZE          4
+#define TT_NUM_CLUSTERS          16384 /* 16,384 clusters * 64 bytes = 1 MB cacheline-aligned TT */
 #define MAX_LATTICE_EDGES        24    /* Pruned candidate beam per node */
+#define MAX_LATTICE_PARENTS      8     /* Embedded parent capacity for zero allocations */
+
+/*
+ * 16-byte Transposition Table entry with Zobrist XOR verification (Stockfish-style)
+ */
+typedef struct {
+    uint64_t key_xor_data; /* Zobrist key XOR'd with packed metadata */
+    uint32_t node_idx;     /* 1-based node index into lat->nodes (0 = empty) */
+    uint16_t depth;        /* Subtree depth / sample count */
+    uint8_t  generation;   /* Replacement epoch */
+    uint8_t  flags;        /* Bound/proof flags */
+} TTEntry;
+
+/*
+ * Exactly 64-byte cluster (1 CPU cacheline) containing 4 TT entries
+ */
+typedef struct {
+    alignas(64) TTEntry entries[TT_CLUSTER_SIZE];
+} TTCluster;
 
 /* Distributional belief object: Gaussian belief + variance + proof certificate */
 typedef struct {
@@ -46,10 +67,9 @@ typedef struct {
     uint16_t num_edges;
     bool is_expanded;
 
-    /* Parent back-pointers for prioritized dirty relaxation */
-    uint32_t *parent_indices;
+    /* Embedded parent back-pointers for zero-allocation prioritized relaxation */
+    uint32_t parent_indices[MAX_LATTICE_PARENTS];
     uint16_t num_parents;
-    uint16_t parent_cap;
 
     uint32_t settle_generation;
 } LatticeNode;
@@ -59,9 +79,16 @@ typedef struct {
     uint32_t num_nodes;
     uint32_t capacity;
 
-    uint32_t hash_buckets[LATTICE_HASH_SIZE]; /* Key -> node index (1-based, 0 = empty) */
+    /* Pre-allocated edge pool for zero-allocation node expansion */
+    LatticeEdge *edge_pool;
+    uint32_t num_edges_allocated;
+    uint32_t edge_pool_capacity;
+
+    TTCluster *clusters;
+    uint8_t   search_generation;
     uint32_t root_index;
     uint32_t total_transpositions_merged;
+    int score_diff; /* Live score margin for game-theoretic modulation */
 } Lattice;
 
 Lattice* lattice_create(uint32_t capacity);

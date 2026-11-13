@@ -14,12 +14,22 @@
 #include <math.h>
 #include <time.h>
 
+static _Thread_local Lattice *s_reusable_lattice = NULL;
+
+void simulation_cleanup(void) {
+    if (s_reusable_lattice) {
+        lattice_free(s_reusable_lattice);
+        s_reusable_lattice = NULL;
+    }
+}
+
 void engine_config_default(EngineConfig *config) {
     config->max_deliberation_steps = 45;
     config->confidence_bar = 0.98f;
     config->use_palimpsest = true;
     config->use_endgame_solver = true;
     config->persistent_tracker = NULL;
+    config->score_diff = 0;
 }
 
 int sim_get_unseen_tiles(const Board *board, const Rack *player_rack, char unseen[100]) {
@@ -77,8 +87,13 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
 
     int bag_remaining = bag ? bag->count : 50;
 
-    /* 1. Initialize lattice components */
-    Lattice *lat = lattice_create(16384);
+    /* 1. Initialize lattice components (zero allocations: reuse thread-local pre-allocated lattice) */
+    if (!s_reusable_lattice) {
+        s_reusable_lattice = lattice_create(16384);
+    }
+    Lattice *lat = s_reusable_lattice;
+    lattice_clear(lat);
+    lat->score_diff = cfg.score_diff;
     DirtyQueue dq;
     dirty_queue_init(&dq);
     Palimpsest palimpsest;
@@ -96,7 +111,6 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
 
     /* Handle pass or exchange if no moves */
     if (root->num_edges == 0) {
-        lattice_free(lat);
         Move ex_move;
         if (eval_should_exchange(board, rack, bag_remaining, 0.0f, &ex_move)) {
             return ex_move;
@@ -109,10 +123,9 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
 
     /* Check if exchange is superior to best initial play */
     Move ex_move;
-    float best_play_static_equity = eval_move_static_bucketed(board, &root->edges[0].move, bag_remaining);
+    float best_play_static_equity = eval_move_static_with_score(board, &root->edges[0].move, bag_remaining, cfg.score_diff);
     if (eval_should_exchange(board, rack, bag_remaining,
                             best_play_static_equity, &ex_move)) {
-        lattice_free(lat);
         return ex_move;
     }
 
@@ -130,14 +143,11 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
         int net_margin = 0;
         if (endgame_solve_exact(board, dawg, rack, &exact_opp_rack, &endgame_move, &net_margin)) {
             if (endgame_move.type == MOVE_PLAY || endgame_move.type == MOVE_PASS) {
-                lattice_free(lat);
                 endgame_move.leave_equity = (float)net_margin;
                 endgame_move.sim_equity = (float)net_margin;
                 if (all_moves) {
                     if (!all_moves->moves || all_moves->capacity < 1) {
-                        int cap = INITIAL_MOVE_CAPACITY;
-                        all_moves->moves = (Move*)realloc(all_moves->moves, sizeof(Move) * cap);
-                        all_moves->capacity = cap;
+                        move_list_init(all_moves);
                     }
                     all_moves->count = 1;
                     all_moves->moves[0] = endgame_move;
@@ -167,8 +177,24 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
     CourtVerdict verdict = court_deliberate(lat, root_idx);
 
     /* --- LATTICE SETTLING DELIBERATION LOOP WITH ADAPTIVE BANDIT COUNTERPLAY --- */
-    int top_k = root->num_edges < 10 ? root->num_edges : 10;
+    int top_k = root->num_edges < 16 ? root->num_edges : 16;
     int max_steps = cfg.max_deliberation_steps;
+
+    /* Base opponent expectation given board phase (points) */
+    float base_opp_score = 31.0f;
+    if (bag_remaining >= 60) base_opp_score = 33.0f;
+    else if (bag_remaining <= 15) base_opp_score = 24.0f;
+
+    /* Risk weights modulated by live score differential */
+    float opp_weight = 0.75f;
+    float real_weight = 0.65f;
+    if (cfg.score_diff >= 30) {
+        opp_weight = 0.90f;   /* When leading, prioritize defense */
+        real_weight = 0.50f;
+    } else if (cfg.score_diff <= -30) {
+        opp_weight = 0.55f;   /* When trailing, prioritize offensive realization */
+        real_weight = 0.85f;
+    }
 
     for (int step = 0; step < max_steps && (step < 6 || !verdict.should_adjourn); step++) {
         /* Dynamically extend deliberation up to 15 steps if decision is closely contested */
@@ -194,7 +220,7 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
         bool active[MAX_LATTICE_EDGES];
         int num_active = 0;
         for (int k = 0; k < top_k; k++) {
-            if (step < 4 || root->edges[k].q_value >= best_active_q - 8.0f) {
+            if (step < 4 || root->edges[k].q_value >= best_active_q - 10.0f) {
                 active[k] = true;
                 num_active++;
             } else {
@@ -248,7 +274,7 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
             }
         }
 
-        float mean_opp = num_active > 0 ? (sum_opp / (float)num_active) : 26.0f;
+        float mean_opp = num_active > 0 ? (sum_opp / (float)num_active) : base_opp_score;
         float mean_realized = num_active > 0 ? (sum_realized / (float)num_active) : 26.0f;
 
         for (int k = 0; k < top_k; k++) {
@@ -257,19 +283,23 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
             uint32_t c_idx = root->edges[k].target_node_idx;
             if (c_idx > 0 && c_idx < lat->num_nodes) {
                 LatticeNode *leaf = &lat->nodes[c_idx];
-                /* Combined paired differential:
-                 * (mean_opp - opp_scores[k]): Positive when opponent scores less on our board
-                 * 0.65f * (realized_scores[k] - mean_realized): Positive when our rack leave realizes higher score
+                /*
+                 * Combined Paired Differential:
+                 * rel_def: paired relative defense (mean_opp - opp_scores[k])
+                 * abs_def: absolute defense vs baseline (base_opp_score - opp_scores[k])
+                 * real_delta: active player turn-2 realization surplus
                  */
-                float def_delta = mean_opp - opp_scores[k];
+                float rel_def = mean_opp - opp_scores[k];
+                float abs_def = base_opp_score - opp_scores[k];
+                float def_delta = (0.60f * rel_def) + (0.40f * abs_def);
                 float real_delta = realized_scores[k] - mean_realized;
-                float combined_delta = def_delta + (0.65f * real_delta);
+                float combined_delta = (opp_weight * def_delta) + (real_weight * real_delta);
 
                 leaf->belief.samples++;
                 leaf->defensive_delta = (leaf->defensive_delta * (float)(leaf->belief.samples - 1) + combined_delta) / (float)leaf->belief.samples;
 
                 float var_reduction = 36.0f / (1.0f + 0.3f * (float)leaf->belief.samples);
-                leaf->belief.variance = fmaxf(4.0f, var_reduction);
+                leaf->belief.variance = fmaxf(3.0f, var_reduction);
 
                 for (int p = 0; p < leaf->num_parents; p++) {
                     dirty_queue_push_unique(&dq, lat, leaf->parent_indices[p], fmaxf(1.0f, fabsf(combined_delta)), 1);
@@ -303,9 +333,7 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
     /* 4. Extract candidates into all_moves */
     if (all_moves) {
         if (!all_moves->moves || all_moves->capacity < root->num_edges) {
-            int new_cap = root->num_edges > INITIAL_MOVE_CAPACITY ? root->num_edges : INITIAL_MOVE_CAPACITY;
-            all_moves->moves = (Move*)realloc(all_moves->moves, sizeof(Move) * new_cap);
-            all_moves->capacity = new_cap;
+            move_list_init(all_moves);
         }
         all_moves->count = root->num_edges;
         for (int i = 0; i < root->num_edges; i++) {
@@ -333,7 +361,6 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
         metrics->deliberation_ms = elapsed_ms;
     }
 
-    lattice_free(lat);
     return best_move;
 }
 

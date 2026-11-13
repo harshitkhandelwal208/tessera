@@ -1,16 +1,18 @@
 #include "nnue.h"
 #include "eval.h"
+#include "simulation.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include <ctype.h>
 #include <stdalign.h>
-#if defined(__AVX2__)
+#if defined(__AVX2__) || defined(__AVX512F__)
 #include <immintrin.h>
 #endif
 
 NNUEModel g_nnue = {0};
+NNUEQuantizedModel g_nnue_quantized = {0};
 
 /* Random float in [-limit, +limit] */
 static float rand_uniform(float limit) {
@@ -45,6 +47,82 @@ void nnue_init_random(NNUEModel *model) {
     model->b3 = 0.0f;
     model->b_win = 0.0f;
     model->is_loaded = true;
+
+    for (int i = 0; i < NNUE_INPUT_DIM; i++) {
+        for (int o = 0; o < NNUE_L1_DIM; o++) {
+            model->w1_by_feature[i][o] = model->w1[o * NNUE_INPUT_DIM + i];
+        }
+    }
+
+    nnue_quantize(model, &g_nnue_quantized);
+}
+
+void nnue_quantize(const NNUEModel *src, NNUEQuantizedModel *dst) {
+    if (!src || !src->is_loaded || !dst) return;
+    memset(dst, 0, sizeof(NNUEQuantizedModel));
+
+    /* Find max absolute weight for L1 */
+    float max_w1 = 1e-6f;
+    for (int i = 0; i < NNUE_L1_DIM * NNUE_INPUT_DIM; i++) {
+        float a = fabsf(src->w1[i]);
+        if (a > max_w1) max_w1 = a;
+    }
+    dst->scale1 = 127.0f / max_w1;
+
+    for (int i = 0; i < NNUE_L1_DIM * NNUE_INPUT_DIM; i++) {
+        int val = (int)roundf(src->w1[i] * dst->scale1);
+        if (val > 127) val = 127;
+        if (val < -127) val = -127;
+        dst->w1[i] = (int8_t)val;
+    }
+    for (int i = 0; i < NNUE_L1_DIM; i++) {
+        int val = (int)roundf(src->b1[i] * dst->scale1);
+        if (val > 32767) val = 32767;
+        if (val < -32767) val = -32767;
+        dst->b1[i] = (int16_t)val;
+    }
+
+    for (int i = 0; i < NNUE_INPUT_DIM; i++) {
+        for (int o = 0; o < NNUE_L1_DIM; o++) {
+            dst->w1_by_feature[i][o] = dst->w1[o * NNUE_INPUT_DIM + i];
+        }
+    }
+
+    /* Find max absolute weight for L2 */
+    float max_w2 = 1e-6f;
+    for (int i = 0; i < NNUE_L2_DIM * NNUE_L1_DIM; i++) {
+        float a = fabsf(src->w2[i]);
+        if (a > max_w2) max_w2 = a;
+    }
+    dst->scale2 = 127.0f / max_w2;
+
+    for (int i = 0; i < NNUE_L2_DIM * NNUE_L1_DIM; i++) {
+        int val = (int)roundf(src->w2[i] * dst->scale2);
+        if (val > 127) val = 127;
+        if (val < -127) val = -127;
+        dst->w2[i] = (int8_t)val;
+    }
+    for (int i = 0; i < NNUE_L2_DIM; i++) {
+        int val = (int)roundf(src->b2[i] * dst->scale2);
+        if (val > 32767) val = 32767;
+        if (val < -32767) val = -32767;
+        dst->b2[i] = (int16_t)val;
+    }
+
+    /* Score head weights */
+    float max_w3 = 1e-6f;
+    for (int i = 0; i < NNUE_L2_DIM; i++) {
+        float a = fabsf(src->w3[i]);
+        if (a > max_w3) max_w3 = a;
+    }
+    dst->scale3 = 512.0f / max_w3;
+    for (int i = 0; i < NNUE_L2_DIM; i++) {
+        dst->w3[i] = (int16_t)roundf(src->w3[i] * dst->scale3);
+        dst->w_win[i] = (int16_t)roundf(src->w_win[i] * dst->scale3);
+    }
+    dst->b3 = (int16_t)roundf(src->b3 * dst->scale3);
+    dst->b_win = (int16_t)roundf(src->b_win * dst->scale3);
+    dst->is_loaded = true;
 }
 
 bool nnue_save(const NNUEModel *model, const char *filepath) {
@@ -99,7 +177,6 @@ bool nnue_load(NNUEModel *model, const char *filepath) {
     size_t r4 = fread(model->b2, sizeof(float), NNUE_L2_DIM, f);
     size_t r5 = fread(model->w3, sizeof(float), NNUE_L2_DIM, f);
     size_t r6 = fread(&model->b3, sizeof(float), 1, f);
-
     size_t r7 = fread(model->w_win, sizeof(float), NNUE_L2_DIM, f);
     size_t r8 = fread(&model->b_win, sizeof(float), 1, f);
 
@@ -107,19 +184,17 @@ bool nnue_load(NNUEModel *model, const char *filepath) {
 
     if (r1 != NNUE_L1_DIM * NNUE_INPUT_DIM || r2 != NNUE_L1_DIM ||
         r3 != NNUE_L2_DIM * NNUE_L1_DIM || r4 != NNUE_L2_DIM ||
-        r5 != NNUE_L2_DIM || r6 != 1) {
+        r5 != NNUE_L2_DIM || r6 != 1 || r7 != NNUE_L2_DIM || r8 != 1) {
         return false;
     }
 
-    /* Fallback if file doesn't have dual head */
-    if (r7 != NNUE_L2_DIM || r8 != 1) {
-        for (int i = 0; i < NNUE_L2_DIM; i++) {
-            model->w_win[i] = model->w3[i] * 1.5f;
-        }
-        model->b_win = model->b3;
-    }
-
     model->is_loaded = true;
+    for (int i = 0; i < NNUE_INPUT_DIM; i++) {
+        for (int o = 0; o < NNUE_L1_DIM; o++) {
+            model->w1_by_feature[i][o] = model->w1[o * NNUE_INPUT_DIM + i];
+        }
+    }
+    nnue_quantize(model, &g_nnue_quantized);
     return true;
 }
 
@@ -128,35 +203,64 @@ static inline bool is_vowel_char(char c) {
     return (c == 'A' || c == 'E' || c == 'I' || c == 'O' || c == 'U');
 }
 
-void nnue_extract_features(const Board *board, const Move *move, const Rack *rack,
-                          int bag_count, float *out_features) {
-    (void)rack;
+void nnue_extract_features_with_score(const Board *board, const Move *move, const Rack *rack,
+                                      int bag_count, int score_diff, float *out_features) {
     memset(out_features, 0, NNUE_INPUT_DIM * sizeof(float));
+    if (!board) return;
 
-    if (!move) return;
+    int leave_counts[27] = {0};
+    int leave_len = 0;
+    int blanks = 0, high_placed = 0;
 
-    /* 1. Move Placement Features (0..6) */
-    out_features[0] = (float)move->score / 50.0f;
-    out_features[1] = (float)move->num_placed / 7.0f;
-    out_features[2] = (move->num_placed == 7) ? 1.0f : 0.0f; /* Bingo */
+    if (move) {
+        /* 1. Move Placement Features (0..15: 16 features) */
+        out_features[0] = (float)move->score / 50.0f;
+        out_features[1] = (float)move->num_placed / 7.0f;
+        out_features[2] = (move->num_placed == 7) ? 1.0f : 0.0f; /* Bingo */
 
-    float tw_cnt = 0.0f, dw_cnt = 0.0f, tl_cnt = 0.0f, dl_cnt = 0.0f;
+        float tw_cnt = 0.0f, dw_cnt = 0.0f, tl_cnt = 0.0f, dl_cnt = 0.0f;
+        int blanks_placed = 0;
+        float center_dist = 0.0f;
+        bool perimeter_touch = false;
+
     for (int p = 0; p < move->num_placed; p++) {
-        MultiplierType m = board_get_multiplier(move->placed[p].row, move->placed[p].col);
+        int r = move->placed[p].row;
+        int c = move->placed[p].col;
+        MultiplierType m = board_get_multiplier(r, c);
         if (m == MULT_TW) tw_cnt += 1.0f;
         else if (m == MULT_DW) dw_cnt += 1.0f;
         else if (m == MULT_TL) tl_cnt += 1.0f;
         else if (m == MULT_DL) dl_cnt += 1.0f;
+
+        if (move->placed[p].is_blank) blanks_placed++;
+        char let = move->placed[p].letter;
+        if (let >= 'A' && let <= 'Z' && TILE_VALUES[let - 'A'] >= 4) high_placed++;
+
+        float dist = (float)(abs(r - 7) + abs(c - 7));
+        if (dist > center_dist) center_dist = dist;
+
+        if (r == 0 || r == 14 || c == 0 || c == 14) perimeter_touch = true;
     }
+
     out_features[3] = tw_cnt;
     out_features[4] = dw_cnt;
     out_features[5] = tl_cnt;
     out_features[6] = dl_cnt;
+    out_features[7] = (float)strlen(move->word) / 15.0f;
+    out_features[8] = (move->dir == DIR_VERTICAL) ? 1.0f : 0.0f;
+    out_features[9] = center_dist / 14.0f;
+    out_features[10] = perimeter_touch ? 1.0f : 0.0f;
+    out_features[11] = (float)blanks_placed;
+    out_features[12] = (float)high_placed / 3.0f;
+    out_features[13] = (float)move->score / (float)(move->num_placed > 0 ? move->num_placed : 1) / 20.0f;
+    out_features[14] = (tw_cnt > 0.0f && dw_cnt > 0.0f) ? 1.0f : 0.0f;
+    out_features[15] = (move->type == MOVE_EXCHANGE) ? 1.0f : 0.0f;
 
-    /* 2. Leave Tile Counts (7..33 for 27 tiles: 0..25=A..Z, 26=?) */
-    int leave_counts[27] = {0};
-    int leave_len = (int)strlen(move->leave);
-    int vowels = 0, consonants = 0, blanks = 0, high_points = 0;
+    /* 2. Leave Tile Counts (16..42 for 27 tiles: 0..25=A..Z, 26=?) */
+    leave_len = (int)strlen(move->leave);
+    int vowels = 0, consonants = 0, high_points = 0, quad_points = 0;
+    int duplicate_count = 0, distinct_letters = 0;
+    int total_leave_points = 0;
 
     for (int i = 0; i < leave_len; i++) {
         char c = move->leave[i];
@@ -165,28 +269,34 @@ void nnue_extract_features(const Board *board, const Move *move, const Rack *rac
             blanks++;
         } else if (c >= 'A' && c <= 'Z') {
             int idx = c - 'A';
+            if (leave_counts[idx] == 0) distinct_letters++;
+            else duplicate_count++;
             leave_counts[idx]++;
+
             if (is_vowel_char(c)) vowels++;
             else consonants++;
 
-            if (TILE_VALUES[idx] >= 4) high_points++;
+            int val = TILE_VALUES[idx];
+            total_leave_points += val;
+            if (val >= 4) high_points++;
+            if (val >= 8) quad_points++;
         }
     }
 
     for (int i = 0; i < 27; i++) {
-        out_features[7 + i] = (float)leave_counts[i];
+        out_features[16 + i] = (float)leave_counts[i];
     }
 
-    /* 3. Pairwise Leave Interactions (34..411: 378 pairs) */
+    /* 3. Pairwise Leave Interactions (43..420: 378 pairs) */
     int pair_idx = 0;
     for (int i = 0; i < 27; i++) {
         for (int j = i; j < 27; j++) {
             if (pair_idx < 378) {
                 if (i == j) {
-                    if (leave_counts[i] >= 2) out_features[34 + pair_idx] = 1.0f;
+                    if (leave_counts[i] >= 2) out_features[43 + pair_idx] = 1.0f;
                 } else {
                     if (leave_counts[i] >= 1 && leave_counts[j] >= 1) {
-                        out_features[34 + pair_idx] = 1.0f;
+                        out_features[43 + pair_idx] = 1.0f;
                     }
                 }
             }
@@ -194,86 +304,221 @@ void nnue_extract_features(const Board *board, const Move *move, const Rack *rac
         }
     }
 
-    /* 4. Macro Rack Composition (412..416) */
-    out_features[412] = (float)vowels / 5.0f;
-    out_features[413] = (float)consonants / 5.0f;
-    out_features[414] = ((float)vowels - (float)consonants) / 5.0f;
-    out_features[415] = (float)blanks;
-    out_features[416] = (float)high_points / 3.0f;
-
-    /* 5. Championship Bingo Stem Indicators (417..432) */
-    static const char *stems[16] = {
-        "AEINST", "AEINRT", "ADENRS", "AELRST",
-        "AEORST", "AENRST", "EINST",  "EINRT",
-        "DENRS",  "ELRST",  "EORST",  "ENRST",
-        "AEIN",   "AEIR",   "AEIS",   "AEIT"
+    /* 4. Tri-Tile Leave Synergies (421..484: 64 triplets) */
+    static const char *triplets[64] = {
+        "ING", "ERS", "EST", "IER", "IES", "ION", "IST", "ITY", "ANT", "ENT",
+        "ATE", "IVE", "OUS", "FUL", "LES", "NES", "RED", "TED", "CON", "DIS",
+        "MIS", "PRE", "PRO", "SUB", "RET", "TIS", "RIN", "SIN", "TIN", "AIN",
+        "EIN", "OIN", "RES", "TES", "DES", "SES", "STA", "STR", "ADE", "AGE",
+        "ALE", "ANE", "ARE", "ASE", "AVE", "EAR", "EAT", "END", "ERA", "ERR",
+        "ETA", "IDE", "INE", "OAR", "ONE", "ORE", "ORT", "AIR", "AIS", "AIT",
+        "ELS", "ELT", "ENS", "ENT"
     };
 
-    for (int s = 0; s < 16; s++) {
-        bool match = true;
-        for (const char *p = stems[s]; *p; p++) {
-            if (leave_counts[*p - 'A'] < 1) {
-                match = false;
-                break;
-            }
+    for (int t = 0; t < 64; t++) {
+        int req[27] = {0};
+        const char *trip = triplets[t];
+        for (int k = 0; k < 3; k++) req[trip[k] - 'A']++;
+        bool ok = true;
+        for (int k = 0; k < 26; k++) {
+            if (req[k] > leave_counts[k]) { ok = false; break; }
         }
-        if (match) {
-            out_features[417 + s] = 1.0f;
+        if (ok) out_features[421 + t] = 1.0f;
+    }
+
+    /* 5. Macro Rack Composition & Dynamic Equity (485..504: 20 features) */
+    out_features[485] = (float)vowels / 5.0f;
+    out_features[486] = (float)consonants / 5.0f;
+    out_features[487] = ((float)vowels - (float)consonants) / 5.0f;
+    out_features[488] = (float)blanks;
+    out_features[489] = (float)high_points / 3.0f;
+    out_features[490] = (float)quad_points;
+    out_features[491] = (float)duplicate_count / 3.0f;
+    out_features[492] = (duplicate_count >= 2) ? 1.0f : 0.0f;
+    out_features[493] = (float)distinct_letters / 7.0f;
+    out_features[494] = (float)total_leave_points / 30.0f;
+    float v_ratio = (vowels + consonants > 0) ? (float)vowels / (float)(vowels + consonants) : 0.5f;
+    out_features[495] = v_ratio;
+    bool ideal_vc = (vowels == 2 && consonants == 3) || (vowels == 3 && consonants == 2) ||
+                    (vowels == 2 && consonants == 2) || (vowels == 3 && consonants == 3);
+    out_features[496] = ideal_vc ? 1.0f : 0.0f;
+    out_features[497] = (leave_len >= 3 && vowels == 0) ? 1.0f : 0.0f;
+    out_features[498] = (leave_len >= 3 && consonants == 0) ? 1.0f : 0.0f;
+    out_features[499] = (leave_counts['Q' - 'A'] > 0 && leave_counts['U' - 'A'] == 0) ? 1.0f : 0.0f;
+    float unplayable_penalty = (leave_counts['Q' - 'A'] * 10.0f + leave_counts['V' - 'A'] * 5.0f) / 25.0f;
+    out_features[500] = unplayable_penalty;
+    out_features[501] = (float)leave_counts['S' - 'A'];
+    int clumsy = leave_counts['V' - 'A'] + leave_counts['W' - 'A'] + leave_counts['Y' - 'A'];
+    out_features[502] = (float)clumsy / 3.0f;
+    int liquid = leave_counts['L' - 'A'] + leave_counts['R' - 'A'] + leave_counts['S' - 'A'] + leave_counts['T' - 'A'];
+    out_features[503] = (float)liquid / 4.0f;
+    out_features[504] = (float)leave_len / 7.0f;
+
+    /* 6. Championship Bingo Stem Indicators (505..536: 32 stems) */
+    static const char *stems[32] = {
+        "AEINST", "AEINRT", "ADENRS", "AELRST", "AEORST", "AENRST",
+        "EINST",  "EINRT",  "DENRS",  "ELRST",  "EORST",  "ENRST",
+        "AEIN",   "AEIR",   "AEIS",   "AEIT",   "AELN",   "AELR",
+        "AELS",   "AELT",   "AERS",   "AERT",   "EILR",   "EILS",
+        "EILT",   "EINS",   "EINT",   "EIRS",   "EIRT",   "ENRS",
+        "ENRT",   "ERST"
+    };
+
+        for (int s = 0; s < 32; s++) {
+            bool match = true;
+            for (const char *p = stems[s]; *p; p++) {
+                if (leave_counts[*p - 'A'] < 1) { match = false; break; }
+            }
+            if (match) out_features[505 + s] = 1.0f;
         }
     }
 
-    /* 6. Board Exposure & Hazard Features (433..436) */
-    int open_tw = 0;
-    int open_dw = 0;
+    /* 7. Board Exposure & Hazard Features (537..584: 48 features) */
+    int open_tw = bb_popcount_and(&board->anchors, &BB_TW);
+    int open_dw = bb_popcount_and(&board->anchors, &BB_DW);
+    int open_tl = bb_popcount_and(&board->anchors, &BB_TL);
+    int open_dl = bb_popcount_and(&board->anchors, &BB_DL);
+    int hot_anchors = open_tw + open_dw + open_tl + open_dl;
+    int total_anchors = bb_popcount(&board->anchors);
+    int total_occupied = bb_popcount(&board->occupied);
     int exposed_tw_vowels = 0;
-    int total_occupied = 0;
+
+    int nw_occ = 0, ne_occ = 0, sw_occ = 0, se_occ = 0;
+    int perimeter_occ = 0, center_occ = 0;
 
     for (int r = 0; r < BOARD_SIZE; r++) {
         for (int c = 0; c < BOARD_SIZE; c++) {
-            if (board->cells[r][c].tile != 0) {
-                total_occupied++;
-            } else {
-                MultiplierType m = board_get_multiplier(r, c);
-                if (m == MULT_TW && board_is_anchor(board, r, c)) open_tw++;
-                if (m == MULT_DW && board_is_anchor(board, r, c)) open_dw++;
+            if (bb_test(&board->occupied, r, c)) {
+                if (r < 7 && c < 7) nw_occ++;
+                else if (r < 7 && c > 7) ne_occ++;
+                else if (r > 7 && c < 7) sw_occ++;
+                else if (r > 7 && c > 7) se_occ++;
+
+                if (r == 0 || r == 14 || c == 0 || c == 14) perimeter_occ++;
+                if (r >= 5 && r <= 9 && c >= 5 && c <= 9) center_occ++;
             }
         }
     }
 
-    for (int p = 0; p < move->num_placed; p++) {
-        int r = move->placed[p].row;
-        int c = move->placed[p].col;
-        if (is_vowel_char(move->placed[p].letter)) {
+    int floating_tiles = 0;
+    if (move) {
+        for (int p = 0; p < move->num_placed; p++) {
+            int r = move->placed[p].row;
+            int c = move->placed[p].col;
             int dr[4] = {-1, 1, 0, 0};
             int dc[4] = {0, 0, -1, 1};
+            bool has_perp = false;
             for (int d = 0; d < 4; d++) {
                 int nr = r + dr[d];
                 int nc = c + dc[d];
                 if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
-                    if (board->cells[nr][nc].tile == 0 && board_get_multiplier(nr, nc) == MULT_TW) {
+                    if (board->cells[nr][nc].tile != 0) has_perp = true;
+                    if (is_vowel_char(move->placed[p].letter) &&
+                        board->cells[nr][nc].tile == 0 && board_get_multiplier(nr, nc) == MULT_TW) {
                         exposed_tw_vowels++;
                     }
                 }
             }
+            if (!has_perp) floating_tiles++;
         }
     }
 
-    out_features[433] = (float)open_tw / 8.0f;
-    out_features[434] = (float)open_dw / 12.0f;
-    out_features[435] = (float)exposed_tw_vowels;
-    out_features[436] = (float)total_occupied / 100.0f;
+    out_features[537] = (float)open_tw / 8.0f;
+    out_features[538] = (float)open_dw / 16.0f;
+    out_features[539] = (float)open_tl / 12.0f;
+    out_features[540] = (float)open_dl / 24.0f;
+    out_features[541] = (float)exposed_tw_vowels;
+    out_features[542] = (float)total_occupied / 100.0f;
 
-    /* 7. Game Phase Buckets (437..444) */
-    PhaseBucket phase = eval_classify_phase(bag_count);
-    int p_idx = (int)phase;
-    if (p_idx >= 0 && p_idx < 8) {
-        out_features[437 + p_idx] = 1.0f;
+    OpennessBucket openness = eval_classify_openness(board);
+    if ((int)openness >= 0 && (int)openness < 4) out_features[543 + (int)openness] = 1.0f;
+
+    out_features[547] = (float)nw_occ / 25.0f;
+    out_features[548] = (float)ne_occ / 25.0f;
+    out_features[549] = (float)sw_occ / 25.0f;
+    out_features[550] = (float)se_occ / 25.0f;
+    out_features[551] = (float)perimeter_occ / 56.0f;
+    out_features[552] = (float)center_occ / 25.0f;
+    out_features[553] = (float)(open_tw) / 4.0f;
+    out_features[554] = (float)(open_dw) / 8.0f;
+    out_features[555] = (float)hot_anchors / 10.0f;
+    out_features[556] = (float)total_anchors / 30.0f;
+    out_features[557] = (float)floating_tiles / 7.0f;
+    out_features[558] = fabsf((float)(nw_occ + sw_occ) - (float)(ne_occ + se_occ)) / 50.0f;
+    out_features[559] = fabsf((float)(nw_occ + ne_occ) - (float)(sw_occ + se_occ)) / 50.0f;
+    out_features[560] = fabsf((float)nw_occ - (float)se_occ) / 25.0f;
+
+    /* 8. Unseen Bag & Bayesian Opponent Modeling (585..648: 64 features) */
+    out_features[585] = (float)bag_count / 100.0f;
+    out_features[586] = (bag_count == 0) ? 1.0f : 0.0f;
+    out_features[587] = (bag_count <= 10) ? 1.0f : 0.0f;
+    out_features[588] = (bag_count <= 20) ? 1.0f : 0.0f;
+
+    char unseen[100];
+    int unseen_count = sim_get_unseen_tiles(board, rack ? rack : &(Rack){0}, unseen);
+    int u_vowels = 0, u_consonants = 0, u_blanks = 0, u_s = 0, u_quad = 0;
+    int u_counts[27] = {0};
+
+    for (int i = 0; i < unseen_count; i++) {
+        char t = unseen[i];
+        if (t == '?') { u_blanks++; u_counts[26]++; }
+        else if (t >= 'A' && t <= 'Z') {
+            int idx = t - 'A';
+            u_counts[idx]++;
+            if (is_vowel_char(t)) u_vowels++;
+            else u_consonants++;
+            if (t == 'S') u_s++;
+            if (TILE_VALUES[idx] >= 8) u_quad++;
+        }
     }
 
-    /* 8. Bag Exhaustion Context (445..447) */
-    out_features[445] = (float)bag_count / 100.0f;
-    out_features[446] = (bag_count == 0) ? 1.0f : 0.0f;
-    out_features[447] = (bag_count <= 14) ? 1.0f : 0.0f;
+    float u_denom = unseen_count > 0 ? (float)unseen_count : 1.0f;
+    out_features[589] = (float)u_vowels / u_denom;
+    out_features[590] = (float)u_consonants / u_denom;
+    out_features[591] = (float)u_blanks / 2.0f;
+    out_features[592] = (float)u_s / 4.0f;
+    out_features[593] = (float)u_quad / 4.0f;
+
+    for (int i = 0; i < 27; i++) {
+        out_features[594 + i] = (float)u_counts[i] / u_denom;
+    }
+
+    /* Opponent hoarding indicators for key letters */
+    out_features[622] = (u_counts['Q' - 'A'] > 0) ? 1.0f : 0.0f;
+    out_features[623] = (u_counts['Z' - 'A'] > 0) ? 1.0f : 0.0f;
+    out_features[624] = (u_counts['J' - 'A'] > 0) ? 1.0f : 0.0f;
+    out_features[625] = (u_counts['X' - 'A'] > 0) ? 1.0f : 0.0f;
+    out_features[626] = (u_counts['V' - 'A'] > 0) ? 1.0f : 0.0f;
+
+    /* 9. Live Game Phase, Score Differential & Tournament Equity (649..700: 52 features) */
+    PhaseBucket phase = eval_classify_phase(bag_count);
+    int p_idx = (int)phase;
+    if (p_idx >= 0 && p_idx < 8) out_features[649 + p_idx] = 1.0f;
+
+    out_features[657] = tanhf((float)score_diff / 50.0f);
+    out_features[658] = fminf(1.0f, fmaxf(-1.0f, (float)score_diff / 100.0f));
+    out_features[659] = (score_diff >= 40) ? 1.0f : 0.0f;
+    out_features[660] = (score_diff <= -40) ? 1.0f : 0.0f;
+    out_features[661] = eval_win_probability(score_diff, bag_count);
+    out_features[662] = eval_score_margin_risk_multiplier(score_diff);
+    out_features[663] = (fabsf((float)score_diff) <= 15.0f) ? 1.0f : 0.0f;
+
+    /* 10. Cross-Check Hooks, Leave-Board Synergy & Lane Dynamics (701..767: 67 features) */
+    if (move) {
+        out_features[701] = (leave_counts['S' - 'A'] > 0 && total_anchors > 5) ? 1.0f : 0.0f;
+        out_features[702] = (leave_counts['D' - 'A'] > 0 && total_anchors > 5) ? 1.0f : 0.0f;
+        out_features[703] = (leave_counts['R' - 'A'] > 0 && leave_counts['E' - 'A'] > 0) ? 1.0f : 0.0f;
+        out_features[704] = (blanks > 0 && move->score < 35) ? -1.0f : 0.0f; /* Blank squandering penalty */
+        out_features[705] = (leave_counts['S' - 'A'] > 0 && move->score < 25) ? -0.5f : 0.0f; /* S squandering */
+        out_features[706] = (high_placed > 0 && move->score >= 35) ? 1.0f : 0.0f; /* High-value tile monetization */
+        out_features[707] = (move->num_placed == 7 && score_diff < 0) ? 1.0f : 0.0f; /* Deficit bingo comeback */
+        out_features[708] = (leave_len == 0) ? 1.0f : 0.0f; /* Clean empty leave */
+    }
+}
+
+void nnue_extract_features(const Board *board, const Move *move, const Rack *rack,
+                          int bag_count, float *out_features) {
+    nnue_extract_features_with_score(board, move, rack, bag_count, 0, out_features);
 }
 
 #if defined(__AVX2__)
@@ -293,12 +538,26 @@ static inline float hsum256(__m256 v) {
 #endif
 
 /*
- * AVX2 Vectorized Dot Product + Bias with ClippedReLU activation (with scalar fallback for portability).
+ * AVX-512 / AVX2 Vectorized Dot Product + Bias with ClippedReLU activation.
  */
-static inline void avx2_linear_crelu(const float *weights, const float *biases,
-                                     const float *in, float *out,
-                                     int out_dim, int in_dim) {
-#if defined(__AVX2__)
+static inline void vectorized_linear_crelu(const float *weights, const float *biases,
+                                           const float *in, float *out,
+                                           int out_dim, int in_dim) {
+#if defined(__AVX512F__)
+    for (int o = 0; o < out_dim; o++) {
+        __m512 v_acc = _mm512_setzero_ps();
+        const float *w_row = &weights[o * in_dim];
+
+        for (int i = 0; i < in_dim; i += 16) {
+            __m512 v_w = _mm512_loadu_ps(&w_row[i]);
+            __m512 v_x = _mm512_loadu_ps(&in[i]);
+            v_acc = _mm512_fmadd_ps(v_w, v_x, v_acc);
+        }
+
+        float sum = _mm512_reduce_add_ps(v_acc) + biases[o];
+        out[o] = fminf(fmaxf(sum, 0.0f), 1.0f);
+    }
+#elif defined(__AVX2__)
     for (int o = 0; o < out_dim; o++) {
         __m256 v_acc = _mm256_setzero_ps();
         const float *w_row = &weights[o * in_dim];
@@ -310,10 +569,7 @@ static inline void avx2_linear_crelu(const float *weights, const float *biases,
         }
 
         float sum = hsum256(v_acc) + biases[o];
-
-        /* ClippedReLU: clamp(sum, 0.0f, 1.0f) */
-        sum = fminf(fmaxf(sum, 0.0f), 1.0f);
-        out[o] = sum;
+        out[o] = fminf(fmaxf(sum, 0.0f), 1.0f);
     }
 #else
     for (int o = 0; o < out_dim; o++) {
@@ -330,23 +586,30 @@ static inline void avx2_linear_crelu(const float *weights, const float *biases,
 float nnue_forward(const NNUEModel *model, const float *features) {
     if (!model || !model->is_loaded) return 0.0f;
 
-    /* Layer 1: 448 -> 128 */
-    alignas(32) float l1_out[NNUE_L1_DIM];
-    avx2_linear_crelu(model->w1, model->b1, features, l1_out, NNUE_L1_DIM, NNUE_INPUT_DIM);
+    /* Layer 1: 768 -> 256 */
+    alignas(64) float l1_out[NNUE_L1_DIM];
+    vectorized_linear_crelu(model->w1, model->b1, features, l1_out, NNUE_L1_DIM, NNUE_INPUT_DIM);
 
-    /* Layer 2: 128 -> 32 */
-    alignas(32) float l2_out[NNUE_L2_DIM];
-    avx2_linear_crelu(model->w2, model->b2, l1_out, l2_out, NNUE_L2_DIM, NNUE_L1_DIM);
+    /* Layer 2: 256 -> 64 */
+    alignas(64) float l2_out[NNUE_L2_DIM];
+    vectorized_linear_crelu(model->w2, model->b2, l1_out, l2_out, NNUE_L2_DIM, NNUE_L1_DIM);
 
-    /* Layer 3: 32 -> 1 */
-#if defined(__AVX2__)
+    /* Layer 3: 64 -> 1 */
+#if defined(__AVX512F__)
+    __m512 v_acc = _mm512_setzero_ps();
+    for (int i = 0; i < NNUE_L2_DIM; i += 16) {
+        __m512 v_w = _mm512_loadu_ps(&model->w3[i]);
+        __m512 v_x = _mm512_loadu_ps(&l2_out[i]);
+        v_acc = _mm512_fmadd_ps(v_w, v_x, v_acc);
+    }
+    float raw_equity = _mm512_reduce_add_ps(v_acc) + model->b3;
+#elif defined(__AVX2__)
     __m256 v_acc = _mm256_setzero_ps();
     for (int i = 0; i < NNUE_L2_DIM; i += 8) {
         __m256 v_w = _mm256_loadu_ps(&model->w3[i]);
         __m256 v_x = _mm256_loadu_ps(&l2_out[i]);
         v_acc = _mm256_fmadd_ps(v_w, v_x, v_acc);
     }
-
     float raw_equity = hsum256(v_acc) + model->b3;
 #else
     float raw_equity = model->b3;
@@ -355,8 +618,65 @@ float nnue_forward(const NNUEModel *model, const float *features) {
     }
 #endif
 
-    /* Scaled output to represent expected points margin (+/- 50 pts) */
     return raw_equity * 50.0f;
+}
+
+float nnue_forward_quantized(const NNUEQuantizedModel *model, const float *features) {
+    if (!model || !model->is_loaded) return 0.0f;
+
+    alignas(64) int16_t l1_acc[NNUE_L1_DIM];
+    alignas(64) uint8_t l1_act[NNUE_L1_DIM];
+
+    for (int o = 0; o < NNUE_L1_DIM; o++) {
+        int32_t sum = (int32_t)model->b1[o];
+        const int8_t *w_row = &model->w1[o * NNUE_INPUT_DIM];
+        for (int i = 0; i < NNUE_INPUT_DIM; i++) {
+            if (features[i] > 0.0f) {
+                sum += (int32_t)w_row[i] * (int32_t)roundf(features[i] * 64.0f);
+            }
+        }
+        l1_acc[o] = (int16_t)(sum / 64);
+        int v = l1_acc[o] > 0 ? (l1_acc[o] > 127 ? 127 : l1_acc[o]) : 0;
+        l1_act[o] = (uint8_t)v;
+    }
+
+    alignas(64) uint8_t l2_act[NNUE_L2_DIM];
+    for (int o = 0; o < NNUE_L2_DIM; o++) {
+        int32_t sum = (int32_t)model->b2[o];
+        const int8_t *w_row = &model->w2[o * NNUE_L1_DIM];
+
+#if defined(__AVX2__)
+        __m256i sum_v = _mm256_setzero_si256();
+        __m256i ones = _mm256_set1_epi16(1);
+        for (int i = 0; i < NNUE_L1_DIM; i += 32) {
+            __m256i act_v = _mm256_load_si256((const __m256i*)&l1_act[i]);
+            __m256i w_v = _mm256_loadu_si256((const __m256i*)&w_row[i]);
+            __m256i prod = _mm256_maddubs_epi16(act_v, w_v);
+            __m256i prod32 = _mm256_madd_epi16(prod, ones);
+            sum_v = _mm256_add_epi32(sum_v, prod32);
+        }
+        __m128i lo = _mm256_castsi256_si128(sum_v);
+        __m128i hi = _mm256_extracti128_si256(sum_v, 1);
+        __m128i sum128 = _mm_add_epi32(lo, hi);
+        sum128 = _mm_hadd_epi32(sum128, sum128);
+        sum128 = _mm_hadd_epi32(sum128, sum128);
+        sum += _mm_cvtsi128_si32(sum128);
+#else
+        for (int i = 0; i < NNUE_L1_DIM; i++) {
+            sum += (int32_t)w_row[i] * (int32_t)l1_act[i];
+        }
+#endif
+        int v = sum / 128;
+        l2_act[o] = (uint8_t)(v > 0 ? (v > 127 ? 127 : v) : 0);
+    }
+
+    int32_t out_acc = (int32_t)model->b3;
+    for (int i = 0; i < NNUE_L2_DIM; i++) {
+        out_acc += (int32_t)model->w3[i] * (int32_t)l2_act[i];
+    }
+
+    float raw = (float)out_acc / (model->scale3 * 128.0f);
+    return raw * 50.0f;
 }
 
 NNUEResult nnue_forward_dual(const NNUEModel *model, const float *features) {
@@ -365,16 +685,33 @@ NNUEResult nnue_forward_dual(const NNUEModel *model, const float *features) {
     res.win_probability = 0.5f;
     if (!model || !model->is_loaded) return res;
 
-    /* Layer 1: 448 -> 128 */
-    alignas(32) float l1_out[NNUE_L1_DIM];
-    avx2_linear_crelu(model->w1, model->b1, features, l1_out, NNUE_L1_DIM, NNUE_INPUT_DIM);
+    /* Layer 1: 768 -> 256 */
+    alignas(64) float l1_out[NNUE_L1_DIM];
+    vectorized_linear_crelu(model->w1, model->b1, features, l1_out, NNUE_L1_DIM, NNUE_INPUT_DIM);
 
-    /* Layer 2: 128 -> 32 */
-    alignas(32) float l2_out[NNUE_L2_DIM];
-    avx2_linear_crelu(model->w2, model->b2, l1_out, l2_out, NNUE_L2_DIM, NNUE_L1_DIM);
+    /* Layer 2: 256 -> 64 */
+    alignas(64) float l2_out[NNUE_L2_DIM];
+    vectorized_linear_crelu(model->w2, model->b2, l1_out, l2_out, NNUE_L2_DIM, NNUE_L1_DIM);
 
-    /* Layer 3 Dual Head: Score Head & Win-Probability Head */
-#if defined(__AVX2__)
+    /* Layer 3 Dual Head */
+#if defined(__AVX512F__)
+    __m512 v_acc1 = _mm512_setzero_ps();
+    __m512 v_acc2 = _mm512_setzero_ps();
+
+    for (int i = 0; i < NNUE_L2_DIM; i += 16) {
+        __m512 v_x = _mm512_loadu_ps(&l2_out[i]);
+        __m512 v_w1 = _mm512_loadu_ps(&model->w3[i]);
+        __m512 v_w2 = _mm512_loadu_ps(&model->w_win[i]);
+        v_acc1 = _mm512_fmadd_ps(v_w1, v_x, v_acc1);
+        v_acc2 = _mm512_fmadd_ps(v_w2, v_x, v_acc2);
+    }
+
+    float raw_equity = _mm512_reduce_add_ps(v_acc1) + model->b3;
+    res.net_spread = raw_equity * 50.0f;
+
+    float raw_win = _mm512_reduce_add_ps(v_acc2) + model->b_win;
+    res.win_probability = 1.0f / (1.0f + expf(-raw_win * 3.0f));
+#elif defined(__AVX2__)
     __m256 v_acc1 = _mm256_setzero_ps();
     __m256 v_acc2 = _mm256_setzero_ps();
 
@@ -405,17 +742,291 @@ NNUEResult nnue_forward_dual(const NNUEModel *model, const float *features) {
     return res;
 }
 
-float nnue_evaluate_move(const NNUEModel *model, const Board *board, const Move *move,
-                         const Rack *rack, int bag_count) {
+float nnue_evaluate_move_with_score(const NNUEModel *model, const Board *board, const Move *move,
+                                    const Rack *rack, int bag_count, int score_diff) {
     if (!model || !model->is_loaded) {
-        return eval_move_static_bucketed(board, move, bag_count);
+        return eval_move_static_with_score(board, move, bag_count, score_diff);
     }
 
-    alignas(32) float features[NNUE_INPUT_DIM];
-    nnue_extract_features(board, move, rack, bag_count, features);
+    alignas(64) float features[NNUE_INPUT_DIM];
+    nnue_extract_features_with_score(board, move, rack, bag_count, score_diff, features);
 
     float nnue_pred = nnue_forward(model, features);
-
-    /* Move immediate score is banked board score, NNUE predicts residual net equity */
     return (float)move->score + nnue_pred;
+}
+
+float nnue_evaluate_move(const NNUEModel *model, const Board *board, const Move *move,
+                         const Rack *rack, int bag_count) {
+    return nnue_evaluate_move_with_score(model, board, move, rack, bag_count, 0);
+}
+
+/*
+ * Incremental Accumulator Architecture (Stockfish HalfKP pattern)
+ */
+
+void nnue_accumulator_build_base(const NNUEModel *model, const Board *board, const Rack *rack,
+                                 int bag_count, int score_diff, NNUEAccumulator *base_acc) {
+    if (!model || !base_acc) return;
+    alignas(64) float base_features[NNUE_INPUT_DIM];
+    nnue_extract_features_with_score(board, NULL, rack, bag_count, score_diff, base_features);
+
+#if defined(__AVX512F__)
+    for (int o = 0; o < NNUE_L1_DIM; o += 16) {
+        __m512 acc = _mm512_load_ps(&model->b1[o]);
+        for (int i = 537; i < NNUE_INPUT_DIM; i++) {
+            float val = base_features[i];
+            if (val != 0.0f) {
+                __m512 w = _mm512_load_ps(&model->w1_by_feature[i][o]);
+                acc = _mm512_fmadd_ps(_mm512_set1_ps(val), w, acc);
+            }
+        }
+        _mm512_store_ps(&base_acc->vals[o], acc);
+    }
+#elif defined(__AVX2__)
+    for (int o = 0; o < NNUE_L1_DIM; o += 8) {
+        __m256 acc = _mm256_load_ps(&model->b1[o]);
+        for (int i = 537; i < NNUE_INPUT_DIM; i++) {
+            float val = base_features[i];
+            if (val != 0.0f) {
+                __m256 w = _mm256_load_ps(&model->w1_by_feature[i][o]);
+                acc = _mm256_fmadd_ps(_mm256_set1_ps(val), w, acc);
+            }
+        }
+        _mm256_store_ps(&base_acc->vals[o], acc);
+    }
+#else
+    for (int o = 0; o < NNUE_L1_DIM; o++) {
+        float sum = model->b1[o];
+        for (int i = 537; i < NNUE_INPUT_DIM; i++) {
+            if (base_features[i] != 0.0f) {
+                sum += base_features[i] * model->w1_by_feature[i][o];
+            }
+        }
+        base_acc->vals[o] = sum;
+    }
+#endif
+}
+
+int nnue_extract_move_sparse_features(const Board *board, const Move *move,
+                                      int bag_count, int score_diff, SparseFeature *out_sparse) {
+    if (!move || !out_sparse) return 0;
+    alignas(64) float features[NNUE_INPUT_DIM];
+    nnue_extract_features_with_score(board, move, NULL, bag_count, score_diff, features);
+
+    int count = 0;
+    for (int i = 0; i <= 536; i++) {
+        if (features[i] != 0.0f) {
+            out_sparse[count].index = (uint16_t)i;
+            out_sparse[count].value = features[i];
+            count++;
+        }
+    }
+    for (int i = 537; i <= 541; i++) {
+        if (features[i] != 0.0f) {
+            out_sparse[count].index = (uint16_t)i;
+            out_sparse[count].value = features[i];
+            count++;
+        }
+    }
+    if (features[557] != 0.0f) {
+        out_sparse[count].index = 557;
+        out_sparse[count].value = features[557];
+        count++;
+    }
+    for (int i = 701; i <= 708; i++) {
+        if (features[i] != 0.0f) {
+            out_sparse[count].index = (uint16_t)i;
+            out_sparse[count].value = features[i];
+            count++;
+        }
+    }
+    return count;
+}
+
+void nnue_accumulator_apply_sparse(const NNUEModel *model, const NNUEAccumulator *base,
+                                   const SparseFeature *features, int num_features,
+                                   NNUEAccumulator *out_acc) {
+#if defined(__AVX512F__)
+    for (int o = 0; o < NNUE_L1_DIM; o += 16) {
+        __m512 acc = _mm512_load_ps(&base->vals[o]);
+        for (int f = 0; f < num_features; f++) {
+            uint16_t idx = features[f].index;
+            float val = features[f].value;
+            __m512 w = _mm512_load_ps(&model->w1_by_feature[idx][o]);
+            acc = _mm512_fmadd_ps(_mm512_set1_ps(val), w, acc);
+        }
+        _mm512_store_ps(&out_acc->vals[o], acc);
+    }
+#elif defined(__AVX2__)
+    for (int o = 0; o < NNUE_L1_DIM; o += 8) {
+        __m256 acc = _mm256_load_ps(&base->vals[o]);
+        for (int f = 0; f < num_features; f++) {
+            uint16_t idx = features[f].index;
+            float val = features[f].value;
+            __m256 w = _mm256_load_ps(&model->w1_by_feature[idx][o]);
+            acc = _mm256_fmadd_ps(_mm256_set1_ps(val), w, acc);
+        }
+        _mm256_store_ps(&out_acc->vals[o], acc);
+    }
+#else
+    memcpy(out_acc->vals, base->vals, sizeof(base->vals));
+    for (int f = 0; f < num_features; f++) {
+        uint16_t idx = features[f].index;
+        float val = features[f].value;
+        const float *w = model->w1_by_feature[idx];
+        for (int o = 0; o < NNUE_L1_DIM; o++) {
+            out_acc->vals[o] += val * w[o];
+        }
+    }
+#endif
+}
+
+float nnue_forward_accumulator(const NNUEModel *model, const NNUEAccumulator *acc) {
+    if (!model || !model->is_loaded) return 0.0f;
+
+    alignas(64) float l1_out[NNUE_L1_DIM];
+#if defined(__AVX512F__)
+    __m512 v_zero = _mm512_setzero_ps();
+    __m512 v_one = _mm512_set1_ps(1.0f);
+    for (int o = 0; o < NNUE_L1_DIM; o += 16) {
+        __m512 x = _mm512_load_ps(&acc->vals[o]);
+        _mm512_store_ps(&l1_out[o], _mm512_min_ps(_mm512_max_ps(x, v_zero), v_one));
+    }
+#elif defined(__AVX2__)
+    __m256 v_zero = _mm256_setzero_ps();
+    __m256 v_one = _mm256_set1_ps(1.0f);
+    for (int o = 0; o < NNUE_L1_DIM; o += 8) {
+        __m256 x = _mm256_load_ps(&acc->vals[o]);
+        _mm256_store_ps(&l1_out[o], _mm256_min_ps(_mm256_max_ps(x, v_zero), v_one));
+    }
+#else
+    for (int o = 0; o < NNUE_L1_DIM; o++) {
+        l1_out[o] = fminf(fmaxf(acc->vals[o], 0.0f), 1.0f);
+    }
+#endif
+
+    alignas(64) float l2_out[NNUE_L2_DIM];
+    vectorized_linear_crelu(model->w2, model->b2, l1_out, l2_out, NNUE_L2_DIM, NNUE_L1_DIM);
+
+#if defined(__AVX512F__)
+    __m512 v_acc = _mm512_setzero_ps();
+    for (int i = 0; i < NNUE_L2_DIM; i += 16) {
+        __m512 v_w = _mm512_loadu_ps(&model->w3[i]);
+        __m512 v_x = _mm512_loadu_ps(&l2_out[i]);
+        v_acc = _mm512_fmadd_ps(v_w, v_x, v_acc);
+    }
+    float raw_equity = _mm512_reduce_add_ps(v_acc) + model->b3;
+#elif defined(__AVX2__)
+    __m256 v_acc = _mm256_setzero_ps();
+    for (int i = 0; i < NNUE_L2_DIM; i += 8) {
+        __m256 v_w = _mm256_loadu_ps(&model->w3[i]);
+        __m256 v_x = _mm256_loadu_ps(&l2_out[i]);
+        v_acc = _mm256_fmadd_ps(v_w, v_x, v_acc);
+    }
+    float raw_equity = hsum256(v_acc) + model->b3;
+#else
+    float raw_equity = model->b3;
+    for (int i = 0; i < NNUE_L2_DIM; i++) {
+        raw_equity += model->w3[i] * l2_out[i];
+    }
+#endif
+
+    return raw_equity * 50.0f;
+}
+
+NNUEResult nnue_forward_accumulator_dual(const NNUEModel *model, const NNUEAccumulator *acc) {
+    NNUEResult res;
+    res.net_spread = 0.0f;
+    res.win_probability = 0.5f;
+    if (!model || !model->is_loaded) return res;
+
+    alignas(64) float l1_out[NNUE_L1_DIM];
+#if defined(__AVX512F__)
+    __m512 v_zero = _mm512_setzero_ps();
+    __m512 v_one = _mm512_set1_ps(1.0f);
+    for (int o = 0; o < NNUE_L1_DIM; o += 16) {
+        __m512 x = _mm512_load_ps(&acc->vals[o]);
+        _mm512_store_ps(&l1_out[o], _mm512_min_ps(_mm512_max_ps(x, v_zero), v_one));
+    }
+#elif defined(__AVX2__)
+    __m256 v_zero = _mm256_setzero_ps();
+    __m256 v_one = _mm256_set1_ps(1.0f);
+    for (int o = 0; o < NNUE_L1_DIM; o += 8) {
+        __m256 x = _mm256_load_ps(&acc->vals[o]);
+        _mm256_store_ps(&l1_out[o], _mm256_min_ps(_mm256_max_ps(x, v_zero), v_one));
+    }
+#else
+    for (int o = 0; o < NNUE_L1_DIM; o++) {
+        l1_out[o] = fminf(fmaxf(acc->vals[o], 0.0f), 1.0f);
+    }
+#endif
+
+    alignas(64) float l2_out[NNUE_L2_DIM];
+    vectorized_linear_crelu(model->w2, model->b2, l1_out, l2_out, NNUE_L2_DIM, NNUE_L1_DIM);
+
+#if defined(__AVX512F__)
+    __m512 v_acc1 = _mm512_setzero_ps();
+    __m512 v_acc2 = _mm512_setzero_ps();
+    for (int i = 0; i < NNUE_L2_DIM; i += 16) {
+        __m512 v_x = _mm512_loadu_ps(&l2_out[i]);
+        __m512 v_w1 = _mm512_loadu_ps(&model->w3[i]);
+        __m512 v_w2 = _mm512_loadu_ps(&model->w_win[i]);
+        v_acc1 = _mm512_fmadd_ps(v_w1, v_x, v_acc1);
+        v_acc2 = _mm512_fmadd_ps(v_w2, v_x, v_acc2);
+    }
+    float raw_equity = _mm512_reduce_add_ps(v_acc1) + model->b3;
+    res.net_spread = raw_equity * 50.0f;
+    float raw_win = _mm512_reduce_add_ps(v_acc2) + model->b_win;
+    res.win_probability = 1.0f / (1.0f + expf(-raw_win * 3.0f));
+#elif defined(__AVX2__)
+    __m256 v_acc1 = _mm256_setzero_ps();
+    __m256 v_acc2 = _mm256_setzero_ps();
+    for (int i = 0; i < NNUE_L2_DIM; i += 8) {
+        __m256 v_x = _mm256_loadu_ps(&l2_out[i]);
+        __m256 v_w1 = _mm256_loadu_ps(&model->w3[i]);
+        __m256 v_w2 = _mm256_loadu_ps(&model->w_win[i]);
+        v_acc1 = _mm256_fmadd_ps(v_w1, v_x, v_acc1);
+        v_acc2 = _mm256_fmadd_ps(v_w2, v_x, v_acc2);
+    }
+    float raw_equity = hsum256(v_acc1) + model->b3;
+    res.net_spread = raw_equity * 50.0f;
+    float raw_win = hsum256(v_acc2) + model->b_win;
+    res.win_probability = 1.0f / (1.0f + expf(-raw_win * 3.0f));
+#else
+    float raw_equity = model->b3;
+    float raw_win = model->b_win;
+    for (int i = 0; i < NNUE_L2_DIM; i++) {
+        raw_equity += model->w3[i] * l2_out[i];
+        raw_win += model->w_win[i] * l2_out[i];
+    }
+    res.net_spread = raw_equity * 50.0f;
+    res.win_probability = 1.0f / (1.0f + expf(-raw_win * 3.0f));
+#endif
+
+    return res;
+}
+
+float nnue_forward_move_incremental(const NNUEModel *model, const NNUEAccumulator *base_acc,
+                                    const Board *board, const Move *move,
+                                    int bag_count, int score_diff) {
+    if (!model || !model->is_loaded) return 0.0f;
+    SparseFeature sparse[128];
+    int n = nnue_extract_move_sparse_features(board, move, bag_count, score_diff, sparse);
+    NNUEAccumulator move_acc;
+    nnue_accumulator_apply_sparse(model, base_acc, sparse, n, &move_acc);
+    return nnue_forward_accumulator(model, &move_acc);
+}
+
+NNUEResult nnue_forward_move_incremental_dual(const NNUEModel *model, const NNUEAccumulator *base_acc,
+                                              const Board *board, const Move *move,
+                                              int bag_count, int score_diff) {
+    NNUEResult res;
+    res.net_spread = 0.0f;
+    res.win_probability = 0.5f;
+    if (!model || !model->is_loaded) return res;
+    SparseFeature sparse[128];
+    int n = nnue_extract_move_sparse_features(board, move, bag_count, score_diff, sparse);
+    NNUEAccumulator move_acc;
+    nnue_accumulator_apply_sparse(model, base_acc, sparse, n, &move_acc);
+    return nnue_forward_accumulator_dual(model, &move_acc);
 }
