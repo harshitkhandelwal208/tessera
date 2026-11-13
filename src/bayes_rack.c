@@ -182,9 +182,10 @@ void bayes_rack_sample_with_bag(const BayesRackTracker *tracker, Rack *out_opp_r
                 out_remaining_bag[rem_cnt++] = t;
             }
         }
-        /* Fisher-Yates shuffle remaining tiles */
-        for (int i = rem_cnt - 1; i > 0; i--) {
-            int j = (int)(fast_bayes_rand() % (uint32_t)(i + 1));
+        /* Knuth / Fisher-Yates selection sampling: shuffle only the prefix needed for draw realization */
+        int num_to_shuffle = rem_cnt < RACK_CAPACITY ? rem_cnt : RACK_CAPACITY;
+        for (int i = 0; i < num_to_shuffle; i++) {
+            int j = i + (int)(fast_bayes_rand() % (uint32_t)(rem_cnt - i));
             char tmp = out_remaining_bag[i];
             out_remaining_bag[i] = out_remaining_bag[j];
             out_remaining_bag[j] = tmp;

@@ -766,6 +766,9 @@ bool eval_should_exchange(const Board *board, const Rack *rack, int bag_count,
     if (bag_count < RACK_CAPACITY || rack->count < RACK_CAPACITY) {
         return false;
     }
+    if (best_play_equity >= 14.0f) {
+        return false;
+    }
 
     PhaseBucket phase = eval_classify_phase(bag_count);
 

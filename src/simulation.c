@@ -196,13 +196,17 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
         real_weight = 1.00f;
     }
 
-    /* Precompute BoardCrossCache for all top candidate leaf boards (eliminates thousands of redundant transpositions and cross-checks) */
+    /* Precompute BoardCrossCache and leave data for all top candidate leaf boards (eliminates thousands of redundant transpositions and cross-checks) */
     static _Thread_local BoardCrossCache s_cand_caches[MAX_LATTICE_EDGES];
+    char cand_leaves[MAX_LATTICE_EDGES][RACK_CAPACITY + 1];
+    int cand_leave_lens[MAX_LATTICE_EDGES];
     for (int k = 0; k < top_k; k++) {
         uint32_t c_idx = root->edges[k].target_node_idx;
         if (c_idx > 0 && c_idx < lat->num_nodes) {
             board_cross_cache_init(&s_cand_caches[k], &lat->nodes[c_idx].board, dawg);
         }
+        cand_leave_lens[k] = (int)strlen(root->edges[k].move.leave);
+        memcpy(cand_leaves[k], root->edges[k].move.leave, cand_leave_lens[k] + 1);
     }
 
     for (int step = 0; step < max_steps && (step < 10 || !verdict.should_adjourn); step++) {
@@ -266,16 +270,15 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
 
                 /* 2. Active player's turn-2 draw realization with actual bag tiles */
                 Rack my_realized_rack;
-                rack_init(&my_realized_rack);
-                int leave_len = (int)strlen(root->edges[k].move.leave);
-                for (int i = 0; i < leave_len; i++) {
-                    rack_add_tile(&my_realized_rack, root->edges[k].move.leave[i]);
-                }
+                int leave_len = cand_leave_lens[k];
+                memcpy(my_realized_rack.tiles, cand_leaves[k], leave_len);
                 int needed = RACK_CAPACITY - leave_len;
                 int actual_draw = needed < rem_bag_count ? needed : rem_bag_count;
-                for (int i = 0; i < actual_draw; i++) {
-                    rack_add_tile(&my_realized_rack, rem_bag[i]);
+                if (actual_draw > 0) {
+                    memcpy(my_realized_rack.tiles + leave_len, rem_bag, actual_draw);
                 }
+                my_realized_rack.count = leave_len + actual_draw;
+                my_realized_rack.tiles[my_realized_rack.count] = '\0';
                 float my_realized = movegen_find_best_response_equity_cached(&leaf->board, &s_cand_caches[k], dawg, &my_realized_rack,
                                                                              bag_remaining > 0 ? bag_remaining - 1 : 0);
                 realized_scores[k] = my_realized;

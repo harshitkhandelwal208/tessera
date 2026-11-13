@@ -300,10 +300,14 @@ static Move select_magpie_sim_move(const Board *board, const Dawg *dawg, const R
 
     Board spec_boards[5];
     BoardCrossCache spec_caches[5];
+    char cand_leaves[5][8];
+    int cand_leave_lens[5];
     for (int k = 0; k < beam; k++) {
         board_copy(&spec_boards[k], board);
         board_apply_move(&spec_boards[k], &moves.moves[k]);
         board_cross_cache_init(&spec_caches[k], &spec_boards[k], dawg);
+        cand_leave_lens[k] = (int)strlen(moves.moves[k].leave);
+        memcpy(cand_leaves[k], moves.moves[k].leave, cand_leave_lens[k] + 1);
     }
 
     for (int s = 0; s < N_SIMS; s++) {
@@ -312,9 +316,10 @@ static Move select_magpie_sim_move(const Board *board, const Dawg *dawg, const R
         bot_shuffle_tiles(sim_unseen, unseen_count);
 
         Rack opp_r;
-        rack_init(&opp_r);
         int d = unseen_count < 7 ? unseen_count : 7;
-        for (int i = 0; i < d; i++) rack_add_tile(&opp_r, sim_unseen[i]);
+        memcpy(opp_r.tiles, sim_unseen, d);
+        opp_r.tiles[d] = '\0';
+        opp_r.count = d;
 
         for (int k = 0; k < beam; k++) {
             /* 1. Opponent best reply on spec board */
@@ -322,16 +327,16 @@ static Move select_magpie_sim_move(const Board *board, const Dawg *dawg, const R
 
             /* 2. Active player's turn-2 realization of leave */
             Rack my_realized_rack;
-            rack_init(&my_realized_rack);
-            for (int j = 0; moves.moves[k].leave[j]; j++) {
-                rack_add_tile(&my_realized_rack, moves.moves[k].leave[j]);
-            }
-            int refill = 7 - my_realized_rack.count;
+            int leave_len = cand_leave_lens[k];
+            memcpy(my_realized_rack.tiles, cand_leaves[k], leave_len);
+            int refill = 7 - leave_len;
             int avail = (unseen_count > d) ? (unseen_count - d) : 0;
             int draw_n = refill < avail ? refill : avail;
-            for (int r = 0; r < draw_n; r++) {
-                rack_add_tile(&my_realized_rack, sim_unseen[d + r]);
+            if (draw_n > 0) {
+                memcpy(my_realized_rack.tiles + leave_len, sim_unseen + d, draw_n);
             }
+            my_realized_rack.count = leave_len + draw_n;
+            my_realized_rack.tiles[my_realized_rack.count] = '\0';
 
             float my_realized_equity = movegen_find_best_response_equity_cached(&spec_boards[k], &spec_caches[k], dawg, &my_realized_rack, bag_count > 0 ? bag_count - 1 : 0);
 
