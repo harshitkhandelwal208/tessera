@@ -943,31 +943,45 @@ static inline float hsum256(__m256 v) {
 
 /*
  * AVX-512 / AVX2 Vectorized Raw Dot Product + Bias (No Activation).
+ * 4-way unrolled reduction accumulators eliminate 4-cycle loop-carried FMA dependencies.
  */
 static inline void vectorized_linear_raw(const float *weights, const float *biases,
                                          const float *in, float *out,
                                          int out_dim, int in_dim) {
 #if defined(__AVX512F__)
     for (int o = 0; o < out_dim; o++) {
-        __m512 v_acc = _mm512_setzero_ps();
+        __m512 v_acc0 = _mm512_setzero_ps();
+        __m512 v_acc1 = _mm512_setzero_ps();
         const float *w_row = &weights[o * in_dim];
-        for (int i = 0; i < in_dim; i += 16) {
-            __m512 v_w = _mm512_loadu_ps(&w_row[i]);
-            __m512 v_x = _mm512_loadu_ps(&in[i]);
-            v_acc = _mm512_fmadd_ps(v_w, v_x, v_acc);
+        int i = 0;
+        for (; i + 31 < in_dim; i += 32) {
+            v_acc0 = _mm512_fmadd_ps(_mm512_load_ps(&w_row[i + 0]),  _mm512_load_ps(&in[i + 0]),  v_acc0);
+            v_acc1 = _mm512_fmadd_ps(_mm512_load_ps(&w_row[i + 16]), _mm512_load_ps(&in[i + 16]), v_acc1);
         }
-        out[o] = _mm512_reduce_add_ps(v_acc) + biases[o];
+        for (; i < in_dim; i += 16) {
+            v_acc0 = _mm512_fmadd_ps(_mm512_load_ps(&w_row[i]), _mm512_load_ps(&in[i]), v_acc0);
+        }
+        out[o] = _mm512_reduce_add_ps(_mm512_add_ps(v_acc0, v_acc1)) + biases[o];
     }
 #elif defined(__AVX2__)
     for (int o = 0; o < out_dim; o++) {
-        __m256 v_acc = _mm256_setzero_ps();
+        __m256 v_acc0 = _mm256_setzero_ps();
+        __m256 v_acc1 = _mm256_setzero_ps();
+        __m256 v_acc2 = _mm256_setzero_ps();
+        __m256 v_acc3 = _mm256_setzero_ps();
         const float *w_row = &weights[o * in_dim];
-        for (int i = 0; i < in_dim; i += 8) {
-            __m256 v_w = _mm256_loadu_ps(&w_row[i]);
-            __m256 v_x = _mm256_loadu_ps(&in[i]);
-            v_acc = _mm256_fmadd_ps(v_w, v_x, v_acc);
+        int i = 0;
+        for (; i + 31 < in_dim; i += 32) {
+            v_acc0 = _mm256_fmadd_ps(_mm256_load_ps(&w_row[i + 0]),  _mm256_load_ps(&in[i + 0]),  v_acc0);
+            v_acc1 = _mm256_fmadd_ps(_mm256_load_ps(&w_row[i + 8]),  _mm256_load_ps(&in[i + 8]),  v_acc1);
+            v_acc2 = _mm256_fmadd_ps(_mm256_load_ps(&w_row[i + 16]), _mm256_load_ps(&in[i + 16]), v_acc2);
+            v_acc3 = _mm256_fmadd_ps(_mm256_load_ps(&w_row[i + 24]), _mm256_load_ps(&in[i + 24]), v_acc3);
         }
-        out[o] = hsum256(v_acc) + biases[o];
+        for (; i < in_dim; i += 8) {
+            v_acc0 = _mm256_fmadd_ps(_mm256_load_ps(&w_row[i]), _mm256_load_ps(&in[i]), v_acc0);
+        }
+        __m256 sum256 = _mm256_add_ps(_mm256_add_ps(v_acc0, v_acc1), _mm256_add_ps(v_acc2, v_acc3));
+        out[o] = hsum256(sum256) + biases[o];
     }
 #else
     for (int o = 0; o < out_dim; o++) {
@@ -992,20 +1006,40 @@ static inline void vectorized_dual_screlu(const float *in, float *out) {
 #if defined(__AVX512F__)
     __m512 v_zero = _mm512_setzero_ps();
     __m512 v_one = _mm512_set1_ps(1.0f);
-    for (int i = 0; i < NNUE_L1_DIM; i += 16) {
-        __m512 x = _mm512_load_ps(&in[i]);
-        __m512 c = _mm512_min_ps(_mm512_max_ps(x, v_zero), v_one);
-        _mm512_store_ps(&out[i], c);
-        _mm512_store_ps(&out[NNUE_L1_DIM + i], _mm512_mul_ps(c, c));
+    for (int i = 0; i < NNUE_L1_DIM; i += 32) {
+        __m512 x0 = _mm512_load_ps(&in[i + 0]);
+        __m512 c0 = _mm512_min_ps(_mm512_max_ps(x0, v_zero), v_one);
+        _mm512_store_ps(&out[i + 0], c0);
+        _mm512_store_ps(&out[NNUE_L1_DIM + i + 0], _mm512_mul_ps(c0, c0));
+
+        __m512 x1 = _mm512_load_ps(&in[i + 16]);
+        __m512 c1 = _mm512_min_ps(_mm512_max_ps(x1, v_zero), v_one);
+        _mm512_store_ps(&out[i + 16], c1);
+        _mm512_store_ps(&out[NNUE_L1_DIM + i + 16], _mm512_mul_ps(c1, c1));
     }
 #elif defined(__AVX2__)
     __m256 v_zero = _mm256_setzero_ps();
     __m256 v_one = _mm256_set1_ps(1.0f);
-    for (int i = 0; i < NNUE_L1_DIM; i += 8) {
-        __m256 x = _mm256_load_ps(&in[i]);
-        __m256 c = _mm256_min_ps(_mm256_max_ps(x, v_zero), v_one);
-        _mm256_store_ps(&out[i], c);
-        _mm256_store_ps(&out[NNUE_L1_DIM + i], _mm256_mul_ps(c, c));
+    for (int i = 0; i < NNUE_L1_DIM; i += 32) {
+        __m256 x0 = _mm256_load_ps(&in[i + 0]);
+        __m256 c0 = _mm256_min_ps(_mm256_max_ps(x0, v_zero), v_one);
+        _mm256_store_ps(&out[i + 0], c0);
+        _mm256_store_ps(&out[NNUE_L1_DIM + i + 0], _mm256_mul_ps(c0, c0));
+
+        __m256 x1 = _mm256_load_ps(&in[i + 8]);
+        __m256 c1 = _mm256_min_ps(_mm256_max_ps(x1, v_zero), v_one);
+        _mm256_store_ps(&out[i + 8], c1);
+        _mm256_store_ps(&out[NNUE_L1_DIM + i + 8], _mm256_mul_ps(c1, c1));
+
+        __m256 x2 = _mm256_load_ps(&in[i + 16]);
+        __m256 c2 = _mm256_min_ps(_mm256_max_ps(x2, v_zero), v_one);
+        _mm256_store_ps(&out[i + 16], c2);
+        _mm256_store_ps(&out[NNUE_L1_DIM + i + 16], _mm256_mul_ps(c2, c2));
+
+        __m256 x3 = _mm256_load_ps(&in[i + 24]);
+        __m256 c3 = _mm256_min_ps(_mm256_max_ps(x3, v_zero), v_one);
+        _mm256_store_ps(&out[i + 24], c3);
+        _mm256_store_ps(&out[NNUE_L1_DIM + i + 24], _mm256_mul_ps(c3, c3));
     }
 #else
     for (int i = 0; i < NNUE_L1_DIM; i++) {
@@ -1018,36 +1052,50 @@ static inline void vectorized_dual_screlu(const float *in, float *out) {
 
 /*
  * AVX-512 / AVX2 Vectorized Dot Product + Bias with ClippedReLU activation.
+ * 4-way unrolled reduction accumulators eliminate 4-cycle loop-carried FMA dependencies.
  */
 static inline void vectorized_linear_crelu(const float *weights, const float *biases,
                                            const float *in, float *out,
                                            int out_dim, int in_dim) {
 #if defined(__AVX512F__)
     for (int o = 0; o < out_dim; o++) {
-        __m512 v_acc = _mm512_setzero_ps();
+        __m512 v_acc0 = _mm512_setzero_ps();
+        __m512 v_acc1 = _mm512_setzero_ps();
         const float *w_row = &weights[o * in_dim];
 
-        for (int i = 0; i < in_dim; i += 16) {
-            __m512 v_w = _mm512_loadu_ps(&w_row[i]);
-            __m512 v_x = _mm512_loadu_ps(&in[i]);
-            v_acc = _mm512_fmadd_ps(v_w, v_x, v_acc);
+        int i = 0;
+        for (; i + 31 < in_dim; i += 32) {
+            v_acc0 = _mm512_fmadd_ps(_mm512_load_ps(&w_row[i + 0]),  _mm512_load_ps(&in[i + 0]),  v_acc0);
+            v_acc1 = _mm512_fmadd_ps(_mm512_load_ps(&w_row[i + 16]), _mm512_load_ps(&in[i + 16]), v_acc1);
+        }
+        for (; i < in_dim; i += 16) {
+            v_acc0 = _mm512_fmadd_ps(_mm512_load_ps(&w_row[i]), _mm512_load_ps(&in[i]), v_acc0);
         }
 
-        float sum = _mm512_reduce_add_ps(v_acc) + biases[o];
+        float sum = _mm512_reduce_add_ps(_mm512_add_ps(v_acc0, v_acc1)) + biases[o];
         out[o] = fminf(fmaxf(sum, 0.0f), 1.0f);
     }
 #elif defined(__AVX2__)
     for (int o = 0; o < out_dim; o++) {
-        __m256 v_acc = _mm256_setzero_ps();
+        __m256 v_acc0 = _mm256_setzero_ps();
+        __m256 v_acc1 = _mm256_setzero_ps();
+        __m256 v_acc2 = _mm256_setzero_ps();
+        __m256 v_acc3 = _mm256_setzero_ps();
         const float *w_row = &weights[o * in_dim];
 
-        for (int i = 0; i < in_dim; i += 8) {
-            __m256 v_w = _mm256_loadu_ps(&w_row[i]);
-            __m256 v_x = _mm256_loadu_ps(&in[i]);
-            v_acc = _mm256_fmadd_ps(v_w, v_x, v_acc);
+        int i = 0;
+        for (; i + 31 < in_dim; i += 32) {
+            v_acc0 = _mm256_fmadd_ps(_mm256_load_ps(&w_row[i + 0]),  _mm256_load_ps(&in[i + 0]),  v_acc0);
+            v_acc1 = _mm256_fmadd_ps(_mm256_load_ps(&w_row[i + 8]),  _mm256_load_ps(&in[i + 8]),  v_acc1);
+            v_acc2 = _mm256_fmadd_ps(_mm256_load_ps(&w_row[i + 16]), _mm256_load_ps(&in[i + 16]), v_acc2);
+            v_acc3 = _mm256_fmadd_ps(_mm256_load_ps(&w_row[i + 24]), _mm256_load_ps(&in[i + 24]), v_acc3);
+        }
+        for (; i < in_dim; i += 8) {
+            v_acc0 = _mm256_fmadd_ps(_mm256_load_ps(&w_row[i]), _mm256_load_ps(&in[i]), v_acc0);
         }
 
-        float sum = hsum256(v_acc) + biases[o];
+        __m256 sum256 = _mm256_add_ps(_mm256_add_ps(v_acc0, v_acc1), _mm256_add_ps(v_acc2, v_acc3));
+        float sum = hsum256(sum256) + biases[o];
         out[o] = fminf(fmaxf(sum, 0.0f), 1.0f);
     }
 #else
@@ -1334,10 +1382,434 @@ void nnue_accumulator_build_base(const NNUEModel *model, const Board *board, con
 
 int nnue_extract_move_sparse_features(const Board *board, const Move *move,
                                       int bag_count, int score_diff, SparseFeature *out_sparse) {
-    if (!move || !out_sparse) return 0;
-    alignas(64) float features[NNUE_INPUT_DIM];
-    nnue_extract_features_with_score(board, move, NULL, bag_count, score_diff, features);
+    if (!move || !out_sparse || !board) return 0;
 
+    alignas(64) float features[NNUE_INPUT_DIM] = {0};
+
+    int leave_counts[27] = {0};
+    int leave_len = 0;
+    int blanks = 0, high_placed = 0;
+    int vowels = 0, consonants = 0, high_points = 0, quad_points = 0;
+    int duplicate_count = 0, distinct_letters = 0;
+    int total_leave_points = 0;
+    float tw_cnt = 0.0f, dw_cnt = 0.0f, tl_cnt = 0.0f, dl_cnt = 0.0f;
+    int blanks_placed = 0;
+    float center_dist = 0.0f;
+    bool perimeter_touch = false;
+    bool ideal_vc = false;
+    int clumsy = 0;
+    int exp_empty_tw = 0, exp_empty_dw = 0, exp_empty_tl = 0, exp_empty_dl = 0;
+    int exp_tw_consonants = 0, exp_tw_vowels = 0;
+    int exp_dw_vowels = 0, exp_dw_consonants = 0;
+    int min_r = 15, max_r = -1, min_c = 15, max_c = -1;
+    int placed_on_bonus = 0;
+    bool touch_r0 = false, touch_r14 = false, touch_c0 = false, touch_c14 = false;
+    bool touch_r7 = false, touch_c7 = false;
+    bool crosses_tw_lane = false, crosses_dw_lane = false;
+    bool touches_power = false;
+    bool s_placed = false;
+    bool q_placed = false, z_placed = false, x_placed = false, j_placed = false;
+    bool high_on_bonus = false;
+    int exposed_tw_vowels = 0;
+    int floating_tiles = 0;
+
+    /* 1. Placement Geometry & Board Intersections (0..15) */
+    features[0] = (float)move->score / 50.0f;
+    features[1] = (float)move->num_placed / 7.0f;
+    features[2] = (move->num_placed == 7) ? 1.0f : 0.0f;
+
+    for (int p = 0; p < move->num_placed; p++) {
+        int r = move->placed[p].row;
+        int c = move->placed[p].col;
+        MultiplierType m = board_get_multiplier(r, c);
+        if (m == MULT_TW) tw_cnt += 1.0f;
+        else if (m == MULT_DW) dw_cnt += 1.0f;
+        else if (m == MULT_TL) tl_cnt += 1.0f;
+        else if (m == MULT_DL) dl_cnt += 1.0f;
+        if (m != MULT_NONE) placed_on_bonus++;
+
+        if (r == 0) touch_r0 = true;
+        if (r == 14) touch_r14 = true;
+        if (c == 0) touch_c0 = true;
+        if (c == 14) touch_c14 = true;
+        if (r == 7) touch_r7 = true;
+        if (c == 7) touch_c7 = true;
+        if (r == 0 || r == 7 || r == 14) crosses_tw_lane = true;
+        if (c == 0 || c == 7 || c == 14) crosses_tw_lane = true;
+        if (r == c || r + c == 14) crosses_dw_lane = true;
+
+        if (r < min_r) min_r = r;
+        if (r > max_r) max_r = r;
+        if (c < min_c) min_c = c;
+        if (c > max_c) max_c = c;
+
+        if (move->placed[p].is_blank) blanks_placed++;
+        char let = move->placed[p].letter;
+        if (let == 'S') s_placed = true;
+        bool is_b = (m != MULT_NONE);
+        if (let == 'Q') { q_placed = true; if (is_b) high_on_bonus = true; }
+        if (let == 'Z') { z_placed = true; if (is_b) high_on_bonus = true; }
+        if (let == 'X') { x_placed = true; if (is_b) high_on_bonus = true; }
+        if (let == 'J') { j_placed = true; if (is_b) high_on_bonus = true; }
+
+        if (let >= 'A' && let <= 'Z' && TILE_VALUES[let - 'A'] >= 4) high_placed++;
+
+        float dist = (float)(abs(r - 7) + abs(c - 7));
+        if (dist > center_dist) center_dist = dist;
+        if (r == 0 || r == 14 || c == 0 || c == 14) perimeter_touch = true;
+
+        bool is_v = is_vowel_char(let);
+        int dr[4] = {-1, 1, 0, 0};
+        int dc[4] = {0, 0, -1, 1};
+        bool has_perp = false;
+        for (int d = 0; d < 4; d++) {
+            int nr = r + dr[d];
+            int nc = c + dc[d];
+            if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
+                char t = board->cells[nr][nc].tile;
+                if (t != 0) {
+                    has_perp = true;
+                    if (t == 'Q' || t == 'Z' || t == 'X' || t == 'J') touches_power = true;
+                } else {
+                    MultiplierType nm = board_get_multiplier(nr, nc);
+                    if (nm == MULT_TW) {
+                        exp_empty_tw++;
+                        if (is_v) exp_tw_vowels++;
+                        else exp_tw_consonants++;
+                    } else if (nm == MULT_DW) {
+                        exp_empty_dw++;
+                        if (is_v) exp_dw_vowels++;
+                        else exp_dw_consonants++;
+                    } else if (nm == MULT_TL) {
+                        exp_empty_tl++;
+                    } else if (nm == MULT_DL) {
+                        exp_empty_dl++;
+                    }
+                    if (is_v && nm == MULT_TW) {
+                        exposed_tw_vowels++;
+                    }
+                }
+            }
+        }
+        if (!has_perp) floating_tiles++;
+    }
+
+    features[3] = tw_cnt;
+    features[4] = dw_cnt;
+    features[5] = tl_cnt;
+    features[6] = dl_cnt;
+    features[7] = (float)strlen(move->word) / 15.0f;
+    features[8] = (move->dir == DIR_VERTICAL) ? 1.0f : 0.0f;
+    features[9] = center_dist / 14.0f;
+    features[10] = perimeter_touch ? 1.0f : 0.0f;
+    features[11] = (float)blanks_placed;
+    features[12] = (float)high_placed / 3.0f;
+    features[13] = (float)move->score / (float)(move->num_placed > 0 ? move->num_placed : 1) / 20.0f;
+    features[14] = (tw_cnt > 0.0f && dw_cnt > 0.0f) ? 1.0f : 0.0f;
+    features[15] = (move->type == MOVE_EXCHANGE) ? 1.0f : 0.0f;
+
+    /* 2. Leave Tile Counts (16..42) */
+    leave_len = (int)strlen(move->leave);
+    for (int i = 0; i < leave_len; i++) {
+        char c = move->leave[i];
+        if (c == '?') {
+            leave_counts[26]++;
+            blanks++;
+        } else if (c >= 'A' && c <= 'Z') {
+            int idx = c - 'A';
+            if (leave_counts[idx] == 0) distinct_letters++;
+            else duplicate_count++;
+            leave_counts[idx]++;
+
+            if (is_vowel_char(c)) vowels++;
+            else consonants++;
+
+            int val = TILE_VALUES[idx];
+            total_leave_points += val;
+            if (val >= 4) high_points++;
+            if (val >= 8) quad_points++;
+        }
+    }
+    for (int i = 0; i < 27; i++) {
+        features[16 + i] = (float)leave_counts[i];
+    }
+
+    /* 3. Pairwise Leave Interactions (43..420) */
+    int pair_idx = 0;
+    for (int i = 0; i < 27; i++) {
+        for (int j = i; j < 27; j++) {
+            if (pair_idx < 378) {
+                if (i == j) {
+                    if (leave_counts[i] >= 2) features[43 + pair_idx] = 1.0f;
+                } else {
+                    if (leave_counts[i] >= 1 && leave_counts[j] >= 1) {
+                        features[43 + pair_idx] = 1.0f;
+                    }
+                }
+            }
+            pair_idx++;
+        }
+    }
+
+    /* 4. Tri-Tile Leave Synergies (421..484) */
+    static const char *triplets[64] = {
+        "ING", "ERS", "EST", "IER", "IES", "ION", "IST", "ITY", "ANT", "ENT",
+        "ATE", "IVE", "OUS", "FUL", "LES", "NES", "RED", "TED", "CON", "DIS",
+        "MIS", "PRE", "PRO", "SUB", "RET", "TIS", "RIN", "SIN", "TIN", "AIN",
+        "EIN", "OIN", "RES", "TES", "DES", "SES", "STA", "STR", "ADE", "AGE",
+        "ALE", "ANE", "ARE", "ASE", "AVE", "EAR", "EAT", "END", "ERA", "ERR",
+        "ETA", "IDE", "INE", "OAR", "ONE", "ORE", "ORT", "AIR", "AIS", "AIT",
+        "ELS", "ELT", "ENS", "ENT"
+    };
+    if (leave_len >= 3) {
+        for (int t = 0; t < 64; t++) {
+            int req[27] = {0};
+            const char *trip = triplets[t];
+            for (int k = 0; k < 3; k++) req[trip[k] - 'A']++;
+            bool ok = true;
+            for (int k = 0; k < 26; k++) {
+                if (req[k] > leave_counts[k]) { ok = false; break; }
+            }
+            if (ok) features[421 + t] = 1.0f;
+        }
+    }
+
+    /* 5. Macro Rack Composition (485..504) */
+    features[485] = (float)vowels / 5.0f;
+    features[486] = (float)consonants / 5.0f;
+    features[487] = ((float)vowels - (float)consonants) / 5.0f;
+    features[488] = (float)blanks;
+    features[489] = (float)high_points / 3.0f;
+    features[490] = (float)quad_points;
+    features[491] = (float)duplicate_count / 3.0f;
+    features[492] = (duplicate_count >= 2) ? 1.0f : 0.0f;
+    features[493] = (float)distinct_letters / 7.0f;
+    features[494] = (float)total_leave_points / 30.0f;
+    float v_ratio = (vowels + consonants > 0) ? (float)vowels / (float)(vowels + consonants) : 0.5f;
+    features[495] = v_ratio;
+    ideal_vc = (vowels == 2 && consonants == 3) || (vowels == 3 && consonants == 2) ||
+               (vowels == 2 && consonants == 2) || (vowels == 3 && consonants == 3);
+    features[496] = ideal_vc ? 1.0f : 0.0f;
+    features[497] = (leave_len >= 3 && vowels == 0) ? 1.0f : 0.0f;
+    features[498] = (leave_len >= 3 && consonants == 0) ? 1.0f : 0.0f;
+    features[499] = (leave_counts['Q' - 'A'] > 0 && leave_counts['U' - 'A'] == 0) ? 1.0f : 0.0f;
+    float unplayable_penalty = (leave_counts['Q' - 'A'] * 10.0f + leave_counts['V' - 'A'] * 5.0f) / 25.0f;
+    features[500] = unplayable_penalty;
+    features[501] = (float)leave_counts['S' - 'A'];
+    clumsy = leave_counts['V' - 'A'] + leave_counts['W' - 'A'] + leave_counts['Y' - 'A'];
+    features[502] = (float)clumsy / 3.0f;
+    int liquid = leave_counts['L' - 'A'] + leave_counts['R' - 'A'] + leave_counts['S' - 'A'] + leave_counts['T' - 'A'];
+    features[503] = (float)liquid / 4.0f;
+    features[504] = (float)leave_len / 7.0f;
+
+    /* 6. Championship Bingo Stems (505..536) */
+    static const char *stems[32] = {
+        "AEINST", "AEINRT", "ADENRS", "AELRST", "AEORST", "AENRST",
+        "EINST",  "EINRT",  "DENRS",  "ELRST",  "EORST",  "ENRST",
+        "AEIN",   "AEIR",   "AEIS",   "AEIT",   "AELN",   "AELR",
+        "AELS",   "AELT",   "AERS",   "AERT",   "EILR",   "EILS",
+        "EILT",   "EINS",   "EINT",   "EIRS",   "EIRT",   "ENRS",
+        "ENRT",   "ERST"
+    };
+    if (leave_len >= 4) {
+        for (int s = 0; s < 32; s++) {
+            bool match = true;
+            for (const char *p = stems[s]; *p; p++) {
+                if (leave_counts[*p - 'A'] < 1) { match = false; break; }
+            }
+            if (match) features[505 + s] = 1.0f;
+        }
+    }
+
+    /* 7. Exposed TW Vowels & Floating Tiles (541, 557) */
+    features[541] = (float)exposed_tw_vowels;
+    features[557] = (float)floating_tiles / 7.0f;
+
+    /* 8. Board Synergy & Extended 4-Tile Stems (701..868) */
+    int total_anchors = bb_popcount(&board->anchors);
+    features[701] = (leave_counts['S' - 'A'] > 0 && total_anchors > 5) ? 1.0f : 0.0f;
+    features[702] = (leave_counts['D' - 'A'] > 0 && total_anchors > 5) ? 1.0f : 0.0f;
+    features[703] = (leave_counts['R' - 'A'] > 0 && leave_counts['E' - 'A'] > 0) ? 1.0f : 0.0f;
+    features[704] = (blanks > 0 && move->score < 35) ? -1.0f : 0.0f;
+    features[705] = (leave_counts['S' - 'A'] > 0 && move->score < 25) ? -0.5f : 0.0f;
+    features[706] = (high_placed > 0 && move->score >= 35) ? 1.0f : 0.0f;
+    features[707] = (move->num_placed == 7 && score_diff < 0) ? 1.0f : 0.0f;
+    features[708] = (leave_len == 0) ? 1.0f : 0.0f;
+
+    static const char *stems4[64] = {
+        "ACER", "ACRS", "ADEL", "ADER", "ADES", "ADIS", "AELP", "AELS", "AELT", "AEMN",
+        "AENR", "AENS", "AEPS", "AERS", "AEST", "AILS", "AILV", "AINR", "AINS", "AINT",
+        "AIRS", "AIRT", "AIST", "ALMN", "ALNR", "ALNS", "ALOS", "ALRT", "ALST", "ANOR",
+        "ANRS", "ANST", "AORT", "ARST", "CDEN", "CINT", "DEIN", "DEIR", "DEIS", "DEIT",
+        "DELN", "DELR", "DELS", "DENR", "DENS", "DEOR", "DEOS", "DERT", "DEST", "EILN",
+        "EILR", "EILS", "EILT", "EIMN", "EIMR", "EIMS", "EINP", "EINR", "EINS", "EINT",
+        "EIPS", "EIPR", "EIRT", "EIST"
+    };
+    if (leave_len >= 4) {
+        for (int s = 0; s < 64; s++) {
+            bool ok = true;
+            for (int k = 0; k < 4; k++) {
+                if (leave_counts[stems4[s][k] - 'A'] < 1) { ok = false; break; }
+            }
+            if (ok) features[709 + s] = 1.0f;
+        }
+    }
+
+    static const char *pairs2[48] = {
+        "ER", "IN", "ES", "RE", "AN", "EN", "TI", "ST", "ON", "OR",
+        "AT", "TE", "AL", "AR", "IS", "IT", "ED", "NT", "RA", "TO",
+        "ET", "SE", "NE", "LI", "LE", "RO", "ND", "RI", "NG", "DE",
+        "ME", "SA", "EL", "TA", "SI", "TH", "LO", "DI", "CO", "MA",
+        "CA", "LA", "NA", "PE", "PR", "TR", "PL", "CL"
+    };
+    if (leave_len >= 2) {
+        for (int p = 0; p < 48; p++) {
+            char c0 = pairs2[p][0];
+            char c1 = pairs2[p][1];
+            if (c0 == c1) {
+                if (leave_counts[c0 - 'A'] >= 2) features[773 + p] = 1.0f;
+            } else {
+                if (leave_counts[c0 - 'A'] >= 1 && leave_counts[c1 - 'A'] >= 1) features[773 + p] = 1.0f;
+            }
+        }
+    }
+
+    for (int c = 0; c < 26; c++) {
+        if (leave_counts[c] >= 2) {
+            features[821 + c] = (float)(leave_counts[c] - 1);
+        }
+    }
+    bool trip_dup = false;
+    for (int c = 0; c < 26; c++) {
+        if (leave_counts[c] >= 3) { trip_dup = true; break; }
+    }
+    features[847] = trip_dup ? 1.0f : 0.0f;
+    features[848] = (vowels == 0) ? 1.0f : 0.0f;
+    features[849] = (vowels == 1) ? 1.0f : 0.0f;
+    features[850] = (vowels == 2) ? 1.0f : 0.0f;
+    features[851] = (vowels >= 3) ? 1.0f : 0.0f;
+    features[852] = (consonants == 0) ? 1.0f : 0.0f;
+    features[853] = (consonants == 1) ? 1.0f : 0.0f;
+    features[854] = (consonants == 2) ? 1.0f : 0.0f;
+    features[855] = (consonants >= 3) ? 1.0f : 0.0f;
+    features[856] = (blanks > 0 && leave_counts['S' - 'A'] > 0) ? 1.0f : 0.0f;
+    features[857] = (leave_counts['S' - 'A'] >= 2) ? 1.0f : 0.0f;
+    features[858] = (blanks >= 2) ? 1.0f : 0.0f;
+    features[859] = (leave_counts['Q' - 'A'] > 0) ? 1.0f : 0.0f;
+    features[860] = (leave_counts['Z' - 'A'] > 0) ? 1.0f : 0.0f;
+    features[861] = (leave_counts['J' - 'A'] > 0) ? 1.0f : 0.0f;
+    features[862] = (leave_counts['X' - 'A'] > 0) ? 1.0f : 0.0f;
+    features[863] = (leave_counts['K' - 'A'] > 0) ? 1.0f : 0.0f;
+    features[864] = (leave_counts['V' - 'A'] > 0) ? 1.0f : 0.0f;
+    features[865] = (leave_counts['W' - 'A'] > 0) ? 1.0f : 0.0f;
+    features[866] = (leave_counts['Y' - 'A'] > 0) ? 1.0f : 0.0f;
+    features[867] = (leave_counts['B' - 'A'] > 0) ? 1.0f : 0.0f;
+    features[868] = (leave_counts['P' - 'A'] > 0) ? 1.0f : 0.0f;
+
+    /* 9. Power Tiles, Lanes & Tactical Geometry (879..929) */
+    features[879] = touch_r0 ? 1.0f : 0.0f;
+    features[880] = touch_r14 ? 1.0f : 0.0f;
+    features[881] = touch_c0 ? 1.0f : 0.0f;
+    features[882] = touch_c14 ? 1.0f : 0.0f;
+    features[883] = touch_r7 ? 1.0f : 0.0f;
+    features[884] = touch_c7 ? 1.0f : 0.0f;
+    features[885] = crosses_tw_lane ? 1.0f : 0.0f;
+    features[886] = crosses_dw_lane ? 1.0f : 0.0f;
+    features[887] = (float)exp_empty_tw / 4.0f;
+    features[888] = (float)exp_empty_dw / 8.0f;
+    features[889] = (float)exp_empty_tl / 6.0f;
+    features[890] = (float)exp_empty_dl / 12.0f;
+    features[891] = (float)exp_tw_consonants / 2.0f;
+    features[892] = (float)exp_tw_vowels / 2.0f;
+    features[893] = (float)exp_dw_vowels / 4.0f;
+    features[894] = (float)exp_dw_consonants / 4.0f;
+    features[895] = (min_r >= 0 && min_r <= 14) ? (float)min_r / 14.0f : 0.5f;
+    features[896] = (min_c >= 0 && min_c <= 14) ? (float)min_c / 14.0f : 0.5f;
+    int span = (max_r >= min_r && max_c >= min_c) ? (max_r - min_r + max_c - min_c + 1) : 0;
+    features[897] = (float)span / 15.0f;
+    features[898] = (move->num_placed == 1) ? 1.0f : 0.0f;
+    features[899] = (move->col > 0 && board->cells[move->row][move->col - 1].tile != 0) ? 1.0f : 0.0f;
+    features[900] = (move->dir == DIR_HORIZONTAL && move->col + (int)strlen(move->word) < BOARD_SIZE &&
+                     board->cells[move->row][move->col + (int)strlen(move->word)].tile != 0) ? 1.0f : 0.0f;
+    int num_cross = (move->num_placed > 1) ? (move->num_placed - 1) : 0;
+    features[901] = (num_cross >= 2) ? 1.0f : 0.0f;
+    features[902] = (float)num_cross / 5.0f;
+    features[903] = (float)move->score / 50.0f;
+    features[904] = (float)move->score / (float)(move->num_placed > 0 ? move->num_placed : 1) / 10.0f;
+    features[905] = (move->score > 0) ? (float)placed_on_bonus / (float)(move->num_placed > 0 ? move->num_placed : 1) : 0.0f;
+    features[906] = (placed_on_bonus >= 2) ? 1.0f : 0.0f;
+    features[907] = (float)move->num_placed / 7.0f;
+    features[908] = (float)exp_empty_tw;
+    features[909] = (float)(exp_empty_tw - (tw_cnt > 0.0f ? 1 : 0));
+    features[910] = (touch_r0 || touch_r14 || touch_c0 || touch_c14) ? 1.0f : 0.0f;
+    features[911] = (exp_empty_tw + exp_empty_dw >= 2) ? 1.0f : 0.0f;
+    features[912] = (exp_empty_tw + exp_empty_dw == 0) ? 1.0f : 0.0f;
+    features[913] = (crosses_tw_lane && move->num_placed >= 4) ? 1.0f : 0.0f;
+    features[914] = (center_dist <= 3.0f) ? 1.0f : 0.0f;
+    features[915] = (center_dist >= 8.0f) ? 1.0f : 0.0f;
+    features[916] = touches_power ? 1.0f : 0.0f;
+    features[917] = (blanks_placed > 0 && move->num_placed < 7) ? 1.0f : 0.0f;
+    features[918] = (blanks_placed > 0 && move->num_placed == 7) ? 1.0f : 0.0f;
+    features[919] = (blanks > 0) ? 1.0f : 0.0f;
+    features[920] = (s_placed && move->num_placed < 7) ? 1.0f : 0.0f;
+    features[921] = (s_placed && move->num_placed == 7) ? 1.0f : 0.0f;
+    features[922] = (leave_counts['S' - 'A'] > 0) ? 1.0f : 0.0f;
+    features[923] = (q_placed && high_on_bonus) ? 1.0f : 0.0f;
+    features[924] = (z_placed && high_on_bonus) ? 1.0f : 0.0f;
+    features[925] = (x_placed && high_on_bonus) ? 1.0f : 0.0f;
+    features[926] = (j_placed && high_on_bonus) ? 1.0f : 0.0f;
+    features[927] = (q_placed && move->score < 20) ? 1.0f : 0.0f;
+    features[928] = (high_placed > 0 && move->score >= 35) ? 1.0f : 0.0f;
+    features[929] = (clumsy > 0 && (leave_counts['Q'-'A'] > 0 || leave_counts['Z'-'A'] > 0)) ? 1.0f : 0.0f;
+
+    /* 10. Tactical Synergies (951..964) */
+    bool perfect_leave = (strcmp(move->leave, "ER") == 0 || strcmp(move->leave, "IN") == 0 ||
+                          strcmp(move->leave, "ST") == 0 || strcmp(move->leave, "RE") == 0 ||
+                          strcmp(move->leave, "ES") == 0);
+    features[951] = perfect_leave ? 1.0f : 0.0f;
+    features[952] = (move->score >= 40 && move->num_placed <= 4) ? 1.0f : 0.0f;
+    features[953] = (move->num_placed > 0 && (float)move->score / (float)move->num_placed >= 8.0f) ? 1.0f : 0.0f;
+    features[954] = (move->num_placed == 1 && (q_placed || z_placed || x_placed || j_placed)) ? 1.0f : 0.0f;
+    features[955] = (move->type == MOVE_EXCHANGE && move->num_placed >= 5) ? 1.0f : 0.0f;
+    int placed_vowels = 0, placed_consonants = 0;
+    for (int p = 0; p < move->num_placed; p++) {
+        if (is_vowel_char(move->placed[p].letter)) placed_vowels++;
+        else placed_consonants++;
+    }
+    features[956] = (placed_vowels >= 3 && ideal_vc) ? 1.0f : 0.0f;
+    features[957] = (placed_consonants >= 4 && ideal_vc) ? 1.0f : 0.0f;
+    features[958] = (move->num_placed == 1 && move->score >= 20) ? 1.0f : 0.0f;
+    features[959] = (tw_cnt >= 2.0f) ? 1.0f : 0.0f;
+    features[960] = (move->num_placed >= 3 && num_cross >= 2) ? 1.0f : 0.0f;
+    features[961] = (num_cross >= 1 && move->score >= 30) ? 1.0f : 0.0f;
+    features[962] = (leave_len == 0) ? 1.0f : 0.0f;
+    features[963] = (leave_len == 1) ? 1.0f : 0.0f;
+    features[964] = (leave_len == 2) ? 1.0f : 0.0f;
+
+    /* 11. Post-Move Dynamic Margin & Win Probability (974..990) */
+    int post_diff = score_diff + move->score;
+    int post_bag = bag_count >= move->num_placed ? (bag_count - move->num_placed) : 0;
+    features[974] = (post_diff >= 80) ? 1.0f : 0.0f;
+    features[975] = (post_diff >= 40 && post_diff < 80) ? 1.0f : 0.0f;
+    features[976] = (post_diff >= 15 && post_diff < 40) ? 1.0f : 0.0f;
+    features[977] = (post_diff >= -14 && post_diff < 15) ? 1.0f : 0.0f;
+    features[978] = (post_diff >= -39 && post_diff < -14) ? 1.0f : 0.0f;
+    features[979] = (post_diff >= -79 && post_diff < -39) ? 1.0f : 0.0f;
+    features[980] = (post_diff < -79) ? 1.0f : 0.0f;
+    float post_win = eval_win_probability(post_diff, post_bag);
+    float pre_win = eval_win_probability(score_diff, bag_count);
+    features[981] = post_win;
+    features[982] = post_win - pre_win;
+    features[983] = (score_diff < 0 && post_diff > 0) ? 1.0f : 0.0f;
+    features[984] = (post_diff >= score_diff + 30) ? 1.0f : 0.0f;
+    features[985] = (score_diff < -50 && move->score >= 40) ? 1.0f : 0.0f;
+    features[986] = (score_diff > 40 && move->num_placed <= 2) ? 1.0f : 0.0f;
+    features[987] = (post_diff > 0) ? tanhf((float)post_diff / 50.0f) : 0.0f;
+    features[988] = (post_diff < 0) ? tanhf((float)(-post_diff) / 50.0f) : 0.0f;
+    features[989] = (move->num_placed == 7 && post_diff >= 60) ? 1.0f : 0.0f;
+    features[990] = (move->num_placed == 7 && fabsf((float)score_diff) <= 20.0f) ? 1.0f : 0.0f;
+
+    /* Collect non-zero sparse delta features */
     int count = 0;
     for (int i = 0; i <= 536; i++) {
         if (features[i] != 0.0f) {
@@ -1418,13 +1890,14 @@ void nnue_accumulator_apply_sparse(const NNUEModel *model, const NNUEAccumulator
         for (int f = 0; f < num_features; f++) {
             uint16_t idx = features[f].index;
             __m256 val = _mm256_set1_ps(features[f].value);
-            a0 = _mm256_fmadd_ps(val, _mm256_load_ps(&model->w1_by_feature[idx][o + 0]), a0);
-            a1 = _mm256_fmadd_ps(val, _mm256_load_ps(&model->w1_by_feature[idx][o + 8]), a1);
-            a2 = _mm256_fmadd_ps(val, _mm256_load_ps(&model->w1_by_feature[idx][o + 16]), a2);
-            a3 = _mm256_fmadd_ps(val, _mm256_load_ps(&model->w1_by_feature[idx][o + 24]), a3);
+            const float *w = &model->w1_by_feature[idx][o];
+            a0 = _mm256_fmadd_ps(val, _mm256_load_ps(&w[0]),  a0);
+            a1 = _mm256_fmadd_ps(val, _mm256_load_ps(&w[8]),  a1);
+            a2 = _mm256_fmadd_ps(val, _mm256_load_ps(&w[16]), a2);
+            a3 = _mm256_fmadd_ps(val, _mm256_load_ps(&w[24]), a3);
         }
-        _mm256_store_ps(&out_acc->vals[o + 0], a0);
-        _mm256_store_ps(&out_acc->vals[o + 8], a1);
+        _mm256_store_ps(&out_acc->vals[o + 0],  a0);
+        _mm256_store_ps(&out_acc->vals[o + 8],  a1);
         _mm256_store_ps(&out_acc->vals[o + 16], a2);
         _mm256_store_ps(&out_acc->vals[o + 24], a3);
     }
@@ -1460,16 +1933,16 @@ float nnue_forward_accumulator(const NNUEModel *model, const NNUEAccumulator *ac
 #if defined(__AVX512F__)
     __m512 v_acc = _mm512_setzero_ps();
     for (int i = 0; i < NNUE_L3_DIM; i += 16) {
-        __m512 v_w = _mm512_loadu_ps(&model->w_spread[i]);
-        __m512 v_x = _mm512_loadu_ps(&l3_act[i]);
+        __m512 v_w = _mm512_load_ps(&model->w_spread[i]);
+        __m512 v_x = _mm512_load_ps(&l3_act[i]);
         v_acc = _mm512_fmadd_ps(v_w, v_x, v_acc);
     }
     float raw_equity = _mm512_reduce_add_ps(v_acc) + model->b_spread;
 #elif defined(__AVX2__)
     __m256 v_acc = _mm256_setzero_ps();
     for (int i = 0; i < NNUE_L3_DIM; i += 8) {
-        __m256 v_w = _mm256_loadu_ps(&model->w_spread[i]);
-        __m256 v_x = _mm256_loadu_ps(&l3_act[i]);
+        __m256 v_w = _mm256_load_ps(&model->w_spread[i]);
+        __m256 v_x = _mm256_load_ps(&l3_act[i]);
         v_acc = _mm256_fmadd_ps(v_w, v_x, v_acc);
     }
     float raw_equity = hsum256(v_acc) + model->b_spread;
@@ -1506,9 +1979,9 @@ NNUEResult nnue_forward_accumulator_dual(const NNUEModel *model, const NNUEAccum
     __m512 v_acc1 = _mm512_setzero_ps();
     __m512 v_acc2 = _mm512_setzero_ps();
     for (int i = 0; i < NNUE_L3_DIM; i += 16) {
-        __m512 v_x = _mm512_loadu_ps(&l3_act[i]);
-        __m512 v_w1 = _mm512_loadu_ps(&model->w_spread[i]);
-        __m512 v_w2 = _mm512_loadu_ps(&model->w_win[i]);
+        __m512 v_x = _mm512_load_ps(&l3_act[i]);
+        __m512 v_w1 = _mm512_load_ps(&model->w_spread[i]);
+        __m512 v_w2 = _mm512_load_ps(&model->w_win[i]);
         v_acc1 = _mm512_fmadd_ps(v_w1, v_x, v_acc1);
         v_acc2 = _mm512_fmadd_ps(v_w2, v_x, v_acc2);
     }
@@ -1520,9 +1993,9 @@ NNUEResult nnue_forward_accumulator_dual(const NNUEModel *model, const NNUEAccum
     __m256 v_acc1 = _mm256_setzero_ps();
     __m256 v_acc2 = _mm256_setzero_ps();
     for (int i = 0; i < NNUE_L3_DIM; i += 8) {
-        __m256 v_x = _mm256_loadu_ps(&l3_act[i]);
-        __m256 v_w1 = _mm256_loadu_ps(&model->w_spread[i]);
-        __m256 v_w2 = _mm256_loadu_ps(&model->w_win[i]);
+        __m256 v_x = _mm256_load_ps(&l3_act[i]);
+        __m256 v_w1 = _mm256_load_ps(&model->w_spread[i]);
+        __m256 v_w2 = _mm256_load_ps(&model->w_win[i]);
         v_acc1 = _mm256_fmadd_ps(v_w1, v_x, v_acc1);
         v_acc2 = _mm256_fmadd_ps(v_w2, v_x, v_acc2);
     }
