@@ -5,10 +5,64 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdalign.h>
+#include <assert.h>
 
 #define MOVE_ARENA_MAX_DEPTH 8
 static _Thread_local alignas(64) Move s_move_arena[MOVE_ARENA_MAX_DEPTH][INITIAL_MOVE_CAPACITY];
 static _Thread_local int s_move_arena_in_use[MOVE_ARENA_MAX_DEPTH] = {0};
+
+/*
+ * Ultra-fast in-register move scorer.
+ * Directly evaluates the score of a horizontal word on ctx->board using precomputed cross-checks.
+ * Eliminates all coordinate conversions, direction branches, and board cell walks.
+ */
+static inline int score_horizontal_move(const Board *b, const CrossCheck (*cross_checks)[BOARD_SIZE],
+                                        int row, int start_col, const char *word, int word_len,
+                                        const PlacedTile *placed, int num_placed) {
+    int main_word_sum = 0;
+    int main_word_mult = 1;
+    int total_score = 0;
+    int placed_k = 0;
+
+    for (int i = 0; i < word_len; i++) {
+        int c = start_col + i;
+        if (b->cells[row][c].tile != 0) {
+            bool is_blank = b->cells[row][c].is_blank;
+            main_word_sum += is_blank ? 0 : TILE_VALUES[b->cells[row][c].tile - 'A'];
+        } else {
+            bool is_blank = placed[placed_k].is_blank;
+            int let_val = is_blank ? 0 : TILE_VALUES[word[i] - 'A'];
+            MultiplierType m = b->cells[row][c].mult;
+            int letter_mult = 1;
+            int word_mult = 1;
+
+            if (m == MULT_DL) letter_mult = 2;
+            else if (m == MULT_TL) letter_mult = 3;
+            else if (m == MULT_DW) { main_word_mult *= 2; word_mult = 2; }
+            else if (m == MULT_TW) { main_word_mult *= 3; word_mult = 3; }
+
+            main_word_sum += let_val * letter_mult;
+
+            if (cross_checks) {
+                int let_idx = word[i] - 'A';
+                int cscore = cross_checks[row][c].cross_scores[let_idx];
+                if (cscore > 0) {
+                    if (is_blank) {
+                        cscore -= TILE_VALUES[let_idx] * letter_mult * word_mult;
+                    }
+                    total_score += cscore;
+                }
+            }
+            placed_k++;
+        }
+    }
+
+    total_score += main_word_sum * main_word_mult;
+    if (num_placed == 7) {
+        total_score += 50;
+    }
+    return total_score;
+}
 
 void move_list_init(MoveList *list) {
     if (!list) return;
@@ -49,9 +103,7 @@ void move_list_destroy(MoveList *list) {
 
 void board_transpose(Board *dst, const Board *src) {
     if (src->is_empty) {
-        memset(dst, 0, sizeof(Board));
-        dst->is_empty = true;
-        bb_set(&dst->anchors, 7, 7);
+        board_init(dst);
         return;
     }
     dst->is_empty = false;
@@ -142,31 +194,11 @@ static inline void compute_leave(const Rack *orig_rack, const PlacedTile *placed
     leave[out_len] = '\0';
 }
 
-static inline void record_move(GenContext *ctx, int row, int start_col, const char *word,
+static inline void record_move(GenContext *ctx, int row, int start_col, const char *word, int word_len,
                                const PlacedTile *placed, int num_placed) {
     if (ctx->list == NULL) {
         /* Fast mode: directly compute score in registers without allocating Move or computing leaves */
-        Move m;
-        m.type = MOVE_PLAY;
-        m.num_placed = num_placed;
-        strcpy(m.word, word);
-        if (!ctx->is_transposed) {
-            m.dir = DIR_HORIZONTAL;
-            m.row = row;
-            m.col = start_col;
-            for (int i = 0; i < num_placed; i++) m.placed[i] = placed[i];
-        } else {
-            m.dir = DIR_VERTICAL;
-            m.row = start_col;
-            m.col = row;
-            for (int i = 0; i < num_placed; i++) {
-                m.placed[i].row = placed[i].col;
-                m.placed[i].col = placed[i].row;
-                m.placed[i].letter = placed[i].letter;
-                m.placed[i].is_blank = placed[i].is_blank;
-            }
-        }
-        int score = board_score_move(ctx->orig_board, ctx->dawg, &m);
+        int score = score_horizontal_move(ctx->board, ctx->cross_checks, row, start_col, word, word_len, placed, num_placed);
         if (score > ctx->best_score) ctx->best_score = score;
         if (ctx->track_equity) {
             char leave[RACK_CAPACITY + 1];
@@ -207,7 +239,7 @@ static inline void record_move(GenContext *ctx, int row, int start_col, const ch
     Move *m = &ctx->list->moves[ctx->list->count];
     m->type = MOVE_PLAY;
     m->num_placed = num_placed;
-    strcpy(m->word, word);
+    memcpy(m->word, word, word_len + 1);
 
     if (!ctx->is_transposed) {
         m->dir = DIR_HORIZONTAL;
@@ -216,7 +248,6 @@ static inline void record_move(GenContext *ctx, int row, int start_col, const ch
         for (int i = 0; i < num_placed; i++) {
             m->placed[i] = placed[i];
         }
-        m->score = board_score_move(ctx->orig_board, ctx->dawg, m);
     } else {
         m->dir = DIR_VERTICAL;
         m->row = start_col;
@@ -227,8 +258,8 @@ static inline void record_move(GenContext *ctx, int row, int start_col, const ch
             m->placed[i].letter = placed[i].letter;
             m->placed[i].is_blank = placed[i].is_blank;
         }
-        m->score = board_score_move(ctx->orig_board, ctx->dawg, m);
     }
+    m->score = score_horizontal_move(ctx->board, ctx->cross_checks, row, start_col, word, word_len, placed, num_placed);
 
     int lcnt = 0;
     for (int l = 0; l < 26; l++) {
@@ -255,7 +286,7 @@ static void extend_right(GenContext *ctx, int row, int col, uint32_t node, DawgE
         if (col > anchor_col && dawg_is_terminal(leading_edge) && num_placed > 0) {
             word[word_len] = '\0';
             if (!ctx->board->is_empty || word_len >= 2) {
-                record_move(ctx, row, start_col, word, placed, num_placed);
+                record_move(ctx, row, start_col, word, word_len, placed, num_placed);
             }
         }
         return;
@@ -267,7 +298,7 @@ static void extend_right(GenContext *ctx, int row, int col, uint32_t node, DawgE
         if (col > anchor_col && dawg_is_terminal(leading_edge) && num_placed > 0) {
             word[word_len] = '\0';
             if (!ctx->board->is_empty || word_len >= 2) {
-                record_move(ctx, row, start_col, word, placed, num_placed);
+                record_move(ctx, row, start_col, word, word_len, placed, num_placed);
             }
         }
 

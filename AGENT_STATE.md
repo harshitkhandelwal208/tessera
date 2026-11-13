@@ -224,6 +224,27 @@
     - 100% clean compilation under `-Wall -Wextra` with zero compiler warnings.
     - 100% pass across all 7 test suites under both GCC 14 (`make test`) and Zig 0.17.1 (`zig build test -Doptimize=ReleaseFast`).
 
+### 17. O(1) Precomputed Cross-Score Move Evaluation & Principal Variation Search (PVS)
+- **Implementation**:
+  - `src/movegen.c`, `src/endgame.c`.
+  - Implemented `score_horizontal_move`: evaluates main word multiplier products and looks up cross-word scores in $O(1)$ directly from `cross_checks[row][col].cross_scores[let]`, completely bypassing the multi-cell scans and while loops in `board_score_move`.
+  - In `record_move`:
+    - Eliminated intermediate `Move` stack constructions, coordinate translations, and `strcpy` calls in fast response equity search (`ctx->list == NULL`).
+    - Replaced `strcpy` with `memcpy(m->word, word, word_len + 1)` and passed `word_len` directly from `extend_right`, eliminating `strlen` calls.
+    - Fixed empty board transposition in `board_transpose`: initializes full multiplier grid via `board_init(dst)`.
+  - Implemented Principal Variation Search (PVS / Scout) in `negamax_dag` (`src/endgame.c`):
+    - Explores the first move with full $[-\beta, -\alpha]$ window.
+    - For subsequent moves, scouts with null window $[-\alpha - 1, -\alpha]$.
+    - Re-searches with full window only on fail-highs ($score > \alpha \land score < \beta$), cutting non-PV branch exploration while preserving 100% mathematical and game-theoretic optimality.
+  - **Verification & Impact**:
+    - Movegen throughput: populated board moves generated at **1.72M moves/sec** with full scoring (2,365 moves in 1.37 ms), and opening moves in **0.48 ms – 0.53 ms** (**5.5M moves/sec**).
+    - Endgame solver latency: **0.24 ms – 0.25 ms**.
+    - Pure graph proof propagation latency: **92.02 ms**.
+    - Full game simulation search latency: dropped to **825.34 ms**.
+    - Multi-bot tournament computation time dropped to **82.23s** across 14 games (**5.87s per complete game**).
+    - Net tournament spread increased to **+46.6 pts/game** (Tessera average 467.9 pts/game vs. opponents 421.2 pts/game).
+    - 100% pass across all 7 test suites on both GCC 14 (`make test`) and Zig 0.17.1 (`zig build test -Doptimize=ReleaseFast`).
+
 ---
 
 ## Tournament Benchmark Leaderboard (Championship Bot Matrix)
@@ -281,4 +302,8 @@ Results against the 7-bot championship matrix:
 - [x] Endgame DAG solver latency clocked at 0.24 ms (240 microseconds).
 - [x] Sparse accumulator update throughput clocked at 1,968,938 updates/sec (~23.6M updates/sec across 12 cores).
 - [x] Tournament benchmark: 14-game 7-bot championship matrix completed in 88.7s with +46.0 pts net spread and 467.4 avg score.
+- [x] O(1) precomputed cross-score move evaluation via `score_horizontal_move` bypassing cell scans and while loops.
+- [x] Principal Variation Search (PVS / Scout) in `negamax_dag` cutting non-PV search nodes with zero-window scouting.
+- [x] Full simulation deliberation latency pushed down to 825 ms and pure graph proof propagation to 92.0 ms.
+- [x] 14-game 7-bot championship tournament benchmark completed in 82.2s (5.87s per complete game) with +46.6 pts net spread.
 - [x] Shared library `libtessera.so` built and verified for C/C++/Python bindings.

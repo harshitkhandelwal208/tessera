@@ -227,9 +227,23 @@ static int negamax_dag(const Board *board, const Dawg *dawg,
 
         uint64_t child_board_hash = zobrist_toggle_turn(zobrist_update_move(board_hash, m));
 
-        int score = m->score - negamax_dag(&child_board, dawg, opp_rack, &new_my_rack,
+        int score;
+        if (i == 0) {
+            score = m->score - negamax_dag(&child_board, dawg, opp_rack, &new_my_rack,
                                            child_board_hash,
                                            -beta, -alpha, depth + 1, 0, NULL);
+        } else {
+            /* Principal Variation Search (PVS): scout with null window [-alpha - 1, -alpha] */
+            score = m->score - negamax_dag(&child_board, dawg, opp_rack, &new_my_rack,
+                                           child_board_hash,
+                                           -alpha - 1, -alpha, depth + 1, 0, NULL);
+            if (score > alpha && score < beta) {
+                /* Research with full window */
+                score = m->score - negamax_dag(&child_board, dawg, opp_rack, &new_my_rack,
+                                               child_board_hash,
+                                               -beta, -score, depth + 1, 0, NULL);
+            }
+        }
 
         if (score > best_score) {
             best_score = score;
