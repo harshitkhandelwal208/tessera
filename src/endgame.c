@@ -32,9 +32,15 @@ typedef struct {
 } EndgameTTCluster;
 
 typedef struct {
+    int32_t eff_score;
+    int32_t idx;
+} EndgameMoveOrder;
+
+typedef struct {
     EndgameTTCluster tt[ENDGAME_TT_CLUSTERS];
     bool initialized;
     MoveList moves_pool[MAX_ENDGAME_DEPTH + 2];
+    EndgameMoveOrder order_pool[MAX_ENDGAME_DEPTH + 2][INITIAL_MOVE_CAPACITY];
     int solve_count;
     uint32_t generation;
     Move root_best_move;
@@ -63,11 +69,6 @@ static int rack_total_points(const Rack *rack) {
     }
     return sum;
 }
-
-typedef struct {
-    int32_t eff_score;
-    int32_t idx;
-} EndgameMoveOrder;
 
 static int compare_move_order(const void *a, const void *b) {
     const EndgameMoveOrder *oa = (const EndgameMoveOrder *)a;
@@ -140,11 +141,14 @@ static int negamax_dag(const Board *board, const Dawg *dawg,
                 if (e->flag == TT_EXACT) {
                     if (out_best && depth == 0) *out_best = g_endgame_ctx.root_best_move;
                     return e->value;
-                } else if (e->flag == TT_LOWER && e->value >= beta) {
-                    return e->value;
-                } else if (e->flag == TT_UPPER && e->value <= alpha) {
-                    return e->value;
+                } else if (e->flag == TT_LOWER) {
+                    if (e->value >= beta) return e->value;
+                    if (e->value > alpha) alpha = e->value;
+                } else if (e->flag == TT_UPPER) {
+                    if (e->value <= alpha) return e->value;
+                    if (e->value < beta) beta = e->value;
                 }
+                if (alpha >= beta) return e->value;
             }
             victim = e;
             break;
@@ -175,8 +179,9 @@ static int negamax_dag(const Board *board, const Dawg *dawg,
     }
 
     /* Fast indexed move ordering: prioritize moves that empty the rack (instant outplay), then by score */
-    EndgameMoveOrder order[moves->count];
-    for (int i = 0; i < moves->count; i++) {
+    EndgameMoveOrder *order = g_endgame_ctx.order_pool[depth];
+    int n_moves = moves->count < INITIAL_MOVE_CAPACITY ? moves->count : INITIAL_MOVE_CAPACITY;
+    for (int i = 0; i < n_moves; i++) {
         order[i].idx = i;
         int eff = moves->moves[i].score;
         if (moves->moves[i].num_placed == my_rack->count) {
@@ -184,14 +189,14 @@ static int negamax_dag(const Board *board, const Dawg *dawg,
         }
         order[i].eff_score = eff;
     }
-    sort_endgame_moves(order, moves->count);
+    sort_endgame_moves(order, n_moves);
 
     int best_score = -ENDGAME_INF;
     Move best_move = moves->moves[order[0].idx];
     int orig_alpha = alpha;
 
     /* Dynamic search beam: thorough at root/low depth, focused at deeper plies */
-    int beam = moves->count;
+    int beam = n_moves;
     int max_beam = (depth == 0) ? 64 : (depth <= 2 ? 40 : 24);
     if (beam > max_beam) beam = max_beam;
 
