@@ -185,18 +185,18 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
     if (bag_remaining >= 60) base_opp_score = 33.0f;
     else if (bag_remaining <= 15) base_opp_score = 24.0f;
 
-    /* Risk weights modulated by live score differential */
-    float opp_weight = 0.75f;
-    float real_weight = 0.65f;
+    /* Risk weights modulated by live score differential: offensive realization prioritized */
+    float opp_weight = 0.50f;
+    float real_weight = 0.85f;
     if (cfg.score_diff >= 30) {
-        opp_weight = 0.90f;   /* When leading, prioritize defense */
-        real_weight = 0.50f;
+        opp_weight = 0.65f;   /* When leading, balanced defense */
+        real_weight = 0.75f;
     } else if (cfg.score_diff <= -30) {
-        opp_weight = 0.55f;   /* When trailing, prioritize offensive realization */
-        real_weight = 0.85f;
+        opp_weight = 0.35f;   /* When trailing, maximum offensive realization */
+        real_weight = 1.00f;
     }
 
-    for (int step = 0; step < max_steps && (step < 6 || !verdict.should_adjourn); step++) {
+    for (int step = 0; step < max_steps && (step < 10 || !verdict.should_adjourn); step++) {
         /* Dynamically extend deliberation up to 15 steps if decision is closely contested */
         if (step == max_steps - 1 && verdict.confidence < 0.70f && max_steps < 60) {
             max_steps += 10;
@@ -220,7 +220,7 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
         bool active[MAX_LATTICE_EDGES];
         int num_active = 0;
         for (int k = 0; k < top_k; k++) {
-            if (step < 4 || root->edges[k].q_value >= best_active_q - 10.0f) {
+            if (step < 6 || root->edges[k].q_value >= best_active_q - 12.0f) {
                 active[k] = true;
                 num_active++;
             } else {
@@ -228,8 +228,8 @@ Move lattice_search(const Board *board, const Dawg *dawg, const Rack *rack,
             }
         }
 
-        /* If top candidate has decisively broken away from all rivals after step 8, snap adjourn */
-        if (num_active <= 1 && step >= 8) {
+        /* If top candidate has decisively broken away from all rivals after step 15, snap adjourn */
+        if (num_active <= 1 && step >= 15) {
             break;
         }
 

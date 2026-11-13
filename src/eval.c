@@ -661,23 +661,23 @@ DualAccumulator eval_move_accumulate_with_score(const Board *board, const Move *
     /* Hand-tuned Grandmaster Heuristic: board risk + 8-phase rack leave tables with score context */
     float board_risk = eval_board_risk_with_score(board, move, openness, score_diff);
     float rack_leave = eval_rack_leave_bucketed_with_score(move->leave, phase, score_diff);
-    float hand_equity = (float)move->score + board_risk + (0.85f * rack_leave);
+    float heuristic_future = board_risk + rack_leave;
 
-    /* If NNUE is loaded, combine Hand-Tuned Heuristic and Deep NNUE into a hybrid ensemble */
+    /* If NNUE is loaded, combine Hand-Tuned Heuristic and Deep NNUE into a calibrated convex ensemble */
     if (g_nnue.is_loaded) {
         alignas(64) float features[NNUE_INPUT_DIM];
         nnue_extract_features_with_score(board, move, NULL, bag_count, score_diff, features);
         float nnue_pred = nnue_forward(&g_nnue, features);
-        float hybrid = hand_equity + (0.30f * nnue_pred);
-        acc.board_acc = (float)move->score + board_risk;
-        acc.rack_acc = (0.85f * rack_leave) + (0.30f * nnue_pred);
-        acc.net_equity = hybrid;
+        float blended_future = (0.65f * heuristic_future) + (0.35f * nnue_pred);
+        acc.board_acc = (float)move->score + (0.65f * board_risk);
+        acc.rack_acc = (0.65f * rack_leave) + (0.35f * nnue_pred);
+        acc.net_equity = (float)move->score + blended_future;
         return acc;
     }
 
     acc.board_acc = (float)move->score + board_risk;
     acc.rack_acc = rack_leave;
-    acc.net_equity = hand_equity;
+    acc.net_equity = (float)move->score + heuristic_future;
     return acc;
 }
 
@@ -696,14 +696,14 @@ DualAccumulator eval_move_accumulate_with_score_incremental(const Board *board, 
 
     float board_risk = eval_board_risk_with_score(board, move, openness, score_diff);
     float rack_leave = eval_rack_leave_bucketed_with_score(move->leave, phase, score_diff);
-    float hand_equity = (float)move->score + board_risk + (0.85f * rack_leave);
+    float heuristic_future = board_risk + rack_leave;
 
     if (g_nnue.is_loaded && base_acc) {
         float nnue_pred = nnue_forward_move_incremental(&g_nnue, base_acc, board, move, bag_count, score_diff);
-        float hybrid = hand_equity + (0.30f * nnue_pred);
-        acc.board_acc = (float)move->score + board_risk;
-        acc.rack_acc = (0.85f * rack_leave) + (0.30f * nnue_pred);
-        acc.net_equity = hybrid;
+        float blended_future = (0.65f * heuristic_future) + (0.35f * nnue_pred);
+        acc.board_acc = (float)move->score + (0.65f * board_risk);
+        acc.rack_acc = (0.65f * rack_leave) + (0.35f * nnue_pred);
+        acc.net_equity = (float)move->score + blended_future;
         return acc;
     }
 
@@ -737,7 +737,7 @@ float eval_move_heuristic_fast(const Board *board, const Move *move, int bag_cou
     OpennessBucket openness = eval_classify_openness(board);
     float board_acc = (float)move->score + eval_board_risk_bucketed(board, move, openness);
     float rack_acc = eval_rack_leave_bucketed(move->leave, phase);
-    return board_acc + (0.85f * rack_acc);
+    return board_acc + rack_acc;
 }
 
 static int compare_moves_descending(const void *a, const void *b) {

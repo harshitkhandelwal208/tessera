@@ -7,6 +7,14 @@ You are the lead algorithm architect and high-performance systems engineer worki
 
 ## Prime Directives & Optimization Targets
 
+### CRITICAL PRINCIPLE: UNIVERSAL GAME-THEORETIC OPTIMALITY (NOT TUNED FOR QUACKLE/MAGPIE)
+- **Do NOT tune or overfit Tessera to beat specific engines (such as Quackle, MAGPIE, or Maven) or specific benchmark profiles.**
+- Tessera's strength must derive entirely from **first-principles mathematical and game-theoretic optimality**:
+  - Exact Zobrist Directed Acyclic Graph (Belief Lattice) backward induction.
+  - Objective paired Monte Carlo probability distribution over live unseen bag tiles.
+  - General neural evaluation (NNUE) trained on unbiased, deep self-play distributions that capture universal tile synergy, rack balance, board geometry, and terminal equity across any lexicon.
+- Avoid heuristic hacks, opponent-specific exploit code, or artificial rules that only work against certain bots. Tessera must be objectively optimal against ANY player or engine under tournament conditions.
+
 ### 1. Optimize Every Single Bit of Memory (Push to Physical Limit)
 - **Zero-Allocation Search**:
   - Eliminate all dynamic `malloc`/`free` calls inside movegen, simulation, lattice propagation, and evaluation loops.

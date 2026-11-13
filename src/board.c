@@ -170,30 +170,44 @@ bool board_is_anchor(const Board *b, int row, int col) {
 /*
  * Cross-checks for horizontal word placement:
  * Looks vertically (above and below row r at col c).
+ * Hardware bit-scan accelerated: only evaluates cells with vertical neighbors.
  */
 void board_compute_horizontal_cross_checks(const Board *b, const Dawg *dawg,
                                           CrossCheck cross_checks[BOARD_SIZE][BOARD_SIZE]) {
+    /* 1. Fast bulk initialization: all cells default to all letters allowed, zero cross scores */
     for (int r = 0; r < BOARD_SIZE; r++) {
         for (int c = 0; c < BOARD_SIZE; c++) {
-            cross_checks[r][c].valid_letters_mask = 0;
-            for (int l = 0; l < NUM_LETTERS; l++) {
-                cross_checks[r][c].cross_scores[l] = 0;
-            }
+            cross_checks[r][c].valid_letters_mask = 0x03FFFFFF;
+            memset(cross_checks[r][c].cross_scores, 0, sizeof(cross_checks[r][c].cross_scores));
+        }
+    }
 
+    if (b->is_empty) return;
+
+    /* 2. Compute row occupied masks */
+    uint16_t occ_row[BOARD_SIZE];
+    for (int r = 0; r < BOARD_SIZE; r++) {
+        uint16_t mask = 0;
+        for (int c = 0; c < BOARD_SIZE; c++) {
             if (b->cells[r][c].tile != 0) {
-                /* Occupied square cannot receive tiles */
-                continue;
+                mask |= (1U << c);
+                cross_checks[r][c].valid_letters_mask = 0; /* Occupied square cannot receive tiles */
             }
+        }
+        occ_row[r] = mask;
+    }
 
-            /* Check if there are vertical neighbors */
-            bool has_up = (r > 0 && b->cells[r - 1][c].tile != 0);
-            bool has_down = (r < BOARD_SIZE - 1 && b->cells[r + 1][c].tile != 0);
+    /* 3. Scan ONLY squares that have a vertical cross check */
+    for (int r = 0; r < BOARD_SIZE; r++) {
+        uint16_t up = (r > 0) ? occ_row[r - 1] : 0;
+        uint16_t down = (r < BOARD_SIZE - 1) ? occ_row[r + 1] : 0;
+        uint16_t v_cross = (up | down) & ~occ_row[r];
 
-            if (!has_up && !has_down) {
-                /* No vertical cross-word formed; all letters are allowed */
-                cross_checks[r][c].valid_letters_mask = 0x03FFFFFF; /* Bits 0..25 set */
-                continue;
-            }
+        while (v_cross) {
+            int c = __builtin_ctz(v_cross);
+            v_cross &= v_cross - 1;
+
+            cross_checks[r][c].valid_letters_mask = 0;
 
             /* Scan upward prefix */
             int up_start = r - 1;
@@ -246,34 +260,37 @@ void board_compute_horizontal_cross_checks(const Board *b, const Dawg *dawg,
                 }
             }
 
-            if (!prefix_valid) {
+            if (!prefix_valid || prefix_node == 0) {
                 continue;
             }
 
             bool has_down_suffix = (r < down_end);
 
-            /* Test each candidate letter A-Z */
-            for (int l = 0; l < NUM_LETTERS; l++) {
-                char let = (char)('A' + l);
-                bool is_term = false;
-                uint32_t mid_node = dawg_step(dawg, prefix_node, let, &is_term);
+            /* Single-pass DAWG edge walk: iterate over sibling edges of prefix_node */
+            uint32_t edge_idx = prefix_node;
+            while (1) {
+                DawgEdge edge = dawg->edges[edge_idx];
+                char let = dawg_letter(edge);
+                int l = (int)(let - 'A');
 
                 bool word_valid = false;
                 if (!has_down_suffix) {
-                    word_valid = is_term;
-                } else if (mid_node != 0) {
-                    /* Step downward suffix */
-                    uint32_t suf_node = mid_node;
-                    bool suf_valid = true;
-                    for (int k = r + 1; k <= down_end; k++) {
-                        is_term = false;
-                        suf_node = dawg_step(dawg, suf_node, b->cells[k][c].tile, &is_term);
-                        if (suf_node == 0 && k < down_end) {
-                            suf_valid = false;
-                            break;
+                    word_valid = dawg_is_terminal(edge);
+                } else {
+                    uint32_t suf_node = dawg_child_index(edge);
+                    if (suf_node != 0) {
+                        bool is_term = false;
+                        bool suf_valid = true;
+                        for (int k = r + 1; k <= down_end; k++) {
+                            is_term = false;
+                            suf_node = dawg_step(dawg, suf_node, b->cells[k][c].tile, &is_term);
+                            if (suf_node == 0 && k < down_end) {
+                                suf_valid = false;
+                                break;
+                            }
                         }
+                        word_valid = (suf_valid && is_term);
                     }
-                    word_valid = (suf_valid && is_term);
                 }
 
                 if (word_valid) {
@@ -281,6 +298,9 @@ void board_compute_horizontal_cross_checks(const Board *b, const Dawg *dawg,
                     int placed_letter_val = TILE_VALUES[l] * letter_mult;
                     cross_checks[r][c].cross_scores[l] = (prefix_score + suffix_score + placed_letter_val) * word_mult;
                 }
+
+                if (dawg_is_last_child(edge)) break;
+                edge_idx++;
             }
         }
     }
@@ -402,13 +422,39 @@ int board_score_move(const Board *b, const Dawg *dawg, const Move *move) {
     (void)dawg;
     if (move->type != MOVE_PLAY) return 0;
 
-    int total_score = 0;
-    int main_word_sum = 0;
-    int main_word_mult = 1;
-
     int r = move->row;
     int c = move->col;
     int len = (int)strlen(move->word);
+
+    /* Fast path for empty opening board: zero cross-checks or existing tile scans */
+    if (b->is_empty) {
+        int main_sum = 0;
+        int word_mult = 1;
+        int placed_idx = 0;
+        for (int i = 0; i < len; i++) {
+            char let = move->word[i];
+            bool is_blank = false;
+            if (placed_idx < move->num_placed) {
+                is_blank = move->placed[placed_idx].is_blank;
+                placed_idx++;
+            }
+            int val = is_blank ? 0 : TILE_VALUES[let - 'A'];
+            int cur_r = (move->dir == DIR_HORIZONTAL) ? r : r + i;
+            int cur_c = (move->dir == DIR_HORIZONTAL) ? c + i : c;
+            MultiplierType m = b->cells[cur_r][cur_c].mult;
+            int lm = (m == MULT_DL) ? 2 : ((m == MULT_TL) ? 3 : 1);
+            if (m == MULT_DW) word_mult *= 2;
+            else if (m == MULT_TW) word_mult *= 3;
+            main_sum += val * lm;
+        }
+        int score = main_sum * word_mult;
+        if (move->num_placed == 7) score += 50;
+        return score;
+    }
+
+    int total_score = 0;
+    int main_word_sum = 0;
+    int main_word_mult = 1;
 
     /* Track placed tile index */
     int placed_idx = 0;

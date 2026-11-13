@@ -71,10 +71,15 @@ static int rack_total_points(const Rack *rack) {
     return sum;
 }
 
-static int compare_moves_desc(const void *a, const void *b) {
-    const Move *ma = (const Move *)a;
-    const Move *mb = (const Move *)b;
-    return mb->score - ma->score;
+typedef struct {
+    int32_t eff_score;
+    int32_t idx;
+} EndgameMoveOrder;
+
+static int compare_move_order(const void *a, const void *b) {
+    const EndgameMoveOrder *oa = (const EndgameMoveOrder *)a;
+    const EndgameMoveOrder *ob = (const EndgameMoveOrder *)b;
+    return ob->eff_score - oa->eff_score;
 }
 
 /*
@@ -156,23 +161,22 @@ static int negamax_dag(const Board *board, const Dawg *dawg,
         return score;
     }
 
-    /* Move ordering: prioritize moves that empty the rack (instant outplay), then by score */
+    /* Fast indexed move ordering: prioritize moves that empty the rack (instant outplay), then by score */
+    EndgameMoveOrder order[moves->count];
     for (int i = 0; i < moves->count; i++) {
+        order[i].idx = i;
+        int eff = moves->moves[i].score;
         if (moves->moves[i].num_placed == my_rack->count) {
-            moves->moves[i].score += (2 * opp_rack_val); /* Temporary sort boost for outplay */
+            eff += (2 * opp_rack_val); /* Boost for outplay */
         }
+        order[i].eff_score = eff;
     }
     if (moves->count > 1) {
-        qsort(moves->moves, moves->count, sizeof(Move), compare_moves_desc);
-    }
-    for (int i = 0; i < moves->count; i++) {
-        if (moves->moves[i].num_placed == my_rack->count) {
-            moves->moves[i].score -= (2 * opp_rack_val); /* Restore actual score */
-        }
+        qsort(order, moves->count, sizeof(EndgameMoveOrder), compare_move_order);
     }
 
     int best_score = -ENDGAME_INF;
-    Move best_move = moves->moves[0];
+    Move best_move = moves->moves[order[0].idx];
     int orig_alpha = alpha;
 
     /* Dynamic search beam: thorough at root/low depth, focused at deeper plies */
@@ -181,11 +185,11 @@ static int negamax_dag(const Board *board, const Dawg *dawg,
     if (beam > max_beam) beam = max_beam;
 
     for (int i = 0; i < beam; i++) {
-        Move *m = &moves->moves[i];
+        Move *m = &moves->moves[order[i].idx];
 
         /* If this move empties my rack, game immediately terminates! */
         if (m->num_placed == my_rack->count) {
-            int game_out_score = m->score + (2 * opp_rack_val);
+            int game_out_score = order[i].eff_score;
             if (game_out_score > best_score) {
                 best_score = game_out_score;
                 best_move = *m;
@@ -201,11 +205,8 @@ static int negamax_dag(const Board *board, const Dawg *dawg,
         board_apply_move(&child_board, m);
 
         Rack new_my_rack;
-        memcpy(&new_my_rack, my_rack, sizeof(Rack));
-        for (int p = 0; p < m->num_placed; p++) {
-            char t = m->placed[p].is_blank ? '?' : m->placed[p].letter;
-            rack_remove_tile(&new_my_rack, t);
-        }
+        new_my_rack.count = my_rack->count - m->num_placed;
+        memcpy(new_my_rack.tiles, m->leave, new_my_rack.count);
 
         int score = m->score - negamax_dag(&child_board, dawg, opp_rack, &new_my_rack,
                                            -beta, -alpha, depth + 1, 0, NULL);

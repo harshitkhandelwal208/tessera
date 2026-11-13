@@ -160,18 +160,24 @@ static void play_single_game(const Dawg *dawg, BotType opp_type, int game_idx,
 
 int main(int argc, char **argv) {
     int games_per_bot = 6;
+    int bot_filter = -1;
     if (argc > 1) {
         games_per_bot = atoi(argv[1]);
         if (games_per_bot < 2) games_per_bot = 2;
         if (games_per_bot % 2 != 0) games_per_bot++; /* Ensure even for start balance */
     }
+    if (argc > 2) {
+        bot_filter = atoi(argv[2]);
+    }
+
+    int active_bot_count = (bot_filter >= 0 && bot_filter < BOT_TYPE_COUNT) ? 1 : BOT_TYPE_COUNT;
 
     printf("======================================================================\n");
     printf("   TESSERA GRANDMASTER MULTI-BOT BENCHMARK & COMPETITIVE MATRIX      \n");
     printf("======================================================================\n");
     printf("Lexicon: SOWPODS (267,751 words) | Architecture: Pure Graph Belief Lattice\n");
-    printf("Playing %d tournament matches against EACH of %d Opponent Profiles (%d Total Games)...\n\n",
-           games_per_bot, BOT_TYPE_COUNT, games_per_bot * BOT_TYPE_COUNT);
+    printf("Playing %d tournament matches against %d Opponent Profile(s) (%d Total Games)...\n\n",
+           games_per_bot, active_bot_count, games_per_bot * active_bot_count);
 
     Dawg *dawg = dawg_load_binary("data/dawg.bin");
     if (!dawg) {
@@ -196,8 +202,9 @@ int main(int argc, char **argv) {
     double total_runtime = 0.0;
 
     for (int b = 0; b < BOT_TYPE_COUNT; b++) {
+        if (bot_filter >= 0 && b != bot_filter) continue;
         const char *bot_name = bot_archetype_name((BotType)b);
-        printf(">>> MATCHUP %d/%d: Tessera vs. %s\n", b + 1, BOT_TYPE_COUNT, bot_name);
+        printf(">>> MATCHUP: Tessera vs. %s\n", bot_name);
         clock_t start = clock();
 
         for (int g = 0; g < games_per_bot; g++) {
@@ -241,7 +248,7 @@ int main(int argc, char **argv) {
     }
 
     /* Overall Summary Matrix */
-    int total_games = games_per_bot * BOT_TYPE_COUNT;
+    int total_games = games_per_bot * active_bot_count;
     double overall_win_rate = (double)total_wins / total_games * 100.0;
     double overall_avg_tessera = (double)grand_tessera_pts / total_games;
     double overall_avg_opp = (double)grand_opp_pts / total_games;
@@ -250,9 +257,10 @@ int main(int argc, char **argv) {
 
     double sum_opp_elo = 0.0;
     for (int b = 0; b < BOT_TYPE_COUNT; b++) {
+        if (bot_filter >= 0 && b != bot_filter) continue;
         sum_opp_elo += (double)bot_archetype_elo((BotType)b);
     }
-    double mean_opp_elo = sum_opp_elo / (double)BOT_TYPE_COUNT;
+    double mean_opp_elo = sum_opp_elo / (double)active_bot_count;
 
     double points_won = (double)total_wins + 0.5 * (double)total_ties;
     double points_lost = (double)total_losses + 0.5 * (double)total_ties;
@@ -266,6 +274,7 @@ int main(int argc, char **argv) {
     printf("  Opponent Profile                    | Record  | Win Rate | Avg Spread | Ref Elo\n");
     printf("  ------------------------------------+---------+----------+------------+--------\n");
     for (int b = 0; b < BOT_TYPE_COUNT; b++) {
+        if (bot_filter >= 0 && b != bot_filter) continue;
         double wr = (double)all_stats[b].wins / games_per_bot * 100.0;
         double sp = (double)(all_stats[b].total_tessera_score - all_stats[b].total_opponent_score) / games_per_bot;
         printf("  %-35s | %2d-%2d-%-2d | %7.1f%% | %+9.1f  | ~%4d\n",

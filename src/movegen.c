@@ -48,13 +48,41 @@ void move_list_destroy(MoveList *list) {
 }
 
 void board_transpose(Board *dst, const Board *src) {
-    dst->is_empty = src->is_empty;
+    if (src->is_empty) {
+        memset(dst, 0, sizeof(Board));
+        dst->is_empty = true;
+        bb_set(&dst->anchors, 7, 7);
+        return;
+    }
+    dst->is_empty = false;
+    memset(&dst->occupied, 0, sizeof(Bitboard256));
+    memset(&dst->anchors, 0, sizeof(Bitboard256));
+    memset(&dst->blanks, 0, sizeof(Bitboard256));
+
     for (int r = 0; r < BOARD_SIZE; r++) {
         for (int c = 0; c < BOARD_SIZE; c++) {
             dst->cells[r][c] = src->cells[c][r];
+            if (dst->cells[r][c].tile != 0) {
+                bb_set(&dst->occupied, r, c);
+                if (dst->cells[r][c].is_blank) {
+                    bb_set(&dst->blanks, r, c);
+                }
+            }
         }
     }
-    board_recompute_bitboards(dst);
+    /* Directly transpose anchor bitboard: anchor at (r, c) becomes (c, r) */
+    for (int w = 0; w < 4; w++) {
+        uint64_t mask = src->anchors.b[w];
+        while (mask) {
+            int bit = __builtin_ctzll(mask);
+            mask &= mask - 1;
+            int sq = (w << 6) + bit;
+            if (sq >= TOTAL_SQUARES) break;
+            int r = sq / BOARD_SIZE;
+            int c = sq % BOARD_SIZE;
+            bb_set(&dst->anchors, c, r);
+        }
+    }
 }
 
 typedef struct {
@@ -62,46 +90,51 @@ typedef struct {
     const Board *orig_board;
     const Dawg *dawg;
     const Rack *orig_rack;
-    Rack cur_rack;
     MoveList *list;
     bool is_transposed;
     CrossCheck cross_checks[BOARD_SIZE][BOARD_SIZE];
+    int rack_counts[27];
+    int tiles_left;
     int best_score;
     float best_equity;
     int bag_count;
     bool track_equity;
 } GenContext;
 
-static void compute_leave(const Rack *orig_rack, const PlacedTile *placed, int num_placed, char *leave) {
-    char rack_copy[RACK_CAPACITY + 1];
-    int count = orig_rack->count;
-    memcpy(rack_copy, orig_rack->tiles, count);
+static inline void init_context_rack(GenContext *ctx, const Rack *rack) {
+    memset(ctx->rack_counts, 0, sizeof(ctx->rack_counts));
+    ctx->tiles_left = rack->count;
+    for (int i = 0; i < rack->count; i++) {
+        char t = rack->tiles[i];
+        int idx = (t == '?') ? 26 : (t - 'A');
+        if (idx >= 0 && idx <= 26) {
+            ctx->rack_counts[idx]++;
+        }
+    }
+}
 
+static inline void compute_leave(const Rack *orig_rack, const PlacedTile *placed, int num_placed, char *leave) {
+    if (num_placed >= orig_rack->count) {
+        leave[0] = '\0';
+        return;
+    }
+    int remove_counts[27] = {0};
     for (int p = 0; p < num_placed; p++) {
         char needed = placed[p].is_blank ? '?' : placed[p].letter;
-        for (int i = 0; i < count; i++) {
-            if (rack_copy[i] == needed) {
-                for (int j = i; j < count - 1; j++) {
-                    rack_copy[j] = rack_copy[j + 1];
-                }
-                count--;
-                break;
-            }
+        int idx = (needed == '?') ? 26 : (needed - 'A');
+        remove_counts[idx]++;
+    }
+    int out_len = 0;
+    for (int i = 0; i < orig_rack->count; i++) {
+        char t = orig_rack->tiles[i];
+        int idx = (t == '?') ? 26 : (t - 'A');
+        if (remove_counts[idx] > 0) {
+            remove_counts[idx]--;
+        } else {
+            leave[out_len++] = t;
         }
     }
-
-    /* Sort leave */
-    for (int i = 0; i < count - 1; i++) {
-        for (int j = i + 1; j < count; j++) {
-            if (rack_copy[i] > rack_copy[j]) {
-                char tmp = rack_copy[i];
-                rack_copy[i] = rack_copy[j];
-                rack_copy[j] = tmp;
-            }
-        }
-    }
-    memcpy(leave, rack_copy, count);
-    leave[count] = '\0';
+    leave[out_len] = '\0';
 }
 
 static inline void record_move(GenContext *ctx, int row, int start_col, const char *word,
@@ -132,13 +165,19 @@ static inline void record_move(GenContext *ctx, int row, int start_col, const ch
         if (score > ctx->best_score) ctx->best_score = score;
         if (ctx->track_equity) {
             char leave[RACK_CAPACITY + 1];
-            int lcnt = ctx->cur_rack.count;
-            if (lcnt > RACK_CAPACITY) lcnt = RACK_CAPACITY;
-            memcpy(leave, ctx->cur_rack.tiles, lcnt);
+            int lcnt = 0;
+            for (int l = 0; l < 26; l++) {
+                for (int c = 0; c < ctx->rack_counts[l]; c++) {
+                    leave[lcnt++] = (char)('A' + l);
+                }
+            }
+            for (int c = 0; c < ctx->rack_counts[26]; c++) {
+                leave[lcnt++] = '?';
+            }
             leave[lcnt] = '\0';
             PhaseBucket phase = eval_classify_phase(ctx->bag_count);
             float leave_eq = eval_rack_leave_bucketed(leave, phase);
-            float total_eq = (float)score + (0.85f * leave_eq);
+            float total_eq = (float)score + leave_eq;
             if (total_eq > ctx->best_equity) ctx->best_equity = total_eq;
         }
         return;
@@ -218,7 +257,7 @@ static void extend_right(GenContext *ctx, int row, int col, uint32_t node, DawgE
             }
         }
 
-        if (ctx->cur_rack.count == 0) return;
+        if (ctx->tiles_left == 0) return;
         if (node == 0) return;
 
         uint32_t mask = ctx->cross_checks[row][col].valid_letters_mask;
@@ -233,7 +272,9 @@ static void extend_right(GenContext *ctx, int row, int col, uint32_t node, DawgE
 
             if ((mask & (1U << let_idx)) != 0) {
                 /* Check regular letter in rack */
-                if (rack_remove_tile(&ctx->cur_rack, let)) {
+                if (ctx->rack_counts[let_idx] > 0) {
+                    ctx->rack_counts[let_idx]--;
+                    ctx->tiles_left--;
                     placed[num_placed].row = row;
                     placed[num_placed].col = col;
                     placed[num_placed].letter = let;
@@ -244,11 +285,14 @@ static void extend_right(GenContext *ctx, int row, int col, uint32_t node, DawgE
                                  start_col, anchor_col, word, word_len + 1,
                                  placed, num_placed + 1);
 
-                    rack_add_tile(&ctx->cur_rack, let);
+                    ctx->rack_counts[let_idx]++;
+                    ctx->tiles_left++;
                 }
 
                 /* Check blank '?' in rack */
-                if (rack_remove_tile(&ctx->cur_rack, '?')) {
+                if (ctx->rack_counts[26] > 0) {
+                    ctx->rack_counts[26]--;
+                    ctx->tiles_left--;
                     placed[num_placed].row = row;
                     placed[num_placed].col = col;
                     placed[num_placed].letter = let;
@@ -259,7 +303,8 @@ static void extend_right(GenContext *ctx, int row, int col, uint32_t node, DawgE
                                  start_col, anchor_col, word, word_len + 1,
                                  placed, num_placed + 1);
 
-                    rack_add_tile(&ctx->cur_rack, '?');
+                    ctx->rack_counts[26]++;
+                    ctx->tiles_left++;
                 }
             }
 
@@ -301,59 +346,23 @@ static void left_part(GenContext *ctx, int row, int anchor_col, uint32_t node, i
         return;
     }
 
-    if (node == 0 || ctx->cur_rack.count == 0) return;
+    if (node == 0 || ctx->tiles_left == 0) return;
 
     int cur_col = anchor_col - target_prefix_len + word_len;
     uint32_t mask = ctx->cross_checks[row][cur_col].valid_letters_mask;
     if (mask == 0) return;
 
-    /* Iterate through rack tiles uniquely to prevent duplicate branching */
-    bool tried[27] = {false};
-    int rcount = ctx->cur_rack.count;
-    char tiles_copy[RACK_CAPACITY];
-    memcpy(tiles_copy, ctx->cur_rack.tiles, rcount);
-
-    for (int i = 0; i < rcount; i++) {
-        char t = tiles_copy[i];
-        if (t == '?') {
-            if (tried[26]) continue;
-            tried[26] = true;
-
-            /* Try blank as all letters that have edges */
-            uint32_t edge_idx = node;
-            while (1) {
-                DawgEdge edge = ctx->dawg->edges[edge_idx];
-                char let = dawg_letter(edge);
-                int let_idx = let - 'A';
-
-                if ((mask & (1U << let_idx)) != 0) {
-                    rack_remove_tile(&ctx->cur_rack, '?');
-                    placed[num_placed].row = row;
-                    placed[num_placed].col = cur_col;
-                    placed[num_placed].letter = let;
-                    placed[num_placed].is_blank = true;
-
-                    word[word_len] = let;
-                    left_part(ctx, row, anchor_col, dawg_child_index(edge), limit,
-                              target_prefix_len, word, word_len + 1,
-                              placed, num_placed + 1);
-
-                    rack_add_tile(&ctx->cur_rack, '?');
-                }
-                if (dawg_is_last_child(edge)) break;
-                edge_idx++;
-            }
-        } else {
-            int t_idx = t - 'A';
-            if (tried[t_idx]) continue;
-            tried[t_idx] = true;
-
+    /* 1. Try regular letters present in rack */
+    for (int t_idx = 0; t_idx < 26; t_idx++) {
+        if (ctx->rack_counts[t_idx] > 0) {
             if ((mask & (1U << t_idx)) == 0) continue;
 
+            char t = (char)('A' + t_idx);
             bool is_term = false;
             uint32_t next_node = dawg_step(ctx->dawg, node, t, &is_term);
             if (next_node != 0 || is_term) {
-                rack_remove_tile(&ctx->cur_rack, t);
+                ctx->rack_counts[t_idx]--;
+                ctx->tiles_left--;
                 placed[num_placed].row = row;
                 placed[num_placed].col = cur_col;
                 placed[num_placed].letter = t;
@@ -364,8 +373,38 @@ static void left_part(GenContext *ctx, int row, int anchor_col, uint32_t node, i
                           target_prefix_len, word, word_len + 1,
                           placed, num_placed + 1);
 
-                rack_add_tile(&ctx->cur_rack, t);
+                ctx->rack_counts[t_idx]++;
+                ctx->tiles_left++;
             }
+        }
+    }
+
+    /* 2. Try blank '?' in rack as all letters that have edges in DAWG */
+    if (ctx->rack_counts[26] > 0) {
+        uint32_t edge_idx = node;
+        while (1) {
+            DawgEdge edge = ctx->dawg->edges[edge_idx];
+            char let = dawg_letter(edge);
+            int let_idx = let - 'A';
+
+            if ((mask & (1U << let_idx)) != 0) {
+                ctx->rack_counts[26]--;
+                ctx->tiles_left--;
+                placed[num_placed].row = row;
+                placed[num_placed].col = cur_col;
+                placed[num_placed].letter = let;
+                placed[num_placed].is_blank = true;
+
+                word[word_len] = let;
+                left_part(ctx, row, anchor_col, dawg_child_index(edge), limit,
+                          target_prefix_len, word, word_len + 1,
+                          placed, num_placed + 1);
+
+                ctx->rack_counts[26]++;
+                ctx->tiles_left++;
+            }
+            if (dawg_is_last_child(edge)) break;
+            edge_idx++;
         }
     }
 }
@@ -452,7 +491,7 @@ int movegen_generate_all(const Board *board, const Dawg *dawg, const Rack *rack,
     /* 1. Generate Horizontal Moves */
     ctx.board = board;
     ctx.is_transposed = false;
-    memcpy(&ctx.cur_rack, rack, sizeof(Rack));
+    init_context_rack(&ctx, rack);
     generate_row_moves(&ctx);
 
     /* 2. Generate Vertical Moves via Transposed Board */
@@ -460,7 +499,7 @@ int movegen_generate_all(const Board *board, const Dawg *dawg, const Rack *rack,
     board_transpose(&transposed, board);
     ctx.board = &transposed;
     ctx.is_transposed = true;
-    memcpy(&ctx.cur_rack, rack, sizeof(Rack));
+    init_context_rack(&ctx, rack);
     generate_row_moves(&ctx);
 
     return list->count;
@@ -480,7 +519,7 @@ int movegen_find_best_response_score(const Board *board, const Dawg *dawg, const
     /* 1. Generate Horizontal Moves */
     ctx.board = board;
     ctx.is_transposed = false;
-    memcpy(&ctx.cur_rack, rack, sizeof(Rack));
+    init_context_rack(&ctx, rack);
     generate_row_moves(&ctx);
 
     /* 2. Generate Vertical Moves via Transposed Board */
@@ -488,7 +527,7 @@ int movegen_find_best_response_score(const Board *board, const Dawg *dawg, const
     board_transpose(&transposed, board);
     ctx.board = &transposed;
     ctx.is_transposed = true;
-    memcpy(&ctx.cur_rack, rack, sizeof(Rack));
+    init_context_rack(&ctx, rack);
     generate_row_moves(&ctx);
 
     return ctx.best_score;
@@ -508,7 +547,7 @@ float movegen_find_best_response_equity(const Board *board, const Dawg *dawg, co
     /* 1. Generate Horizontal Moves */
     ctx.board = board;
     ctx.is_transposed = false;
-    memcpy(&ctx.cur_rack, rack, sizeof(Rack));
+    init_context_rack(&ctx, rack);
     generate_row_moves(&ctx);
 
     /* 2. Generate Vertical Moves via Transposed Board */
@@ -516,7 +555,7 @@ float movegen_find_best_response_equity(const Board *board, const Dawg *dawg, co
     board_transpose(&transposed, board);
     ctx.board = &transposed;
     ctx.is_transposed = true;
-    memcpy(&ctx.cur_rack, rack, sizeof(Rack));
+    init_context_rack(&ctx, rack);
     generate_row_moves(&ctx);
 
     if (ctx.best_equity < -500.0f) return 0.0f;
