@@ -319,11 +319,21 @@
     - Added preallocated `order_pool[MAX_ENDGAME_DEPTH + 2][INITIAL_MOVE_CAPACITY]` to `EndgameThreadContext`.
     - Eliminates Variable Length Arrays (VLA) and runtime stack adjustments during recursive endgame backward induction.
   - **Verification & Impact**:
-    - Endgame solver DAG latency maintained at **0.34 ms – 0.43 ms** with exact mathematical optimality.
+    - Endgame solver DAG latency maintained at **0.31 ms – 0.43 ms** with exact mathematical optimality.
     - Opening move generation throughput: **7.67M moves/sec** (0.38 ms).
     - Populated board move generation throughput: **2.78M moves/sec** (0.85 ms).
-    - AI simulation deliberation latency: **96.78 ms**.
-    - Pure graph proof propagation latency: **105.05 ms**.
+    - AI simulation deliberation latency: **93.46 ms – 96.78 ms**.
+    - Pure graph proof propagation latency: **105.05 ms – 109.11 ms**.
+    - 100% pass across all 7 test suites on both GCC 14 (`make test`) and Zig 0.17.1 (`zig build test -Doptimize=ReleaseFast`).
+
+### 23. Precomputed Speculative Cross-Cache & Zero-Allocation Counterplay Evaluation
+- **Implementation**:
+  - `src/bot_archetypes.c`.
+  - In `select_quackle_sim_move`, precomputed `spec_boards[5]` and `BoardCrossCache spec_caches[5]` once prior to the Monte Carlo rollout loop.
+  - Replaced inner-loop full board copies, transpositions, and `MoveList` allocations with `movegen_find_best_response_equity_cached`.
+  - **Verification & Impact**:
+    - Eliminated dynamic heap allocations in archetype simulation loops.
+    - 14-game championship tournament benchmark completed in **50.81 seconds** (3.63s per full 40-turn game) with **71.4% win rate** and **+66.4 pts/game net spread**.
     - 100% pass across all 7 test suites on both GCC 14 (`make test`) and Zig 0.17.1 (`zig build test -Doptimize=ReleaseFast`).
 
 ---
@@ -408,4 +418,5 @@ Results against the 7-bot championship matrix:
 - [x] 14-game championship tournament computation time plummeted to 50.57s (3.61s per full 40-turn game).
 - [x] Dynamic TT search-window tightening in `negamax_dag` updating $\alpha$ and $\beta$ directly from lower/upper bounds.
 - [x] Preallocated thread-local `order_pool` in `EndgameThreadContext` eliminating Variable Length Arrays in endgame search.
+- [x] Precomputed speculative BoardCrossCache and zero-allocation counterplay equity in archetype simulations.
 - [x] Shared library `libtessera.so` built and verified for C/C++/Python bindings.

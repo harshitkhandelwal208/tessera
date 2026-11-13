@@ -228,7 +228,14 @@ static Move select_quackle_sim_move(const Board *board, const Dawg *dawg, const 
 
     float opp_totals[5] = {0};
     int N_SIMS = 10;
-    MoveList om = {0};
+
+    Board spec_boards[5];
+    BoardCrossCache spec_caches[5];
+    for (int k = 0; k < beam; k++) {
+        board_copy(&spec_boards[k], board);
+        board_apply_move(&spec_boards[k], &moves.moves[k]);
+        board_cross_cache_init(&spec_caches[k], &spec_boards[k], dawg);
+    }
 
     for (int s = 0; s < N_SIMS; s++) {
         Rack opp_r;
@@ -238,20 +245,10 @@ static Move select_quackle_sim_move(const Board *board, const Dawg *dawg, const 
         for (int i = 0; i < d; i++) rack_add_tile(&opp_r, unseen[i]);
 
         for (int k = 0; k < beam; k++) {
-            Board spec;
-            board_copy(&spec, board);
-            board_apply_move(&spec, &moves.moves[k]);
-
-            movegen_generate_all(&spec, dawg, &opp_r, &om);
-            float max_opp = 0.0f;
-            for (int r = 0; r < om.count; r++) {
-                float eq = eval_move_heuristic_fast(&spec, &om.moves[r], bag_count);
-                if (eq > max_opp) max_opp = eq;
-            }
+            float max_opp = movegen_find_best_response_equity_cached(&spec_boards[k], &spec_caches[k], dawg, &opp_r, bag_count);
             opp_totals[k] += max_opp;
         }
     }
-    move_list_destroy(&om);
 
     int best_k = 0;
     float best_net = -10000.0f;
