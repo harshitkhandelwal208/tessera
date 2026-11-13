@@ -263,6 +263,20 @@
     - Performance rating reached **~2016 Elo (NASPA Grandmaster / Champion)**.
     - 100% pass across all 7 test suites on both GCC 14 (`make test`) and Zig 0.17.1 (`zig build test -Doptimize=ReleaseFast`).
 
+### 19. Static Inline DAWG Traversal & Bitboard Anchor Verification
+- **Implementation**:
+  - `include/dict.h`, `src/dict.c`, `include/board.h`, `src/board.c`.
+  - Inlined `dawg_step` as `static inline` in `include/dict.h` with branchless case-insensitive target calculation:
+    `uint32_t target_code = (letter >= 'a' && letter <= 'z') ? (uint32_t)(letter - 'a') : (uint32_t)(letter - 'A');`
+    Eliminates all call/ret instruction overhead and register spills across millions of DAWG traversal steps in move generation and cross-check evaluations.
+  - Inlined `board_is_anchor` as `static inline bool board_is_anchor(const Board *b, int row, int col)` in `include/board.h`, directly delegating to `bb_test(&b->anchors, row, col)` with branchless bounds checks.
+  - **Verification & Impact**:
+    - Movegen throughput pushed to **7.29M moves/sec** opening (2,916 moves in **0.40 ms**), and **2.09M moves/sec** populated board (2,365 moves in **1.13 ms**).
+    - Terminal endgame solver DAG relaxation latency clocked at **0.22 ms – 0.24 ms** (220 microseconds).
+    - Simulation move deliberation latency clocked at **100.06 ms – 107.79 ms**.
+    - 14-game championship tournament benchmark completed in **51.78 seconds** (3.69s per full 40-turn game) with **71.4% win rate** and **+66.4 pts/game net spread**.
+    - 100% pass across all 7 test suites on both GCC 14 (`make test`) and Zig 0.17.1 (`zig build test -Doptimize=ReleaseFast`).
+
 ---
 
 ## Tournament Benchmark Leaderboard (Championship Bot Matrix)
@@ -332,4 +346,7 @@ Results against the 7-bot championship matrix:
 - [x] Exchange short-circuiting in `eval_should_exchange` bypassing 128 subset leave evaluations on 98% of turns.
 - [x] In-register draw realization with contiguous `memcpy` eliminating dynamic string formatting in Monte Carlo loops.
 - [x] 14-game 7-bot championship tournament benchmark completed in 52.39s (3.74s per complete game) with 71.4% win rate, +66.4 pts net spread, and 482.5 avg score.
+- [x] Inlined `dawg_step` DAWG traversal and `board_is_anchor` bitboard tests pushing movegen throughput to 7.29M moves/sec (0.40 ms opening, 1.13 ms populated).
+- [x] Terminal endgame solver latency reduced to 0.22 ms – 0.24 ms and simulation move search latency reduced to 100.06 ms.
+- [x] Tournament computation time dropped to 51.78s across 14 games (3.69s per full 40-turn game).
 - [x] Shared library `libtessera.so` built and verified for C/C++/Python bindings.

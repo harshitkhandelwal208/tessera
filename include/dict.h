@@ -51,8 +51,27 @@ bool  dawg_save_binary(const Dawg *dawg, const char *bin_filepath);
 void  dawg_free(Dawg *dawg);
 
 /* Query */
-bool     dawg_contains(const Dawg *dawg, const char *word);
-uint32_t dawg_step(const Dawg *dawg, uint32_t node_index, char letter, bool *is_terminal);
-uint32_t dawg_get_child_edges(const Dawg *dawg, uint32_t node_index);
+bool dawg_contains(const Dawg *dawg, const char *word);
+
+static inline uint32_t dawg_step(const Dawg *dawg, uint32_t node_index, char letter, bool *is_terminal) {
+    if (node_index == 0 || node_index >= dawg->num_edges) return 0;
+
+    uint32_t target_code = (letter >= 'a' && letter <= 'z') ? (uint32_t)(letter - 'a') : (uint32_t)(letter - 'A');
+    uint32_t idx = node_index;
+
+    while (1) {
+        DawgEdge edge = dawg->edges[idx];
+        uint32_t edge_code = (edge & DAWG_LETTER_MASK) >> DAWG_LETTER_SHIFT;
+        if (edge_code == target_code) {
+            if (is_terminal) {
+                *is_terminal = (edge & DAWG_TERMINAL_MASK) != 0;
+            }
+            return (edge & DAWG_CHILD_MASK) >> DAWG_CHILD_SHIFT;
+        }
+        if (edge & DAWG_LAST_CHILD_MASK) break;
+        idx++;
+    }
+    return 0;
+}
 
 #endif /* DICT_H */

@@ -148,7 +148,10 @@ void board_compute_vertical_cross_checks(const Board *b, const Dawg *dawg,
 
 /* Anchor identification */
 /* An anchor is an empty square adjacent to an existing tile (or center H8 on first move) */
-bool board_is_anchor(const Board *b, int row, int col);
+static inline bool board_is_anchor(const Board *b, int row, int col) {
+    if (row < 0 || row >= BOARD_SIZE || col < 0 || col >= BOARD_SIZE) return false;
+    return bb_test(&b->anchors, row, col);
+}
 
 /* Scoring */
 int board_score_move(const Board *b, const Dawg *dawg, const Move *move);

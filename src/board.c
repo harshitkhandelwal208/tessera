@@ -162,10 +162,7 @@ void board_print(const Board *b) {
     printf("+\n");
 }
 
-bool board_is_anchor(const Board *b, int row, int col) {
-    if (row < 0 || row >= BOARD_SIZE || col < 0 || col >= BOARD_SIZE) return false;
-    return bb_test(&b->anchors, row, col);
-}
+
 
 /*
  * Cross-checks for horizontal word placement:

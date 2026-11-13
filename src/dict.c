@@ -351,31 +351,7 @@ void dawg_free(Dawg *dawg) {
     free(dawg);
 }
 
-/*
- * Step through the DAWG by one letter.
- * node_index: offset of the first sibling edge of this node.
- * Returns child edge offset (>0) if found, or 0 if no matching letter edge.
- * If is_terminal is non-null, sets it to true if this edge completes a word.
- */
-uint32_t dawg_step(const Dawg *dawg, uint32_t node_index, char letter, bool *is_terminal) {
-    if (node_index == 0 || node_index >= dawg->num_edges) return 0;
 
-    letter = (char)toupper((unsigned char)letter);
-    uint32_t idx = node_index;
-
-    while (1) {
-        DawgEdge edge = dawg->edges[idx];
-        if (dawg_letter(edge) == letter) {
-            if (is_terminal) {
-                *is_terminal = dawg_is_terminal(edge);
-            }
-            return dawg_child_index(edge);
-        }
-        if (dawg_is_last_child(edge)) break;
-        idx++;
-    }
-    return 0;
-}
 
 bool dawg_contains(const Dawg *dawg, const char *word) {
     if (!dawg || !word) return false;
