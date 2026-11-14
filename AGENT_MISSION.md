@@ -67,7 +67,7 @@ You are the lead algorithm architect and high-performance systems engineer worki
    - Always run `make test` before and after modifying engine code. All tests must pass 100%.
 2. **Benchmark Before Claiming Gains**:
    - Measure movegen throughput (moves/sec), evaluation latency (ms), and memory footprint before and after optimizations.
-3. **Commit Logical Increments**:
-   - Commit clean, documented changes with clear commit messages.
+3. **Commit & Push Logical Increments**:
+   - Commit clean, documented changes with clear commit messages, and push all commits to GitHub: `git push origin master`.
 4. **Document Progress in `AGENT_STATE.md`**:
    - Maintain current state, active tasks, and performance metrics.

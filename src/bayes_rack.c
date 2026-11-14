@@ -52,15 +52,20 @@ void bayes_rack_update_unseen(BayesRackTracker *tracker, const Board *board, con
     }
     tracker->total_unseen = 100;
 
-    /* Subtract tiles on board */
-    for (int r = 0; r < BOARD_SIZE; r++) {
-        for (int c = 0; c < BOARD_SIZE; c++) {
-            if (board->cells[r][c].tile != 0) {
-                int idx = board->cells[r][c].is_blank ? 26 : tile_to_index(board->cells[r][c].tile);
-                if (idx >= 0 && tracker->unseen_counts[idx] > 0) {
-                    tracker->unseen_counts[idx]--;
-                    tracker->total_unseen--;
-                }
+    /* Subtract tiles on board using occupied bitboard */
+    for (int w = 0; w < 4; w++) {
+        uint64_t mask = board->occupied.b[w];
+        while (mask) {
+            int bit = __builtin_ctzll(mask);
+            mask &= mask - 1;
+            int sq = (w << 6) + bit;
+            if (sq >= TOTAL_SQUARES) break;
+            int r = sq / BOARD_SIZE;
+            int c = sq % BOARD_SIZE;
+            int idx = board->cells[r][c].is_blank ? 26 : tile_to_index(board->cells[r][c].tile);
+            if (idx >= 0 && tracker->unseen_counts[idx] > 0) {
+                tracker->unseen_counts[idx]--;
+                tracker->total_unseen--;
             }
         }
     }
@@ -131,18 +136,16 @@ void bayes_rack_sample_with_bag(const BayesRackTracker *tracker, Rack *out_opp_r
     int pool[NUM_DISTINCT_TILES];
     memcpy(pool, tracker->unseen_counts, sizeof(pool));
 
+    /* Precompute unnormalized probabilities once; update incrementally in O(1) per draw */
+    float probs[NUM_DISTINCT_TILES];
+    float total_prob = 0.0f;
+    for (int i = 0; i < NUM_DISTINCT_TILES; i++) {
+        probs[i] = (float)pool[i] * tracker->tile_weights[i];
+        total_prob += probs[i];
+    }
+
     for (int d = 0; d < opp_draw_count; d++) {
-        float total_prob = 0.0f;
-        float probs[NUM_DISTINCT_TILES] = {0};
-
-        for (int i = 0; i < NUM_DISTINCT_TILES; i++) {
-            if (pool[i] > 0) {
-                probs[i] = (float)pool[i] * tracker->tile_weights[i];
-                total_prob += probs[i];
-            }
-        }
-
-        if (total_prob <= 0.0f) break;
+        if (total_prob <= 1e-6f) break;
 
         /* Spin roulette wheel */
         float r = fast_bayes_uniform() * total_prob;
@@ -150,7 +153,7 @@ void bayes_rack_sample_with_bag(const BayesRackTracker *tracker, Rack *out_opp_r
         int chosen_idx = -1;
 
         for (int i = 0; i < NUM_DISTINCT_TILES; i++) {
-            if (pool[i] > 0) {
+            if (probs[i] > 0.0f) {
                 accum += probs[i];
                 if (r <= accum) {
                     chosen_idx = i;
@@ -170,6 +173,9 @@ void bayes_rack_sample_with_bag(const BayesRackTracker *tracker, Rack *out_opp_r
             char tile = index_to_tile(chosen_idx);
             rack_add_tile(out_opp_rack, tile);
             pool[chosen_idx]--;
+            float w = tracker->tile_weights[chosen_idx];
+            probs[chosen_idx] = fmaxf(0.0f, probs[chosen_idx] - w);
+            total_prob = fmaxf(0.0f, total_prob - w);
         }
     }
 

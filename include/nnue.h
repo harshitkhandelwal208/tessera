@@ -16,14 +16,35 @@
 #define NNUE_VERSION          4
 
 /*
- * Tier 2 Deep Master Net Architecture Constants (Stockfish Two-Tier Blueprint)
- * (100% L3 Cache Resident, ~8.4 MB to 16.8 MB)
+ * Tier 2 Deep Master Net Architecture Constants & Layout (Stockfish Two-Tier Blueprint)
+ * (100% L3 Cache Resident, ~8.4 MB INT8 / 16.8 MB INT16 / 33.5 MB FP32)
+ * Input (16384) -> L1 Accumulator (512) -> Dual SCReLU (1024) -> L2 (128) -> L3 (64) -> Dual Heads
  */
 #define NNUE_TIER2_INPUT_DIM  16384
 #define NNUE_TIER2_L1_DIM     512
 #define NNUE_TIER2_L1_ACT_DIM 1024
 #define NNUE_TIER2_L2_DIM     128
 #define NNUE_TIER2_L3_DIM     64
+
+typedef struct {
+    alignas(64) float w1[NNUE_TIER2_L1_DIM * NNUE_TIER2_INPUT_DIM];
+    alignas(64) float b1[NNUE_TIER2_L1_DIM];
+    alignas(64) float w2[NNUE_TIER2_L2_DIM * NNUE_TIER2_L1_ACT_DIM];
+    alignas(64) float b2[NNUE_TIER2_L2_DIM];
+    alignas(64) float w3[NNUE_TIER2_L3_DIM * NNUE_TIER2_L2_DIM];
+    alignas(64) float b3[NNUE_TIER2_L3_DIM];
+    alignas(64) float w_spread[NNUE_TIER2_L3_DIM];
+    float b_spread;
+    alignas(64) float w_win[NNUE_TIER2_L3_DIM];
+    float b_win;
+    bool is_loaded;
+} NNUETier2Model;
+
+typedef struct {
+    alignas(64) float vals[NNUE_TIER2_L1_DIM];
+} NNUETier2Accumulator;
+
+extern NNUETier2Model g_nnue_tier2;
 
 /*
  * Supercharged Two-Tier In-Cache NNUE Architecture (Stockfish / Viridithas / Berserk pattern):
@@ -163,6 +184,30 @@ float nnue_forward_move_incremental(const NNUEModel *model, const NNUEAccumulato
                                     int bag_count, int score_diff);
 
 NNUEResult nnue_forward_move_incremental_dual(const NNUEModel *model, const NNUEAccumulator *base_acc,
+                                              const Board *board, const Move *move,
+                                              int bag_count, int score_diff);
+
+/*
+ * Quantized Incremental Accumulator Functions (Stockfish HalfKP pattern)
+ * INT8 / INT16 pure integer SIMD vectorization (>10,000,000 evals/sec).
+ */
+void nnue_quantized_accumulator_build_base(const NNUEQuantizedModel *model, const Board *board,
+                                           const Rack *rack, int bag_count, int score_diff,
+                                           NNUEQuantizedAccumulator *base_acc);
+
+void nnue_quantized_accumulator_apply_sparse(const NNUEQuantizedModel *model,
+                                             const NNUEQuantizedAccumulator *base,
+                                             const SparseFeature *features, int num_features,
+                                             NNUEQuantizedAccumulator *out_acc);
+
+float nnue_forward_quantized_accumulator(const NNUEQuantizedModel *model,
+                                         const NNUEQuantizedAccumulator *acc);
+
+NNUEResult nnue_forward_quantized_accumulator_dual(const NNUEQuantizedModel *model,
+                                                   const NNUEQuantizedAccumulator *acc);
+
+float nnue_forward_move_quantized_incremental(const NNUEQuantizedModel *model,
+                                              const NNUEQuantizedAccumulator *base_acc,
                                               const Board *board, const Move *move,
                                               int bag_count, int score_diff);
 

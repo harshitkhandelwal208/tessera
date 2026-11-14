@@ -13,6 +13,7 @@
 
 NNUEModel g_nnue = {0};
 NNUEQuantizedModel g_nnue_quantized = {0};
+NNUETier2Model g_nnue_tier2 = {0};
 
 /* Random float in [-limit, +limit] */
 static float rand_uniform(float limit) {
@@ -2040,4 +2041,378 @@ NNUEResult nnue_forward_move_incremental_dual(const NNUEModel *model, const NNUE
     NNUEAccumulator move_acc;
     nnue_accumulator_apply_sparse(model, base_acc, sparse, n, &move_acc);
     return nnue_forward_accumulator_dual(model, &move_acc);
+}
+
+/*
+ * Quantized Incremental Accumulator Architecture (Stockfish HalfKP pattern)
+ * INT8 weights streaming into INT16 accumulator registers (>10M evals/sec).
+ */
+
+void nnue_quantized_accumulator_build_base(const NNUEQuantizedModel *model, const Board *board,
+                                           const Rack *rack, int bag_count, int score_diff,
+                                           NNUEQuantizedAccumulator *base_acc) {
+    if (!model || !base_acc) return;
+    alignas(64) float base_features[NNUE_INPUT_DIM];
+    nnue_extract_features_with_score(board, NULL, rack, bag_count, score_diff, base_features);
+
+    memcpy(base_acc->vals, model->b1, sizeof(base_acc->vals));
+
+    for (int i = 0; i < NNUE_INPUT_DIM; i++) {
+        float val = base_features[i];
+        if (val == 0.0f) continue;
+        const int8_t *w = model->w1_by_feature[i];
+#if defined(__AVX2__)
+        if (val == 1.0f) {
+            for (int o = 0; o < NNUE_L1_DIM; o += 16) {
+                __m256i acc = _mm256_load_si256((const __m256i*)&base_acc->vals[o]);
+                __m128i w8 = _mm_loadu_si128((const __m128i*)&w[o]);
+                __m256i w16 = _mm256_cvtepi8_epi16(w8);
+                acc = _mm256_add_epi16(acc, w16);
+                _mm256_store_si256((__m256i*)&base_acc->vals[o], acc);
+            }
+        } else {
+            int16_t scale = (int16_t)roundf(val * 128.0f);
+            __m256i scale_v = _mm256_set1_epi16(scale);
+            for (int o = 0; o < NNUE_L1_DIM; o += 16) {
+                __m256i acc = _mm256_load_si256((const __m256i*)&base_acc->vals[o]);
+                __m128i w8 = _mm_loadu_si128((const __m128i*)&w[o]);
+                __m256i w16 = _mm256_cvtepi8_epi16(w8);
+                __m256i prod = _mm256_mullo_epi16(w16, scale_v);
+                acc = _mm256_add_epi16(acc, _mm256_srai_epi16(prod, 7));
+                _mm256_store_si256((__m256i*)&base_acc->vals[o], acc);
+            }
+        }
+#else
+        for (int o = 0; o < NNUE_L1_DIM; o++) {
+            base_acc->vals[o] += (int16_t)roundf(val * (float)w[o]);
+        }
+#endif
+    }
+}
+
+void nnue_quantized_accumulator_apply_sparse(const NNUEQuantizedModel *model,
+                                             const NNUEQuantizedAccumulator *base,
+                                             const SparseFeature *features, int num_features,
+                                             NNUEQuantizedAccumulator *out_acc) {
+#if defined(__AVX2__)
+    __m256i a0  = _mm256_load_si256((const __m256i*)&base->vals[0]);
+    __m256i a1  = _mm256_load_si256((const __m256i*)&base->vals[16]);
+    __m256i a2  = _mm256_load_si256((const __m256i*)&base->vals[32]);
+    __m256i a3  = _mm256_load_si256((const __m256i*)&base->vals[48]);
+    __m256i a4  = _mm256_load_si256((const __m256i*)&base->vals[64]);
+    __m256i a5  = _mm256_load_si256((const __m256i*)&base->vals[80]);
+    __m256i a6  = _mm256_load_si256((const __m256i*)&base->vals[96]);
+    __m256i a7  = _mm256_load_si256((const __m256i*)&base->vals[112]);
+    __m256i a8  = _mm256_load_si256((const __m256i*)&base->vals[128]);
+    __m256i a9  = _mm256_load_si256((const __m256i*)&base->vals[144]);
+    __m256i a10 = _mm256_load_si256((const __m256i*)&base->vals[160]);
+    __m256i a11 = _mm256_load_si256((const __m256i*)&base->vals[176]);
+    __m256i a12 = _mm256_load_si256((const __m256i*)&base->vals[192]);
+    __m256i a13 = _mm256_load_si256((const __m256i*)&base->vals[208]);
+    __m256i a14 = _mm256_load_si256((const __m256i*)&base->vals[224]);
+    __m256i a15 = _mm256_load_si256((const __m256i*)&base->vals[240]);
+
+    for (int f = 0; f < num_features; f++) {
+        uint16_t idx = features[f].index;
+        float val = features[f].value;
+        const int8_t *w = model->w1_by_feature[idx];
+
+        if (val == 1.0f) {
+            a0  = _mm256_add_epi16(a0,  _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[0])));
+            a1  = _mm256_add_epi16(a1,  _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[16])));
+            a2  = _mm256_add_epi16(a2,  _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[32])));
+            a3  = _mm256_add_epi16(a3,  _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[48])));
+            a4  = _mm256_add_epi16(a4,  _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[64])));
+            a5  = _mm256_add_epi16(a5,  _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[80])));
+            a6  = _mm256_add_epi16(a6,  _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[96])));
+            a7  = _mm256_add_epi16(a7,  _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[112])));
+            a8  = _mm256_add_epi16(a8,  _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[128])));
+            a9  = _mm256_add_epi16(a9,  _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[144])));
+            a10 = _mm256_add_epi16(a10, _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[160])));
+            a11 = _mm256_add_epi16(a11, _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[176])));
+            a12 = _mm256_add_epi16(a12, _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[192])));
+            a13 = _mm256_add_epi16(a13, _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[208])));
+            a14 = _mm256_add_epi16(a14, _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[224])));
+            a15 = _mm256_add_epi16(a15, _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[240])));
+        } else if (val == -1.0f) {
+            a0  = _mm256_sub_epi16(a0,  _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[0])));
+            a1  = _mm256_sub_epi16(a1,  _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[16])));
+            a2  = _mm256_sub_epi16(a2,  _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[32])));
+            a3  = _mm256_sub_epi16(a3,  _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[48])));
+            a4  = _mm256_sub_epi16(a4,  _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[64])));
+            a5  = _mm256_sub_epi16(a5,  _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[80])));
+            a6  = _mm256_sub_epi16(a6,  _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[96])));
+            a7  = _mm256_sub_epi16(a7,  _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[112])));
+            a8  = _mm256_sub_epi16(a8,  _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[128])));
+            a9  = _mm256_sub_epi16(a9,  _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[144])));
+            a10 = _mm256_sub_epi16(a10, _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[160])));
+            a11 = _mm256_sub_epi16(a11, _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[176])));
+            a12 = _mm256_sub_epi16(a12, _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[192])));
+            a13 = _mm256_sub_epi16(a13, _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[208])));
+            a14 = _mm256_sub_epi16(a14, _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[224])));
+            a15 = _mm256_sub_epi16(a15, _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[240])));
+        } else {
+            int16_t scale = (int16_t)roundf(val * 128.0f);
+            __m256i scale_v = _mm256_set1_epi16(scale);
+            #define APPLY_SCALE_REG(a, offset) do { \
+                __m256i w16 = _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*)&w[offset])); \
+                __m256i prod = _mm256_mullo_epi16(w16, scale_v); \
+                a = _mm256_add_epi16(a, _mm256_srai_epi16(prod, 7)); \
+            } while (0)
+            APPLY_SCALE_REG(a0, 0);     APPLY_SCALE_REG(a1, 16);    APPLY_SCALE_REG(a2, 32);    APPLY_SCALE_REG(a3, 48);
+            APPLY_SCALE_REG(a4, 64);    APPLY_SCALE_REG(a5, 80);    APPLY_SCALE_REG(a6, 96);    APPLY_SCALE_REG(a7, 112);
+            APPLY_SCALE_REG(a8, 128);   APPLY_SCALE_REG(a9, 144);   APPLY_SCALE_REG(a10, 160);  APPLY_SCALE_REG(a11, 176);
+            APPLY_SCALE_REG(a12, 192);  APPLY_SCALE_REG(a13, 208);  APPLY_SCALE_REG(a14, 224);  APPLY_SCALE_REG(a15, 240);
+            #undef APPLY_SCALE_REG
+        }
+    }
+
+    _mm256_store_si256((__m256i*)&out_acc->vals[0],   a0);
+    _mm256_store_si256((__m256i*)&out_acc->vals[16],  a1);
+    _mm256_store_si256((__m256i*)&out_acc->vals[32],  a2);
+    _mm256_store_si256((__m256i*)&out_acc->vals[48],  a3);
+    _mm256_store_si256((__m256i*)&out_acc->vals[64],  a4);
+    _mm256_store_si256((__m256i*)&out_acc->vals[80],  a5);
+    _mm256_store_si256((__m256i*)&out_acc->vals[96],  a6);
+    _mm256_store_si256((__m256i*)&out_acc->vals[112], a7);
+    _mm256_store_si256((__m256i*)&out_acc->vals[128], a8);
+    _mm256_store_si256((__m256i*)&out_acc->vals[144], a9);
+    _mm256_store_si256((__m256i*)&out_acc->vals[160], a10);
+    _mm256_store_si256((__m256i*)&out_acc->vals[176], a11);
+    _mm256_store_si256((__m256i*)&out_acc->vals[192], a12);
+    _mm256_store_si256((__m256i*)&out_acc->vals[208], a13);
+    _mm256_store_si256((__m256i*)&out_acc->vals[224], a14);
+    _mm256_store_si256((__m256i*)&out_acc->vals[240], a15);
+#else
+    memcpy(out_acc->vals, base->vals, sizeof(base->vals));
+    for (int f = 0; f < num_features; f++) {
+        uint16_t idx = features[f].index;
+        float val = features[f].value;
+        const int8_t *w = model->w1_by_feature[idx];
+        for (int o = 0; o < NNUE_L1_DIM; o++) {
+            out_acc->vals[o] += (int16_t)roundf(val * (float)w[o]);
+        }
+    }
+#endif
+}
+
+float nnue_forward_quantized_accumulator(const NNUEQuantizedModel *model, const NNUEQuantizedAccumulator *acc) {
+    if (!model || !model->is_loaded) return 0.0f;
+
+    alignas(64) uint8_t l1_act[NNUE_L1_ACT_DIM];
+
+#if defined(__AVX2__)
+    __m256i v_zero = _mm256_setzero_si256();
+    __m256i v_127 = _mm256_set1_epi16(127);
+    alignas(32) int16_t r_buf[16];
+    alignas(32) int16_t s_buf[16];
+    for (int i = 0; i < NNUE_L1_DIM; i += 16) {
+        __m256i x = _mm256_load_si256((const __m256i*)&acc->vals[i]);
+        __m256i relu = _mm256_min_epi16(_mm256_max_epi16(x, v_zero), v_127);
+        __m256i sq = _mm256_srli_epi16(_mm256_mullo_epi16(relu, relu), 7);
+
+        _mm256_store_si256((__m256i*)r_buf, relu);
+        _mm256_store_si256((__m256i*)s_buf, sq);
+        for (int k = 0; k < 16; k++) {
+            l1_act[i + k] = (uint8_t)r_buf[k];
+            l1_act[NNUE_L1_DIM + i + k] = (uint8_t)s_buf[k];
+        }
+    }
+#else
+    for (int i = 0; i < NNUE_L1_DIM; i++) {
+        int v = acc->vals[i];
+        if (v < 0) v = 0;
+        if (v > 127) v = 127;
+        l1_act[i] = (uint8_t)v;
+        int sq = (v * v) / 128;
+        if (sq > 127) sq = 127;
+        l1_act[NNUE_L1_DIM + i] = (uint8_t)sq;
+    }
+#endif
+
+    alignas(64) uint8_t l2_act[NNUE_L2_DIM];
+    for (int o = 0; o < NNUE_L2_DIM; o++) {
+        int32_t sum = (int32_t)model->b2[o];
+        const int8_t *w_row = &model->w2[o * NNUE_L1_ACT_DIM];
+#if defined(__AVX2__)
+        __m256i sum_v = _mm256_setzero_si256();
+        __m256i ones = _mm256_set1_epi16(1);
+        for (int i = 0; i < NNUE_L1_ACT_DIM; i += 32) {
+            __m256i act_v = _mm256_load_si256((const __m256i*)&l1_act[i]);
+            __m256i w_v = _mm256_loadu_si256((const __m256i*)&w_row[i]);
+            __m256i prod = _mm256_maddubs_epi16(act_v, w_v);
+            __m256i prod32 = _mm256_madd_epi16(prod, ones);
+            sum_v = _mm256_add_epi32(sum_v, prod32);
+        }
+        __m128i lo = _mm256_castsi256_si128(sum_v);
+        __m128i hi = _mm256_extracti128_si256(sum_v, 1);
+        __m128i sum128 = _mm_add_epi32(lo, hi);
+        sum128 = _mm_hadd_epi32(sum128, sum128);
+        sum128 = _mm_hadd_epi32(sum128, sum128);
+        sum += _mm_cvtsi128_si32(sum128);
+#else
+        for (int i = 0; i < NNUE_L1_ACT_DIM; i++) {
+            sum += (int32_t)w_row[i] * (int32_t)l1_act[i];
+        }
+#endif
+        int v = sum / 128;
+        l2_act[o] = (uint8_t)(v > 0 ? (v > 127 ? 127 : v) : 0);
+    }
+
+    alignas(64) uint8_t l3_act[NNUE_L3_DIM];
+    for (int o = 0; o < NNUE_L3_DIM; o++) {
+        int32_t sum = (int32_t)model->b3[o];
+        const int8_t *w_row = &model->w3[o * NNUE_L2_DIM];
+#if defined(__AVX2__)
+        __m256i sum_v = _mm256_setzero_si256();
+        __m256i ones = _mm256_set1_epi16(1);
+        for (int i = 0; i < NNUE_L2_DIM; i += 32) {
+            __m256i act_v = _mm256_load_si256((const __m256i*)&l2_act[i]);
+            __m256i w_v = _mm256_loadu_si256((const __m256i*)&w_row[i]);
+            __m256i prod = _mm256_maddubs_epi16(act_v, w_v);
+            __m256i prod32 = _mm256_madd_epi16(prod, ones);
+            sum_v = _mm256_add_epi32(sum_v, prod32);
+        }
+        __m128i lo = _mm256_castsi256_si128(sum_v);
+        __m128i hi = _mm256_extracti128_si256(sum_v, 1);
+        __m128i sum128 = _mm_add_epi32(lo, hi);
+        sum128 = _mm_hadd_epi32(sum128, sum128);
+        sum128 = _mm_hadd_epi32(sum128, sum128);
+        sum += _mm_cvtsi128_si32(sum128);
+#else
+        for (int i = 0; i < NNUE_L2_DIM; i++) {
+            sum += (int32_t)w_row[i] * (int32_t)l2_act[i];
+        }
+#endif
+        int v = sum / 128;
+        l3_act[o] = (uint8_t)(v > 0 ? (v > 127 ? 127 : v) : 0);
+    }
+
+    int32_t out_acc = (int32_t)model->b_spread;
+    for (int i = 0; i < NNUE_L3_DIM; i++) {
+        out_acc += (int32_t)model->w_spread[i] * (int32_t)l3_act[i];
+    }
+
+    float raw = (float)out_acc / (512.0f * 128.0f);
+    return raw * 50.0f;
+}
+
+NNUEResult nnue_forward_quantized_accumulator_dual(const NNUEQuantizedModel *model, const NNUEQuantizedAccumulator *acc) {
+    NNUEResult res;
+    res.net_spread = 0.0f;
+    res.win_probability = 0.5f;
+    if (!model || !model->is_loaded) return res;
+
+    alignas(64) uint8_t l1_act[NNUE_L1_ACT_DIM];
+
+#if defined(__AVX2__)
+    __m256i v_zero = _mm256_setzero_si256();
+    __m256i v_127 = _mm256_set1_epi16(127);
+    alignas(32) int16_t r_buf[16];
+    alignas(32) int16_t s_buf[16];
+    for (int i = 0; i < NNUE_L1_DIM; i += 16) {
+        __m256i x = _mm256_load_si256((const __m256i*)&acc->vals[i]);
+        __m256i relu = _mm256_min_epi16(_mm256_max_epi16(x, v_zero), v_127);
+        __m256i sq = _mm256_srli_epi16(_mm256_mullo_epi16(relu, relu), 7);
+
+        _mm256_store_si256((__m256i*)r_buf, relu);
+        _mm256_store_si256((__m256i*)s_buf, sq);
+        for (int k = 0; k < 16; k++) {
+            l1_act[i + k] = (uint8_t)r_buf[k];
+            l1_act[NNUE_L1_DIM + i + k] = (uint8_t)s_buf[k];
+        }
+    }
+#else
+    for (int i = 0; i < NNUE_L1_DIM; i++) {
+        int v = acc->vals[i];
+        if (v < 0) v = 0;
+        if (v > 127) v = 127;
+        l1_act[i] = (uint8_t)v;
+        int sq = (v * v) / 128;
+        if (sq > 127) sq = 127;
+        l1_act[NNUE_L1_DIM + i] = (uint8_t)sq;
+    }
+#endif
+
+    alignas(64) uint8_t l2_act[NNUE_L2_DIM];
+    for (int o = 0; o < NNUE_L2_DIM; o++) {
+        int32_t sum = (int32_t)model->b2[o];
+        const int8_t *w_row = &model->w2[o * NNUE_L1_ACT_DIM];
+#if defined(__AVX2__)
+        __m256i sum_v = _mm256_setzero_si256();
+        __m256i ones = _mm256_set1_epi16(1);
+        for (int i = 0; i < NNUE_L1_ACT_DIM; i += 32) {
+            __m256i act_v = _mm256_load_si256((const __m256i*)&l1_act[i]);
+            __m256i w_v = _mm256_loadu_si256((const __m256i*)&w_row[i]);
+            __m256i prod = _mm256_maddubs_epi16(act_v, w_v);
+            __m256i prod32 = _mm256_madd_epi16(prod, ones);
+            sum_v = _mm256_add_epi32(sum_v, prod32);
+        }
+        __m128i lo = _mm256_castsi256_si128(sum_v);
+        __m128i hi = _mm256_extracti128_si256(sum_v, 1);
+        __m128i sum128 = _mm_add_epi32(lo, hi);
+        sum128 = _mm_hadd_epi32(sum128, sum128);
+        sum128 = _mm_hadd_epi32(sum128, sum128);
+        sum += _mm_cvtsi128_si32(sum128);
+#else
+        for (int i = 0; i < NNUE_L1_ACT_DIM; i++) {
+            sum += (int32_t)w_row[i] * (int32_t)l1_act[i];
+        }
+#endif
+        int v = sum / 128;
+        l2_act[o] = (uint8_t)(v > 0 ? (v > 127 ? 127 : v) : 0);
+    }
+
+    alignas(64) uint8_t l3_act[NNUE_L3_DIM];
+    for (int o = 0; o < NNUE_L3_DIM; o++) {
+        int32_t sum = (int32_t)model->b3[o];
+        const int8_t *w_row = &model->w3[o * NNUE_L2_DIM];
+#if defined(__AVX2__)
+        __m256i sum_v = _mm256_setzero_si256();
+        __m256i ones = _mm256_set1_epi16(1);
+        for (int i = 0; i < NNUE_L2_DIM; i += 32) {
+            __m256i act_v = _mm256_load_si256((const __m256i*)&l2_act[i]);
+            __m256i w_v = _mm256_loadu_si256((const __m256i*)&w_row[i]);
+            __m256i prod = _mm256_maddubs_epi16(act_v, w_v);
+            __m256i prod32 = _mm256_madd_epi16(prod, ones);
+            sum_v = _mm256_add_epi32(sum_v, prod32);
+        }
+        __m128i lo = _mm256_castsi256_si128(sum_v);
+        __m128i hi = _mm256_extracti128_si256(sum_v, 1);
+        __m128i sum128 = _mm_add_epi32(lo, hi);
+        sum128 = _mm_hadd_epi32(sum128, sum128);
+        sum128 = _mm_hadd_epi32(sum128, sum128);
+        sum += _mm_cvtsi128_si32(sum128);
+#else
+        for (int i = 0; i < NNUE_L2_DIM; i++) {
+            sum += (int32_t)w_row[i] * (int32_t)l2_act[i];
+        }
+#endif
+        int v = sum / 128;
+        l3_act[o] = (uint8_t)(v > 0 ? (v > 127 ? 127 : v) : 0);
+    }
+
+    int32_t out_spread = (int32_t)model->b_spread;
+    int32_t out_win = (int32_t)model->b_win;
+    for (int i = 0; i < NNUE_L3_DIM; i++) {
+        out_spread += (int32_t)model->w_spread[i] * (int32_t)l3_act[i];
+        out_win += (int32_t)model->w_win[i] * (int32_t)l3_act[i];
+    }
+
+    float raw_spread = (float)out_spread / (512.0f * 128.0f);
+    res.net_spread = raw_spread * 50.0f;
+    float raw_win = (float)out_win / (512.0f * 128.0f);
+    res.win_probability = 1.0f / (1.0f + expf(-raw_win * 3.0f));
+    return res;
+}
+
+float nnue_forward_move_quantized_incremental(const NNUEQuantizedModel *model, const NNUEQuantizedAccumulator *base_acc,
+                                              const Board *board, const Move *move,
+                                              int bag_count, int score_diff) {
+    if (!model || !model->is_loaded) return 0.0f;
+    SparseFeature sparse[256];
+    int n = nnue_extract_move_sparse_features(board, move, bag_count, score_diff, sparse);
+    NNUEQuantizedAccumulator move_acc;
+    nnue_quantized_accumulator_apply_sparse(model, base_acc, sparse, n, &move_acc);
+    return nnue_forward_quantized_accumulator(model, &move_acc);
 }

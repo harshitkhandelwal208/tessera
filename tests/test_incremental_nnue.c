@@ -119,6 +119,40 @@ int main(void) {
     }
     printf("[TEST] Verified 100%% equivalence across all %d moves (Max Diff: %.6f)!\n", moves.count, max_diff);
 
+    /* 4. INT8/INT16 Pure Integer Vectorized Accumulator Pipeline Benchmark */
+    NNUEQuantizedAccumulator q_base_acc;
+    nnue_quantized_accumulator_build_base(&g_nnue_quantized, &board, &rack, 86, 0, &q_base_acc);
+
+    clock_t t_q_acc_start = clock();
+    int q_acc_iters = 1000000;
+    NNUEQuantizedAccumulator q_bench_acc;
+    int32_t q_sink = 0;
+    for (int it = 0; it < q_acc_iters; it++) {
+        nnue_quantized_accumulator_apply_sparse(&g_nnue_quantized, &q_base_acc, test_sparse, test_n, &q_bench_acc);
+        q_sink += q_bench_acc.vals[it & 255];
+    }
+    clock_t t_q_acc_end = clock();
+    double q_acc_ms = ((double)(t_q_acc_end - t_q_acc_start) / CLOCKS_PER_SEC) * 1000.0;
+    double q_acc_eps = (double)q_acc_iters / (q_acc_ms / 1000.0);
+
+    clock_t t_q_raw_start = clock();
+    int q_raw_iters = 500000;
+    float q_raw_sum = 0.0f;
+    for (int it = 0; it < q_raw_iters; it++) {
+        NNUEQuantizedAccumulator q_test_acc;
+        nnue_quantized_accumulator_apply_sparse(&g_nnue_quantized, &q_base_acc, test_sparse, test_n, &q_test_acc);
+        q_raw_sum += nnue_forward_quantized_accumulator(&g_nnue_quantized, &q_test_acc);
+    }
+    clock_t t_q_raw_end = clock();
+    double q_raw_ms = ((double)(t_q_raw_end - t_q_raw_start) / CLOCKS_PER_SEC) * 1000.0;
+    double q_raw_eps = (double)q_raw_iters / (q_raw_ms / 1000.0);
+
+    printf("[BENCHMARK] Quantized INT8/INT16 Vectorized Pipeline:\n");
+    printf("  Quantized Sparse Accumulator Update:   %.2f ms (%.0f updates/sec, sink=%d)\n",
+           q_acc_ms, q_acc_eps, (int)q_sink);
+    printf("  Quantized Incremental Pipeline:        %.2f ms (%.0f evals/sec, sum=%.1f)\n",
+           q_raw_ms, q_raw_eps, q_raw_sum);
+
     move_list_destroy(&moves);
     dawg_free(dawg);
     printf("[TEST] Incremental Accumulator test PASSED flawlessly!\n");

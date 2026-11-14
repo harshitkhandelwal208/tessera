@@ -38,16 +38,21 @@ int sim_get_unseen_tiles(const Board *board, const Rack *player_rack, char unsee
         counts[i] = TILE_BAG_DISTRIBUTION[i];
     }
 
-    /* Subtract tiles on board */
-    for (int r = 0; r < BOARD_SIZE; r++) {
-        for (int c = 0; c < BOARD_SIZE; c++) {
-            char t = board->cells[r][c].tile;
-            if (t != 0) {
-                if (board->cells[r][c].is_blank) {
-                    counts[26]--;
-                } else if (t >= 'A' && t <= 'Z') {
-                    counts[t - 'A']--;
-                }
+    /* Subtract tiles on board using occupied bitboard */
+    for (int w = 0; w < 4; w++) {
+        uint64_t mask = board->occupied.b[w];
+        while (mask) {
+            int bit = __builtin_ctzll(mask);
+            mask &= mask - 1;
+            int sq = (w << 6) + bit;
+            if (sq >= TOTAL_SQUARES) break;
+            int r = sq / BOARD_SIZE;
+            int c = sq % BOARD_SIZE;
+            if (board->cells[r][c].is_blank) {
+                counts[26]--;
+            } else {
+                char t = board->cells[r][c].tile;
+                if (t >= 'A' && t <= 'Z') counts[t - 'A']--;
             }
         }
     }

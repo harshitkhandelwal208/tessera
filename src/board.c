@@ -232,21 +232,18 @@ void board_compute_horizontal_cross_checks(const Board *b, const Dawg *dawg,
                 }
             }
 
-            /* Multiplier on cell (r, c) */
+            /* Multiplier on cell (r, c) via branchless lookup tables */
+            static const uint8_t s_let_mults[5] = { 1, 2, 3, 1, 1 };
+            static const uint8_t s_wrd_mults[5] = { 1, 1, 1, 2, 3 };
             MultiplierType m = b->cells[r][c].mult;
-            int letter_mult = 1;
-            int word_mult = 1;
-            if (m == MULT_DL) letter_mult = 2;
-            else if (m == MULT_TL) letter_mult = 3;
-            else if (m == MULT_DW) word_mult = 2;
-            else if (m == MULT_TW) word_mult = 3;
+            int letter_mult = s_let_mults[m];
+            int word_mult = s_wrd_mults[m];
 
             /* Step upward prefix once if present */
             uint32_t prefix_node = dawg->root_index;
             bool prefix_valid = true;
             for (int k = up_start; k < r; k++) {
-                bool term = false;
-                prefix_node = dawg_step(dawg, prefix_node, b->cells[k][c].tile, &term);
+                prefix_node = dawg_step_child(dawg, prefix_node, b->cells[k][c].tile);
                 if (prefix_node == 0) {
                     prefix_valid = false;
                     break;
@@ -271,17 +268,16 @@ void board_compute_horizontal_cross_checks(const Board *b, const Dawg *dawg,
                 } else {
                     uint32_t suf_node = dawg_child_index(edge);
                     if (suf_node != 0) {
-                        bool is_term = false;
                         bool suf_valid = true;
+                        DawgEdge last_e = 0;
                         for (int k = r + 1; k <= down_end; k++) {
-                            is_term = false;
-                            suf_node = dawg_step(dawg, suf_node, b->cells[k][c].tile, &is_term);
-                            if (suf_node == 0 && k < down_end) {
+                            if (!dawg_step_edge(dawg, suf_node, b->cells[k][c].tile, &last_e)) {
                                 suf_valid = false;
                                 break;
                             }
+                            suf_node = dawg_child_index(last_e);
                         }
-                        word_valid = (suf_valid && is_term);
+                        word_valid = (suf_valid && dawg_is_terminal(last_e));
                     }
                 }
 
