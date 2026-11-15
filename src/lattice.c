@@ -226,9 +226,15 @@ void lattice_expand_node(Lattice *lat, uint32_t node_idx, const Dawg *dawg,
     }
 
     /* Compute static equity for candidate moves with Stockfish HalfKP-style incremental accumulator */
+    NNUEQuantizedAccumulator q_base_acc;
     NNUEAccumulator base_acc;
+    bool has_q_acc = false;
     bool has_base_acc = false;
-    if (g_nnue.is_loaded) {
+
+    if (g_nnue_quantized.is_loaded) {
+        nnue_quantized_accumulator_build_base(&g_nnue_quantized, &node->board, rack, bag_count, lat->score_diff, &q_base_acc);
+        has_q_acc = true;
+    } else if (g_nnue.is_loaded) {
         nnue_accumulator_build_base(&g_nnue, &node->board, rack, bag_count, lat->score_diff, &base_acc);
         has_base_acc = true;
     }
@@ -239,7 +245,9 @@ void lattice_expand_node(Lattice *lat, uint32_t node_idx, const Dawg *dawg,
             all_moves.moves[i].leave_equity = (float)all_moves.moves[i].score + 2.0f * (float)opp_rack_val;
         } else {
             float base_eq;
-            if (has_base_acc) {
+            if (has_q_acc) {
+                base_eq = eval_move_static_quantized_incremental(&node->board, &all_moves.moves[i], &q_base_acc, bag_count, lat->score_diff);
+            } else if (has_base_acc) {
                 base_eq = eval_move_static_incremental(&node->board, &all_moves.moves[i], &base_acc, bag_count, lat->score_diff);
             } else {
                 base_eq = eval_move_static_with_score(&node->board, &all_moves.moves[i], bag_count, lat->score_diff);

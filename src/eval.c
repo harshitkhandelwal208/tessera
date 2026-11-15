@@ -740,6 +740,38 @@ float eval_move_static_incremental(const Board *board, const Move *move,
     return acc.net_equity;
 }
 
+DualAccumulator eval_move_accumulate_with_score_quantized_incremental(const Board *board, const Move *move,
+                                                                     const NNUEQuantizedAccumulator *base_acc,
+                                                                     int bag_count, int score_diff) {
+    DualAccumulator acc = {0};
+    if (move->type != MOVE_PLAY) return acc;
+
+    PhaseBucket phase = eval_classify_phase(bag_count);
+    OpennessBucket openness = eval_classify_openness(board);
+
+    float board_risk = eval_board_risk_with_score(board, move, openness, score_diff);
+    float rack_leave = eval_rack_leave_bucketed_with_score(move->leave, phase, score_diff);
+    float heuristic_future = board_risk + rack_leave;
+
+    if (g_nnue_quantized.is_loaded && base_acc) {
+        float nnue_pred = nnue_forward_move_quantized_incremental(&g_nnue_quantized, base_acc, board, move, bag_count, score_diff);
+        float blended_future = (0.65f * heuristic_future) + (0.35f * nnue_pred);
+        acc.board_acc = (float)move->score + (0.65f * board_risk);
+        acc.rack_acc = (0.65f * rack_leave) + (0.35f * nnue_pred);
+        acc.net_equity = (float)move->score + blended_future;
+        return acc;
+    }
+
+    return eval_move_accumulate_with_score(board, move, bag_count, score_diff);
+}
+
+float eval_move_static_quantized_incremental(const Board *board, const Move *move,
+                                            const NNUEQuantizedAccumulator *base_acc,
+                                            int bag_count, int score_diff) {
+    DualAccumulator acc = eval_move_accumulate_with_score_quantized_incremental(board, move, base_acc, bag_count, score_diff);
+    return acc.net_equity;
+}
+
 float eval_move_static_with_score(const Board *board, const Move *move, int bag_count, int score_diff) {
     DualAccumulator acc = eval_move_accumulate_with_score(board, move, bag_count, score_diff);
     return acc.net_equity;

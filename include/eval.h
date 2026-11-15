@@ -71,11 +71,17 @@ DualAccumulator eval_move_accumulate_with_score(const Board *board, const Move *
 DualAccumulator eval_move_accumulate_with_score_incremental(const Board *board, const Move *move,
                                                            const NNUEAccumulator *base_acc,
                                                            int bag_count, int score_diff);
+DualAccumulator eval_move_accumulate_with_score_quantized_incremental(const Board *board, const Move *move,
+                                                                     const NNUEQuantizedAccumulator *base_acc,
+                                                                     int bag_count, int score_diff);
 DualAccumulator eval_move_accumulate(const Board *board, const Move *move, int bag_count);
 float eval_move_static_with_score(const Board *board, const Move *move, int bag_count, int score_diff);
 float eval_move_static_incremental(const Board *board, const Move *move,
                                   const NNUEAccumulator *base_acc,
                                   int bag_count, int score_diff);
+float eval_move_static_quantized_incremental(const Board *board, const Move *move,
+                                            const NNUEQuantizedAccumulator *base_acc,
+                                            int bag_count, int score_diff);
 float eval_move_static_bucketed(const Board *board, const Move *move, int bag_count);
 float eval_move_static(const Board *board, const Move *move);
 

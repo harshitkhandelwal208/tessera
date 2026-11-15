@@ -172,11 +172,10 @@ void board_print(const Board *b) {
 void board_compute_horizontal_cross_checks(const Board *b, const Dawg *dawg,
                                           CrossCheck cross_checks[BOARD_SIZE][BOARD_SIZE]) {
     /* 1. Fast bulk initialization: all cells default to all letters allowed, zero cross scores */
-    for (int r = 0; r < BOARD_SIZE; r++) {
-        for (int c = 0; c < BOARD_SIZE; c++) {
-            cross_checks[r][c].valid_letters_mask = 0x03FFFFFF;
-            memset(cross_checks[r][c].cross_scores, 0, sizeof(cross_checks[r][c].cross_scores));
-        }
+    memset(cross_checks, 0, sizeof(CrossCheck) * TOTAL_SQUARES);
+    CrossCheck *flat = (CrossCheck *)cross_checks;
+    for (int i = 0; i < TOTAL_SQUARES; i++) {
+        flat[i].valid_letters_mask = 0x03FFFFFF;
     }
 
     if (b->is_empty) return;
@@ -220,37 +219,18 @@ void board_compute_horizontal_cross_checks(const Board *b, const Dawg *dawg,
             }
             down_end--; /* Last letter of downward suffix */
 
-            /* Calculate prefix base score */
+            /* Step upward prefix and compute prefix score in a single unified walk */
             int prefix_score = 0;
-            for (int k = up_start; k < r; k++) {
-                if (!b->cells[k][c].is_blank) {
-                    prefix_score += TILE_VALUES[b->cells[k][c].tile - 'A'];
-                }
-            }
-
-            /* Calculate suffix base score */
-            int suffix_score = 0;
-            for (int k = r + 1; k <= down_end; k++) {
-                if (!b->cells[k][c].is_blank) {
-                    suffix_score += TILE_VALUES[b->cells[k][c].tile - 'A'];
-                }
-            }
-
-            /* Multiplier on cell (r, c) via branchless lookup tables */
-            static const uint8_t s_let_mults[5] = { 1, 2, 3, 1, 1 };
-            static const uint8_t s_wrd_mults[5] = { 1, 1, 1, 2, 3 };
-            MultiplierType m = b->cells[r][c].mult;
-            int letter_mult = s_let_mults[m];
-            int word_mult = s_wrd_mults[m];
-
-            /* Step upward prefix once if present */
             uint32_t prefix_node = dawg->root_index;
             bool prefix_valid = true;
             for (int k = up_start; k < r; k++) {
-                prefix_node = dawg_step_child(dawg, prefix_node, b->cells[k][c].tile);
-                if (prefix_node == 0) {
-                    prefix_valid = false;
-                    break;
+                char t = b->cells[k][c].tile;
+                if (!b->cells[k][c].is_blank) {
+                    prefix_score += TILE_VALUES[t - 'A'];
+                }
+                if (prefix_valid) {
+                    prefix_node = dawg_step_child(dawg, prefix_node, t);
+                    if (prefix_node == 0) prefix_valid = false;
                 }
             }
 
@@ -258,7 +238,22 @@ void board_compute_horizontal_cross_checks(const Board *b, const Dawg *dawg,
                 continue;
             }
 
-            bool has_down_suffix = (r < down_end);
+            /* Extract downward suffix tiles and compute suffix score */
+            char suffix_tiles[BOARD_SIZE];
+            int suffix_len = 0;
+            int suffix_score = 0;
+            for (int k = r + 1; k <= down_end; k++) {
+                char t = b->cells[k][c].tile;
+                suffix_tiles[suffix_len++] = t;
+                if (!b->cells[k][c].is_blank) {
+                    suffix_score += TILE_VALUES[t - 'A'];
+                }
+            }
+
+            /* Multiplier on cell (r, c) via branchless lookup tables */
+            MultiplierType m = b->cells[r][c].mult;
+            int letter_mult = s_let_mults[m];
+            int word_mult = s_wrd_mults[m];
 
             /* Single-pass DAWG edge walk: iterate over sibling edges of prefix_node */
             uint32_t edge_idx = prefix_node;
@@ -267,15 +262,15 @@ void board_compute_horizontal_cross_checks(const Board *b, const Dawg *dawg,
                 uint32_t l = dawg_letter_idx(edge);
 
                 bool word_valid = false;
-                if (!has_down_suffix) {
+                if (suffix_len == 0) {
                     word_valid = dawg_is_terminal(edge);
                 } else {
                     uint32_t suf_node = dawg_child_index(edge);
                     if (suf_node != 0) {
                         bool suf_valid = true;
                         DawgEdge last_e = 0;
-                        for (int k = r + 1; k <= down_end; k++) {
-                            if (!dawg_step_edge(dawg, suf_node, b->cells[k][c].tile, &last_e)) {
+                        for (int k = 0; k < suffix_len; k++) {
+                            if (!dawg_step_edge(dawg, suf_node, suffix_tiles[k], &last_e)) {
                                 suf_valid = false;
                                 break;
                             }
@@ -302,26 +297,46 @@ void board_compute_horizontal_cross_checks(const Board *b, const Dawg *dawg,
  * Cross-checks for vertical word placement:
  * Looks horizontally (left and right of col c at row r).
  */
+/*
+ * Cross-checks for vertical word placement:
+ * Looks horizontally (left and right of col c at row r).
+ * Hardware bit-scan accelerated with single-pass DAWG edge walk.
+ */
 void board_compute_vertical_cross_checks(const Board *b, const Dawg *dawg,
                                         CrossCheck cross_checks[BOARD_SIZE][BOARD_SIZE]) {
+    /* 1. Fast bulk initialization: all cells default to all letters allowed, zero cross scores */
+    memset(cross_checks, 0, sizeof(CrossCheck) * TOTAL_SQUARES);
+    CrossCheck *flat = (CrossCheck *)cross_checks;
+    for (int i = 0; i < TOTAL_SQUARES; i++) {
+        flat[i].valid_letters_mask = 0x03FFFFFF;
+    }
+
+    if (b->is_empty) return;
+
+    /* 2. Compute row occupied masks */
+    uint16_t occ_row[BOARD_SIZE];
     for (int r = 0; r < BOARD_SIZE; r++) {
+        uint16_t mask = 0;
         for (int c = 0; c < BOARD_SIZE; c++) {
-            cross_checks[r][c].valid_letters_mask = 0;
-            for (int l = 0; l < NUM_LETTERS; l++) {
-                cross_checks[r][c].cross_scores[l] = 0;
-            }
-
             if (b->cells[r][c].tile != 0) {
-                continue;
+                mask |= (1U << c);
+                cross_checks[r][c].valid_letters_mask = 0; /* Occupied square cannot receive tiles */
             }
+        }
+        occ_row[r] = mask;
+    }
 
-            bool has_left = (c > 0 && b->cells[r][c - 1].tile != 0);
-            bool has_right = (c < BOARD_SIZE - 1 && b->cells[r][c + 1].tile != 0);
+    /* 3. Scan ONLY squares that have a horizontal cross check */
+    for (int r = 0; r < BOARD_SIZE; r++) {
+        uint16_t left = (occ_row[r] << 1) & 0x7FFE;
+        uint16_t right = (occ_row[r] >> 1) & 0x7FFE;
+        uint16_t h_cross = (left | right) & ~occ_row[r];
 
-            if (!has_left && !has_right) {
-                cross_checks[r][c].valid_letters_mask = 0x03FFFFFF;
-                continue;
-            }
+        while (h_cross) {
+            int c = __builtin_ctz(h_cross);
+            h_cross &= h_cross - 1;
+
+            cross_checks[r][c].valid_letters_mask = 0;
 
             /* Scan left prefix */
             int left_start = c - 1;
@@ -337,67 +352,64 @@ void board_compute_vertical_cross_checks(const Board *b, const Dawg *dawg,
             }
             right_end--;
 
+            /* Step left prefix and compute prefix score in a single unified walk */
             int prefix_score = 0;
+            uint32_t prefix_node = dawg->root_index;
+            bool prefix_valid = true;
             for (int k = left_start; k < c; k++) {
+                char t = b->cells[r][k].tile;
                 if (!b->cells[r][k].is_blank) {
-                    prefix_score += TILE_VALUES[b->cells[r][k].tile - 'A'];
+                    prefix_score += TILE_VALUES[t - 'A'];
+                }
+                if (prefix_valid) {
+                    prefix_node = dawg_step_child(dawg, prefix_node, t);
+                    if (prefix_node == 0) prefix_valid = false;
                 }
             }
 
+            if (!prefix_valid || prefix_node == 0) {
+                continue;
+            }
+
+            /* Extract right suffix tiles and compute suffix score */
+            char suffix_tiles[BOARD_SIZE];
+            int suffix_len = 0;
             int suffix_score = 0;
             for (int k = c + 1; k <= right_end; k++) {
+                char t = b->cells[r][k].tile;
+                suffix_tiles[suffix_len++] = t;
                 if (!b->cells[r][k].is_blank) {
-                    suffix_score += TILE_VALUES[b->cells[r][k].tile - 'A'];
+                    suffix_score += TILE_VALUES[t - 'A'];
                 }
             }
 
             MultiplierType m = b->cells[r][c].mult;
-            int letter_mult = 1;
-            int word_mult = 1;
-            if (m == MULT_DL) letter_mult = 2;
-            else if (m == MULT_TL) letter_mult = 3;
-            else if (m == MULT_DW) word_mult = 2;
-            else if (m == MULT_TW) word_mult = 3;
+            int letter_mult = s_let_mults[m];
+            int word_mult = s_wrd_mults[m];
 
-            /* Step left prefix once if present */
-            uint32_t prefix_node = dawg->root_index;
-            bool prefix_valid = true;
-            for (int k = left_start; k < c; k++) {
-                bool term = false;
-                prefix_node = dawg_step(dawg, prefix_node, b->cells[r][k].tile, &term);
-                if (prefix_node == 0) {
-                    prefix_valid = false;
-                    break;
-                }
-            }
-
-            if (!prefix_valid) {
-                continue;
-            }
-
-            bool has_right_suffix = (c < right_end);
-
-            /* Test each candidate letter A-Z */
-            for (int l = 0; l < NUM_LETTERS; l++) {
-                char let = (char)('A' + l);
-                bool is_term = false;
-                uint32_t mid_node = dawg_step(dawg, prefix_node, let, &is_term);
+            /* Single-pass DAWG edge walk: iterate over sibling edges of prefix_node */
+            uint32_t edge_idx = prefix_node;
+            while (1) {
+                DawgEdge edge = dawg->edges[edge_idx];
+                uint32_t l = dawg_letter_idx(edge);
 
                 bool word_valid = false;
-                if (!has_right_suffix) {
-                    word_valid = is_term;
-                } else if (mid_node != 0) {
-                    uint32_t suf_node = mid_node;
-                    bool suf_valid = true;
-                    for (int k = c + 1; k <= right_end; k++) {
-                        is_term = false;
-                        suf_node = dawg_step(dawg, suf_node, b->cells[r][k].tile, &is_term);
-                        if (suf_node == 0 && k < right_end) {
-                            suf_valid = false;
-                            break;
+                if (suffix_len == 0) {
+                    word_valid = dawg_is_terminal(edge);
+                } else {
+                    uint32_t suf_node = dawg_child_index(edge);
+                    if (suf_node != 0) {
+                        bool suf_valid = true;
+                        DawgEdge last_e = 0;
+                        for (int k = 0; k < suffix_len; k++) {
+                            if (!dawg_step_edge(dawg, suf_node, suffix_tiles[k], &last_e)) {
+                                suf_valid = false;
+                                break;
+                            }
+                            suf_node = dawg_child_index(last_e);
                         }
+                        word_valid = (suf_valid && dawg_is_terminal(last_e));
                     }
-                    word_valid = (suf_valid && is_term);
                 }
 
                 if (word_valid) {
@@ -405,6 +417,9 @@ void board_compute_vertical_cross_checks(const Board *b, const Dawg *dawg,
                     int placed_letter_val = TILE_VALUES[l] * letter_mult;
                     cross_checks[r][c].cross_scores[l] = (prefix_score + suffix_score + placed_letter_val) * word_mult;
                 }
+
+                if (dawg_is_last_child(edge)) break;
+                edge_idx++;
             }
         }
     }
