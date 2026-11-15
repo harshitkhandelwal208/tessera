@@ -10,6 +10,10 @@ Bitboard256 BB_TL = {0};
 Bitboard256 BB_DL = {0};
 Bitboard256 BB_CENTER = {0};
 
+/* Branchless premium multiplier lookup tables */
+static const int s_let_mults[5] = { 1, 2, 3, 1, 1 };
+static const int s_wrd_mults[5] = { 1, 1, 1, 2, 3 };
+
 __attribute__((constructor))
 static void init_multiplier_bitboards(void) {
     memset(&BB_TW, 0, sizeof(Bitboard256));
@@ -430,9 +434,8 @@ int board_score_move(const Board *b, const Dawg *dawg, const Move *move) {
             int cur_r = (move->dir == DIR_HORIZONTAL) ? r : r + i;
             int cur_c = (move->dir == DIR_HORIZONTAL) ? c + i : c;
             MultiplierType m = b->cells[cur_r][cur_c].mult;
-            int lm = (m == MULT_DL) ? 2 : ((m == MULT_TL) ? 3 : 1);
-            if (m == MULT_DW) word_mult *= 2;
-            else if (m == MULT_TW) word_mult *= 3;
+            int lm = s_let_mults[m];
+            word_mult *= s_wrd_mults[m];
             main_sum += val * lm;
         }
         int score = main_sum * word_mult;
@@ -469,13 +472,10 @@ int board_score_move(const Board *b, const Dawg *dawg, const Move *move) {
 
         if (newly_placed) {
             MultiplierType m = b->cells[cur_r][cur_c].mult;
-            int letter_mult = 1;
-            int cross_word_mult = 1;
-
-            if (m == MULT_DL) letter_mult = 2;
-            else if (m == MULT_TL) letter_mult = 3;
-            else if (m == MULT_DW) { main_word_mult *= 2; cross_word_mult = 2; }
-            else if (m == MULT_TW) { main_word_mult *= 3; cross_word_mult = 3; }
+            int letter_mult = s_let_mults[m];
+            int wm = s_wrd_mults[m];
+            main_word_mult *= wm;
+            int cross_word_mult = wm;
 
             main_word_sum += letter_val * letter_mult;
 
@@ -548,8 +548,8 @@ int board_score_move(const Board *b, const Dawg *dawg, const Move *move) {
 bool board_apply_move(Board *b, const Move *move) {
     if (move->type != MOVE_PLAY) return true;
 
-    int dr[4] = {-1, 1, 0, 0};
-    int dc[4] = {0, 0, -1, 1};
+    static const int dr[4] = {-1, 1, 0, 0};
+    static const int dc[4] = {0, 0, -1, 1};
 
     for (int i = 0; i < move->num_placed; i++) {
         int r = move->placed[i].row;

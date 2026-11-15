@@ -1,3 +1,6 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #include "court.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,7 +20,7 @@ static inline float fast_court_uniform(void) {
     return ((float)(x >> 40) + 1.0f) / 16777218.0f;
 }
 
-/* Fast Box-Muller transform with paired normal caching */
+/* Fast Box-Muller transform with paired normal caching and sincosf */
 static inline float sample_standard_normal(void) {
     if (s_has_cached_normal) {
         s_has_cached_normal = false;
@@ -27,9 +30,11 @@ static inline float sample_standard_normal(void) {
     float u2 = fast_court_uniform();
     float r = sqrtf(-2.0f * logf(u1));
     float theta = 6.28318530718f * u2;
-    s_cached_normal = r * sinf(theta);
+    float s, c;
+    sincosf(theta, &s, &c);
+    s_cached_normal = r * s;
     s_has_cached_normal = true;
-    return r * cosf(theta);
+    return r * c;
 }
 
 CourtVerdict court_deliberate(const Lattice *lat, uint32_t root_idx) {
@@ -98,7 +103,6 @@ CourtVerdict court_deliberate(const Lattice *lat, uint32_t root_idx) {
     }
 
     /* 3. Joint posterior sampling to compute P(argmax is truly best) */
-    int wins[MAX_LATTICE_EDGES] = {0};
     int n_edges = root->num_edges < MAX_LATTICE_EDGES ? root->num_edges : MAX_LATTICE_EDGES;
 
     float std_devs[MAX_LATTICE_EDGES];
@@ -128,22 +132,34 @@ CourtVerdict court_deliberate(const Lattice *lat, uint32_t root_idx) {
         return v;
     }
 
+    /* Sort contenders by q_value descending: closest rival evaluated first for maximum early-exit probability */
+    for (int i = 0; i < num_contenders - 1; i++) {
+        for (int j = i + 1; j < num_contenders; j++) {
+            if (root->edges[contenders[j]].q_value > root->edges[contenders[i]].q_value) {
+                int tmp = contenders[i];
+                contenders[i] = contenders[j];
+                contenders[j] = tmp;
+            }
+        }
+    }
+
+    int argmax_wins = 0;
     for (int s = 0; s < COURT_SAMPLES; s++) {
-        int best_sample_idx = argmax_idx;
-        float best_sample_val = root->edges[argmax_idx].q_value + (std_devs[argmax_idx] * sample_standard_normal());
+        float argmax_sample = root->edges[argmax_idx].q_value + (std_devs[argmax_idx] * sample_standard_normal());
+        bool argmax_won = true;
 
         for (int c = 0; c < num_contenders; c++) {
             int i = contenders[c];
             float sample = root->edges[i].q_value + (std_devs[i] * sample_standard_normal());
-            if (sample > best_sample_val) {
-                best_sample_val = sample;
-                best_sample_idx = i;
+            if (sample > argmax_sample) {
+                argmax_won = false;
+                break; /* Early exit: argmax lost this sample, skip evaluating remaining contenders */
             }
         }
-        wins[best_sample_idx]++;
+        if (argmax_won) argmax_wins++;
     }
 
-    v.confidence = (float)wins[argmax_idx] / (float)COURT_SAMPLES;
+    v.confidence = (float)argmax_wins / (float)COURT_SAMPLES;
 
     /* If confidence clears threshold, adjourn deliberation! */
     if (v.confidence >= COURT_CONFIDENCE_THRESHOLD) {

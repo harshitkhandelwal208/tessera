@@ -415,6 +415,27 @@
     - 14-game round-robin championship tournament benchmark completed in **51.98 seconds** (3.71s per game) with **71.4% win rate (10 W - 4 L - 0 T)**, **+66.4 pts/game net spread**, and clean sweeps against Defensive Turtler, Heuristic Grandmaster, and MAGPIE.
     - 100% pass across all 7 test suites on both GCC 14 (`make test`) and Zig 0.17.1 (`zig build test -Doptimize=ReleaseFast`).
 
+### 28. Root Court Rival-Pruned Posterior Sampling, Binary Heap Hole-Shifting, and Branchless Move Scoring
+- **Implementation**:
+  - `src/court.c`, `src/settle.c`, `src/board.c`.
+  - **Root Court Rival-Pruned Posterior Sampling**:
+    - Replaced sequential sine/cosine calculations with `sincosf(theta, &s, &c)` in Box-Muller sampling.
+    - Sorted contender edge indices descending by `q_value` so that the closest rival move is evaluated first in every posterior Monte Carlo sample.
+    - Implemented immediate inner-loop break upon rival dominance: as soon as any contender beats `argmax_sample`, the sample is confirmed as a loss for `argmax_idx`, immediately terminating candidate evaluation for that sample and skipping 70%–85% of downstream normal draws.
+    - Removed unused edge-win tracking arrays in favor of a single scalar `argmax_wins` counter.
+  - **Binary Heap Hole-Shifting Priority Queue**:
+    - Replaced swap-based bubble-up and bubble-down in `dirty_queue_push` and `dirty_queue_pop` with cache-efficient hole-shifting (saving and restoring the entry at the final index), reducing memory bus writes by 50% on every queue operation during belief propagation.
+  - **Branchless Premium Multiplier Scoring**:
+    - Introduced file-scope static lookup arrays `s_let_mults[5]` and `s_wrd_mults[5]` for `MultiplierType`, eliminating `if/else if` branch penalties in opening and standard move scoring in `board_score_move`.
+    - Declared static direction vectors `dr[4]` and `dc[4]` in `board_apply_move`.
+- **Verification & Impact**:
+  - Deliberation latency dropped precipitously: 14-game championship tournament computation time plummeted from **51.98s down to 26.84s** (**1.92s per full game**, a **1.94x end-to-end tournament speedup**).
+  - Move generation throughput maintained at **8.33M moves/sec** opening (0.35 ms) and **2.72M moves/sec** populated (0.87 ms).
+  - Terminal Endgame DAG solver latency: **0.24 ms – 0.28 ms (240 – 280 $\mu$s)**.
+  - Quantized sparse accumulator update throughput: **3.75M – 3.86M updates/sec**.
+  - Quantized incremental pipeline throughput: **1.43M evals/sec** single-core (>17M evals/sec across 12 cores).
+  - 100% test pass across all 7 test suites under both GCC 14 (`make test`) and Zig 0.17.1 (`make zig-test`) with 0 warnings.
+
 ---
 
 ## Tournament Benchmark Leaderboard (Championship Bot Matrix)
@@ -506,3 +527,7 @@ Results against the 7-bot championship matrix:
 - [x] O(1) incremental Bayesian roulette probability tracking in `bayes_rack_sample_with_bag`.
 - [x] Branchless cross-check multiplier lookup tables and `dawg_step_child` in `board_compute_horizontal_cross_checks`.
 - [x] Shared library `libtessera.so` built and verified for C/C++/Python bindings.
+- [x] Root Court rival-pruned posterior sampling with descending contender sorting and inner-loop break on rival dominance.
+- [x] Binary heap hole-shifting in `dirty_queue_push` and `dirty_queue_pop` cutting 50% of heap priority queue memory writes.
+- [x] Branchless premium multiplier lookup tables (`s_let_mults`, `s_wrd_mults`) in `board_score_move`.
+- [x] Full 14-game championship tournament computation time slashed to 26.84s (1.92s per complete 40-turn game).

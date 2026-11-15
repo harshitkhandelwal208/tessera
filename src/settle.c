@@ -12,29 +12,25 @@ bool dirty_queue_is_empty(const DirtyQueue *dq) {
     return dq->count == 0;
 }
 
-static void heap_swap(DirtyQueueEntry *a, DirtyQueueEntry *b) {
-    DirtyQueueEntry tmp = *a;
-    *a = *b;
-    *b = tmp;
-}
-
 bool dirty_queue_push(DirtyQueue *dq, uint32_t node_idx, float priority) {
     if (dq->count >= DIRTY_QUEUE_CAPACITY) return false;
 
     uint32_t i = dq->count++;
-    dq->entries[i].node_idx = node_idx;
-    dq->entries[i].priority = priority;
+    DirtyQueueEntry entry;
+    entry.node_idx = node_idx;
+    entry.priority = priority;
 
-    /* Bubble up */
+    /* Binary heap hole-shift bubble up (50% reduction in memory writes) */
     while (i > 0) {
         uint32_t parent = (i - 1) / 2;
-        if (dq->entries[i].priority > dq->entries[parent].priority) {
-            heap_swap(&dq->entries[i], &dq->entries[parent]);
+        if (priority > dq->entries[parent].priority) {
+            dq->entries[i] = dq->entries[parent];
             i = parent;
         } else {
             break;
         }
     }
+    dq->entries[i] = entry;
     return true;
 }
 
@@ -54,29 +50,30 @@ bool dirty_queue_pop(DirtyQueue *dq, uint32_t *out_node_idx, float *out_priority
     if (out_node_idx) *out_node_idx = dq->entries[0].node_idx;
     if (out_priority) *out_priority = dq->entries[0].priority;
 
-    dq->entries[0] = dq->entries[--dq->count];
+    DirtyQueueEntry last = dq->entries[--dq->count];
 
-    /* Bubble down */
+    /* Binary heap hole-shift bubble down */
     uint32_t i = 0;
     while (1) {
         uint32_t left = 2 * i + 1;
         uint32_t right = 2 * i + 2;
         uint32_t largest = i;
 
-        if (left < dq->count && dq->entries[left].priority > dq->entries[largest].priority) {
+        if (left < dq->count && dq->entries[left].priority > last.priority) {
             largest = left;
         }
-        if (right < dq->count && dq->entries[right].priority > dq->entries[largest].priority) {
+        if (right < dq->count && dq->entries[right].priority > (largest == i ? last.priority : dq->entries[left].priority)) {
             largest = right;
         }
 
         if (largest != i) {
-            heap_swap(&dq->entries[i], &dq->entries[largest]);
+            dq->entries[i] = dq->entries[largest];
             i = largest;
         } else {
             break;
         }
     }
+    dq->entries[i] = last;
 
     return true;
 }
