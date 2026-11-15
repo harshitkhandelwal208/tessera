@@ -101,10 +101,8 @@ static int negamax_dag(const Board *board, const Dawg *dawg,
                        const Rack *my_rack, const Rack *opp_rack,
                        uint64_t board_hash,
                        int alpha, int beta, int depth, int consecutive_passes,
+                       int my_rack_val, int opp_rack_val,
                        Move *out_best) {
-    int my_rack_val = rack_total_points(my_rack);
-    int opp_rack_val = rack_total_points(opp_rack);
-
     /* Terminal: Both players passed consecutively */
     if (consecutive_passes >= 2) {
         return -my_rack_val + opp_rack_val;
@@ -170,7 +168,8 @@ static int negamax_dag(const Board *board, const Dawg *dawg,
         int score = -negamax_dag(board, dawg, opp_rack, my_rack,
                                  zobrist_toggle_turn(board_hash),
                                  -beta, -alpha,
-                                 depth + 1, consecutive_passes + 1, NULL);
+                                 depth + 1, consecutive_passes + 1,
+                                 opp_rack_val, my_rack_val, NULL);
         if (out_best && depth == 0) {
             memset(out_best, 0, sizeof(Move));
             out_best->type = MOVE_PASS;
@@ -230,23 +229,34 @@ static int negamax_dag(const Board *board, const Dawg *dawg,
         memcpy(new_my_rack.tiles, m->leave, new_my_rack.count);
         new_my_rack.tiles[new_my_rack.count] = '\0';
 
+        int placed_val = 0;
+        for (int p = 0; p < m->num_placed; p++) {
+            if (!m->placed[p].is_blank) {
+                placed_val += TILE_VALUES[m->placed[p].letter - 'A'];
+            }
+        }
+        int new_my_rack_val = my_rack_val - placed_val;
+
         uint64_t child_board_hash = zobrist_toggle_turn(zobrist_update_move(board_hash, m));
 
         int score;
         if (i == 0) {
             score = m->score - negamax_dag(&child_board, dawg, opp_rack, &new_my_rack,
                                            child_board_hash,
-                                           -beta, -alpha, depth + 1, 0, NULL);
+                                           -beta, -alpha, depth + 1, 0,
+                                           opp_rack_val, new_my_rack_val, NULL);
         } else {
             /* Principal Variation Search (PVS): scout with null window [-alpha - 1, -alpha] */
             score = m->score - negamax_dag(&child_board, dawg, opp_rack, &new_my_rack,
                                            child_board_hash,
-                                           -alpha - 1, -alpha, depth + 1, 0, NULL);
+                                           -alpha - 1, -alpha, depth + 1, 0,
+                                           opp_rack_val, new_my_rack_val, NULL);
             if (score > alpha && score < beta) {
                 /* Research with full window */
                 score = m->score - negamax_dag(&child_board, dawg, opp_rack, &new_my_rack,
                                                child_board_hash,
-                                               -beta, -score, depth + 1, 0, NULL);
+                                               -beta, -score, depth + 1, 0,
+                                               opp_rack_val, new_my_rack_val, NULL);
             }
         }
 
@@ -297,9 +307,12 @@ bool endgame_solve_exact(const Board *board, const Dawg *dawg,
     Move best;
     memset(&best, 0, sizeof(Move));
     uint64_t root_board_hash = zobrist_compute_board(board, 0);
+    int my_rack_val = rack_total_points(my_rack);
+    int opp_rack_val = rack_total_points(opp_rack);
     int margin = negamax_dag(board, dawg, my_rack, opp_rack,
                              root_board_hash,
-                             -ENDGAME_INF, ENDGAME_INF, 0, 0, &best);
+                             -ENDGAME_INF, ENDGAME_INF, 0, 0,
+                             my_rack_val, opp_rack_val, &best);
 
     if (out_best_move) *out_best_move = best;
     if (out_net_margin) *out_net_margin = margin;

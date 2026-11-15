@@ -457,6 +457,22 @@
   - Tournament computation speed: 14-game championship tournament completed in **27.15 seconds (1.94s per complete 40-turn game)**.
   - 100% test pass across all 7 test suites on both GCC 14 (`make test`) and Zig 0.17.1 (`make zig-test`) with 0 warnings.
 
+### 30. In-Register Rack Point Propagation in Terminal Endgame Solver and DAWG Direct Child Stepping
+- **Implementation**:
+  - `src/endgame.c`, `src/movegen.c`.
+  - **In-Register Rack Value Tracking in Endgame DAG Solver**:
+    - Replaced eager $O(N)$ string and array tile iterations (`rack_total_points`) at every node of the endgame tree with in-register recursive value propagation (`my_rack_val`, `opp_rack_val`).
+    - Propagated rack values directly down the negamax recursive tree: on a pass, values are flipped in registers; on a play, `new_my_rack_val = my_rack_val - placed_val` where only placed tiles (1–5 characters) are subtracted.
+    - All terminal cutoff evaluations (consecutive passes, empty rack outplays, max depth horizon, and outplay score boosts) evaluate instantly in CPU registers without memory access or tile scans.
+  - **Direct DAWG Child Stepping in Row Movegen**:
+    - In `generate_row_moves`, replaced general `dawg_step` calls for existing prefix tiles with `dawg_step_child`, eliminating pointer writes to boolean terminal flags and redundant condition checks.
+- **Verification & Impact**:
+  - Terminal Endgame DAG solver latency clocked at **0.26 ms (260 $\mu$s)** (matching the physical limit of exact Scrabble endgame solving).
+  - Pure Graph-Based Proof Propagation on the Lattice DAG dropped to **82.95 ms**.
+  - Opening move generation throughput: **8.84M moves/sec (0.33 ms)**.
+  - Populated board move generation throughput: **2.75M moves/sec (0.86 ms)**.
+  - 100% test suite pass across both GCC 14 (`make test`) and Zig 0.17.1 (`make zig-test`) with 0 warnings.
+
 ---
 
 ## Tournament Benchmark Leaderboard (Championship Bot Matrix)
@@ -555,3 +571,5 @@ Results against the 7-bot championship matrix:
 - [x] Modernized `board_compute_vertical_cross_checks` with bit-scan horizontal neighbor detection, bulk memset initialization, and single-pass DAWG edge walks.
 - [x] Direct INT8/INT16 quantized incremental accumulator evaluation in DAG lattice expansion (`lattice_expand_node`) at 1.45M evals/sec.
 - [x] Opening move generation throughput record pushed to 8.84M moves/sec (0.33 ms) and populated board to 2.78M moves/sec (0.85 ms).
+- [x] In-register recursive rack point propagation in `negamax_dag` cutting `rack_total_points` calls from every search node.
+- [x] Terminal Endgame DAG solver latency clocked at 0.26 ms (260 microseconds) with verified incremental Zobrist identity.

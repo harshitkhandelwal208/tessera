@@ -481,9 +481,8 @@ static void generate_row_moves(GenContext *ctx) {
                 for (int k = start_c; k < c; k++) {
                     char t = ctx->board->cells[r][k].tile;
                     word[word_len++] = t;
-                    bool is_term = false;
-                    node = dawg_step(ctx->dawg, node, t, &is_term);
-                    if (node == 0 && !is_term) {
+                    node = dawg_step_child(ctx->dawg, node, t);
+                    if (node == 0) {
                         valid_prefix = false;
                         break;
                     }
