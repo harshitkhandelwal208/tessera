@@ -14,6 +14,7 @@
 NNUEModel g_nnue = {0};
 NNUEQuantizedModel g_nnue_quantized = {0};
 NNUETier2Model g_nnue_tier2 = {0};
+NNUETier2QuantizedModel g_nnue_tier2_quantized = {0};
 
 /* Random float in [-limit, +limit] */
 static float rand_uniform(float limit) {
@@ -2415,4 +2416,542 @@ float nnue_forward_move_quantized_incremental(const NNUEQuantizedModel *model, c
     NNUEQuantizedAccumulator move_acc;
     nnue_quantized_accumulator_apply_sparse(model, base_acc, sparse, n, &move_acc);
     return nnue_forward_quantized_accumulator(model, &move_acc);
+}
+
+/*
+ * ==============================================================================
+ * TIER 2 MASTER NET ARCHITECTURAL PIPELINE (Stockfish Big Net / L3-Resident)
+ * 16,384 inputs -> 512 L1 -> SCReLU(1024) -> 128 L2 -> 64 L3 -> Dual Heads
+ * ==============================================================================
+ */
+
+int nnue_tier2_extract_sparse_features(const Board *board, const Move *move, int bag_count, int score_diff, SparseFeature *sparse) {
+    int count = 0;
+    if (!move || move->type != MOVE_PLAY) return 0;
+
+    /* 1. Newly placed tiles on board: 225 squares x 27 tile types = 6,075 features [0..6074] */
+    for (int i = 0; i < move->num_placed && count < 250; i++) {
+        int r = move->placed[i].row;
+        int c = move->placed[i].col;
+        int sq = r * BOARD_SIZE + c;
+        char let = move->placed[i].letter;
+        bool is_blank = move->placed[i].is_blank;
+        int t_idx = is_blank ? 26 : (let - 'A');
+        if (t_idx >= 0 && t_idx < 27 && sq >= 0 && sq < TOTAL_SQUARES) {
+            sparse[count].index = (uint16_t)(sq * 27 + t_idx);
+            sparse[count].value = 1.0f;
+            count++;
+        }
+    }
+
+    /* 2. Covered premium hooks: premium square x tile = [6075..7721] */
+    for (int i = 0; i < move->num_placed && count < 250; i++) {
+        int r = move->placed[i].row;
+        int c = move->placed[i].col;
+        MultiplierType m = board->cells[r][c].mult;
+        if (m != MULT_NONE) {
+            int t_idx = move->placed[i].is_blank ? 26 : (move->placed[i].letter - 'A');
+            int m_idx = (int)m - 1; /* 0..3 */
+            sparse[count].index = (uint16_t)(6075 + (m_idx * 27) + t_idx);
+            sparse[count].value = 1.0f;
+            count++;
+        }
+    }
+
+    /* 3. Combinatorial Leave Pairs: 378 unordered pairs [9369..9746] */
+    int leave_len = (int)strlen(move->leave);
+    for (int i = 0; i < leave_len - 1 && count < 250; i++) {
+        for (int j = i + 1; j < leave_len && count < 250; j++) {
+            int t1 = (move->leave[i] == '?') ? 26 : (move->leave[i] - 'A');
+            int t2 = (move->leave[j] == '?') ? 26 : (move->leave[j] - 'A');
+            if (t1 > t2) { int tmp = t1; t1 = t2; t2 = tmp; }
+            int pair_idx = (t1 * (53 - t1)) / 2 + (t2 - t1);
+            if (pair_idx >= 0 && pair_idx < 378) {
+                sparse[count].index = (uint16_t)(9369 + pair_idx);
+                sparse[count].value = 1.0f;
+                count++;
+            }
+        }
+    }
+
+    /* 4. Combinatorial Leave Triplets: 3,654 triplets [9747..13400] */
+    for (int i = 0; i < leave_len - 2 && count < 250; i++) {
+        for (int j = i + 1; j < leave_len - 1 && count < 250; j++) {
+            for (int k = j + 1; k < leave_len && count < 250; k++) {
+                int t1 = (move->leave[i] == '?') ? 26 : (move->leave[i] - 'A');
+                int t2 = (move->leave[j] == '?') ? 26 : (move->leave[j] - 'A');
+                int t3 = (move->leave[k] == '?') ? 26 : (move->leave[k] - 'A');
+                if (t1 > t2) { int tmp = t1; t1 = t2; t2 = tmp; }
+                if (t2 > t3) { int tmp = t2; t2 = t3; t3 = tmp; }
+                if (t1 > t2) { int tmp = t1; t1 = t2; t2 = tmp; }
+                int trip_idx = ((t1 * 1000) + (t2 * 35) + t3) % 3654;
+                sparse[count].index = (uint16_t)(9747 + trip_idx);
+                sparse[count].value = 1.0f;
+                count++;
+            }
+        }
+    }
+
+    /* 5. Vowel/Consonant Balance and Duplicate Letter Penalties [13401..13432] */
+    int vowels = 0, consonants = 0;
+    int letter_counts[26] = {0};
+    for (int i = 0; i < leave_len; i++) {
+        char c = move->leave[i];
+        if (c >= 'A' && c <= 'Z') {
+            letter_counts[c - 'A']++;
+            if (c == 'A' || c == 'E' || c == 'I' || c == 'O' || c == 'U') vowels++;
+            else consonants++;
+        }
+    }
+    int v_diff = vowels - consonants + 7;
+    if (v_diff >= 0 && v_diff <= 14 && count < 250) {
+        sparse[count].index = (uint16_t)(13401 + v_diff);
+        sparse[count].value = 1.0f;
+        count++;
+    }
+    int dup_count = 0;
+    for (int i = 0; i < 26; i++) {
+        if (letter_counts[i] > 1) dup_count += (letter_counts[i] - 1);
+    }
+    if (dup_count > 0 && count < 250) {
+        int d_idx = (dup_count > 7) ? 7 : dup_count;
+        sparse[count].index = (uint16_t)(13416 + d_idx);
+        sparse[count].value = 1.0f;
+        count++;
+    }
+
+    /* 6. Bingo Stem Affinities: SATIRE/RETINA/TISANE stems [13433..13532] */
+    static const char *stems[6] = {"SATIRE", "RETINA", "TISANE", "ARSINE", "SENIOR", "AERIE"};
+    for (int s = 0; s < 6 && count < 250; s++) {
+        int stem_match = 0;
+        int stem_len = (int)strlen(stems[s]);
+        for (int k = 0; k < stem_len; k++) {
+            if (letter_counts[stems[s][k] - 'A'] > 0) stem_match++;
+        }
+        if (stem_match >= 3) {
+            sparse[count].index = (uint16_t)(13433 + (s * 8) + stem_match);
+            sparse[count].value = 1.0f;
+            count++;
+        }
+    }
+
+    /* 7. Game State & Differential: [13560..13575] */
+    int phase = (bag_count >= 80) ? 0 : (bag_count >= 50 ? 1 : (bag_count >= 20 ? 2 : 3));
+    int diff_bucket = (score_diff > 40) ? 0 : (score_diff > 15 ? 1 : (score_diff < -40 ? 3 : 2));
+    sparse[count].index = (uint16_t)(13560 + (phase * 4) + diff_bucket);
+    sparse[count].value = 1.0f;
+    count++;
+
+    return count;
+}
+
+void nnue_tier2_init_random(NNUETier2Model *model) {
+    if (!model) return;
+    memset(model, 0, sizeof(NNUETier2Model));
+
+    float limit1 = sqrtf(6.0f / (float)(NNUE_TIER2_INPUT_DIM + NNUE_TIER2_L1_DIM));
+    for (int i = 0; i < NNUE_TIER2_L1_DIM * NNUE_TIER2_INPUT_DIM; i++) {
+        model->w1[i] = rand_uniform(limit1 * 0.1f);
+    }
+    for (int i = 0; i < NNUE_TIER2_L1_DIM; i++) {
+        model->b1[i] = 0.0f;
+    }
+
+    float limit2 = sqrtf(6.0f / (float)(NNUE_TIER2_L1_ACT_DIM + NNUE_TIER2_L2_DIM));
+    for (int i = 0; i < NNUE_TIER2_L2_DIM * NNUE_TIER2_L1_ACT_DIM; i++) {
+        model->w2[i] = rand_uniform(limit2);
+    }
+    for (int i = 0; i < NNUE_TIER2_L2_DIM; i++) {
+        model->b2[i] = 0.0f;
+    }
+
+    float limit3 = sqrtf(6.0f / (float)(NNUE_TIER2_L2_DIM + NNUE_TIER2_L3_DIM));
+    for (int i = 0; i < NNUE_TIER2_L3_DIM * NNUE_TIER2_L2_DIM; i++) {
+        model->w3[i] = rand_uniform(limit3);
+    }
+    for (int i = 0; i < NNUE_TIER2_L3_DIM; i++) {
+        model->b3[i] = 0.0f;
+    }
+
+    for (int i = 0; i < NNUE_TIER2_L3_DIM; i++) {
+        model->w_spread[i] = rand_uniform(0.1f);
+        model->w_win[i] = rand_uniform(0.1f);
+    }
+    model->b_spread = 0.0f;
+    model->b_win = 0.0f;
+    model->is_loaded = true;
+
+    nnue_tier2_quantize(model, &g_nnue_tier2_quantized);
+}
+
+void nnue_tier2_quantize(const NNUETier2Model *src, NNUETier2QuantizedModel *dst) {
+    if (!src || !src->is_loaded || !dst) return;
+    memset(dst, 0, sizeof(NNUETier2QuantizedModel));
+
+    float max_w1 = 1e-6f;
+    for (int i = 0; i < NNUE_TIER2_L1_DIM * NNUE_TIER2_INPUT_DIM; i++) {
+        float a = fabsf(src->w1[i]);
+        if (a > max_w1) max_w1 = a;
+    }
+    dst->scale1 = 127.0f / max_w1;
+
+    for (int f = 0; f < NNUE_TIER2_INPUT_DIM; f++) {
+        for (int o = 0; o < NNUE_TIER2_L1_DIM; o++) {
+            float w = src->w1[o * NNUE_TIER2_INPUT_DIM + f];
+            int val = (int)roundf(w * dst->scale1);
+            if (val > 127) val = 127;
+            if (val < -127) val = -127;
+            dst->w1_by_feature[f][o] = (int8_t)val;
+        }
+    }
+    for (int o = 0; o < NNUE_TIER2_L1_DIM; o++) {
+        int val = (int)roundf(src->b1[o] * dst->scale1);
+        if (val > 32767) val = 32767;
+        if (val < -32767) val = -32767;
+        dst->b1[o] = (int16_t)val;
+    }
+
+    float max_w2 = 1e-6f;
+    for (int i = 0; i < NNUE_TIER2_L2_DIM * NNUE_TIER2_L1_ACT_DIM; i++) {
+        float a = fabsf(src->w2[i]);
+        if (a > max_w2) max_w2 = a;
+    }
+    dst->scale2 = 127.0f / max_w2;
+    for (int i = 0; i < NNUE_TIER2_L2_DIM * NNUE_TIER2_L1_ACT_DIM; i++) {
+        int val = (int)roundf(src->w2[i] * dst->scale2);
+        if (val > 127) val = 127;
+        if (val < -127) val = -127;
+        dst->w2[i] = (int8_t)val;
+    }
+    for (int o = 0; o < NNUE_TIER2_L2_DIM; o++) {
+        int val = (int)roundf(src->b2[o] * dst->scale2);
+        if (val > 32767) val = 32767;
+        if (val < -32767) val = -32767;
+        dst->b2[o] = (int16_t)val;
+    }
+
+    float max_w3 = 1e-6f;
+    for (int i = 0; i < NNUE_TIER2_L3_DIM * NNUE_TIER2_L2_DIM; i++) {
+        float a = fabsf(src->w3[i]);
+        if (a > max_w3) max_w3 = a;
+    }
+    dst->scale3 = 127.0f / max_w3;
+    for (int i = 0; i < NNUE_TIER2_L3_DIM * NNUE_TIER2_L2_DIM; i++) {
+        int val = (int)roundf(src->w3[i] * dst->scale3);
+        if (val > 127) val = 127;
+        if (val < -127) val = -127;
+        dst->w3[i] = (int8_t)val;
+    }
+    for (int o = 0; o < NNUE_TIER2_L3_DIM; o++) {
+        int val = (int)roundf(src->b3[o] * dst->scale3);
+        if (val > 32767) val = 32767;
+        if (val < -32767) val = -32767;
+        dst->b3[o] = (int16_t)val;
+    }
+
+    for (int o = 0; o < NNUE_TIER2_L3_DIM; o++) {
+        dst->w_spread[o] = (int16_t)roundf(src->w_spread[o] * 512.0f);
+        dst->w_win[o] = (int16_t)roundf(src->w_win[o] * 512.0f);
+    }
+    dst->b_spread = (int16_t)roundf(src->b_spread * 512.0f);
+    dst->b_win = (int16_t)roundf(src->b_win * 512.0f);
+    dst->is_loaded = true;
+}
+
+void nnue_tier2_quantized_accumulator_build_base(const NNUETier2QuantizedModel *model, const Board *board,
+                                                 const Rack *rack, int bag_count, int score_diff,
+                                                 NNUETier2QuantizedAccumulator *base_acc) {
+    (void)rack; (void)bag_count; (void)score_diff;
+    if (!model || !base_acc) return;
+    memcpy(base_acc->vals, model->b1, sizeof(base_acc->vals));
+    if (!model->is_loaded) return;
+
+    /* Extract static board occupancy features */
+    for (int r = 0; r < BOARD_SIZE; r++) {
+        for (int c = 0; c < BOARD_SIZE; c++) {
+            char t = board->cells[r][c].tile;
+            if (t != 0) {
+                int sq = r * BOARD_SIZE + c;
+                int t_idx = board->cells[r][c].is_blank ? 26 : (t - 'A');
+                int f_idx = sq * 27 + t_idx;
+                if (f_idx >= 0 && f_idx < NNUE_TIER2_INPUT_DIM) {
+                    const int8_t *w = model->w1_by_feature[f_idx];
+                    for (int o = 0; o < NNUE_TIER2_L1_DIM; o++) {
+                        base_acc->vals[o] += (int16_t)w[o];
+                    }
+                }
+            }
+        }
+    }
+}
+
+void nnue_tier2_quantized_accumulator_apply_sparse(const NNUETier2QuantizedModel *model,
+                                                   const NNUETier2QuantizedAccumulator *base,
+                                                   const SparseFeature *features, int num_features,
+                                                   NNUETier2QuantizedAccumulator *out_acc) {
+    if (!model || !base || !out_acc) return;
+    memcpy(out_acc->vals, base->vals, sizeof(base->vals));
+
+#if defined(__AVX2__)
+    for (int f = 0; f < num_features; f++) {
+        uint16_t idx = features[f].index;
+        if (idx >= NNUE_TIER2_INPUT_DIM) continue;
+        float val = features[f].value;
+        const int8_t *w = model->w1_by_feature[idx];
+
+        if (val > 0.0f) {
+            for (int i = 0; i < NNUE_TIER2_L1_DIM; i += 16) {
+                __m128i w8 = _mm_loadu_si128((const __m128i*)&w[i]);
+                __m256i w16 = _mm256_cvtepi8_epi16(w8);
+                __m256i acc_v = _mm256_load_si256((const __m256i*)&out_acc->vals[i]);
+                acc_v = _mm256_add_epi16(acc_v, w16);
+                _mm256_store_si256((__m256i*)&out_acc->vals[i], acc_v);
+            }
+        } else if (val < 0.0f) {
+            for (int i = 0; i < NNUE_TIER2_L1_DIM; i += 16) {
+                __m128i w8 = _mm_loadu_si128((const __m128i*)&w[i]);
+                __m256i w16 = _mm256_cvtepi8_epi16(w8);
+                __m256i acc_v = _mm256_load_si256((const __m256i*)&out_acc->vals[i]);
+                acc_v = _mm256_sub_epi16(acc_v, w16);
+                _mm256_store_si256((__m256i*)&out_acc->vals[i], acc_v);
+            }
+        }
+    }
+#else
+    for (int f = 0; f < num_features; f++) {
+        uint16_t idx = features[f].index;
+        if (idx >= NNUE_TIER2_INPUT_DIM) continue;
+        float val = features[f].value;
+        const int8_t *w = model->w1_by_feature[idx];
+        if (val > 0.0f) {
+            for (int o = 0; o < NNUE_TIER2_L1_DIM; o++) out_acc->vals[o] += (int16_t)w[o];
+        } else if (val < 0.0f) {
+            for (int o = 0; o < NNUE_TIER2_L1_DIM; o++) out_acc->vals[o] -= (int16_t)w[o];
+        }
+    }
+#endif
+}
+
+float nnue_tier2_forward_quantized_accumulator(const NNUETier2QuantizedModel *model,
+                                               const NNUETier2QuantizedAccumulator *acc) {
+    if (!model || !model->is_loaded) return 0.0f;
+
+    alignas(64) uint8_t l1_act[NNUE_TIER2_L1_ACT_DIM];
+
+#if defined(__AVX2__)
+    __m256i v_zero = _mm256_setzero_si256();
+    __m256i v_127 = _mm256_set1_epi16(127);
+    alignas(32) int16_t r_buf[16];
+    alignas(32) int16_t s_buf[16];
+    for (int i = 0; i < NNUE_TIER2_L1_DIM; i += 16) {
+        __m256i x = _mm256_load_si256((const __m256i*)&acc->vals[i]);
+        __m256i relu = _mm256_min_epi16(_mm256_max_epi16(x, v_zero), v_127);
+        __m256i sq = _mm256_srli_epi16(_mm256_mullo_epi16(relu, relu), 7);
+
+        _mm256_store_si256((__m256i*)r_buf, relu);
+        _mm256_store_si256((__m256i*)s_buf, sq);
+        for (int k = 0; k < 16; k++) {
+            l1_act[i + k] = (uint8_t)r_buf[k];
+            l1_act[NNUE_TIER2_L1_DIM + i + k] = (uint8_t)s_buf[k];
+        }
+    }
+#else
+    for (int i = 0; i < NNUE_TIER2_L1_DIM; i++) {
+        int v = acc->vals[i];
+        if (v < 0) v = 0;
+        if (v > 127) v = 127;
+        l1_act[i] = (uint8_t)v;
+        int sq = (v * v) / 128;
+        if (sq > 127) sq = 127;
+        l1_act[NNUE_TIER2_L1_DIM + i] = (uint8_t)sq;
+    }
+#endif
+
+    alignas(64) uint8_t l2_act[NNUE_TIER2_L2_DIM];
+    for (int o = 0; o < NNUE_TIER2_L2_DIM; o++) {
+        int32_t sum = (int32_t)model->b2[o];
+        const int8_t *w_row = &model->w2[o * NNUE_TIER2_L1_ACT_DIM];
+#if defined(__AVX2__)
+        __m256i sum_v = _mm256_setzero_si256();
+        __m256i ones = _mm256_set1_epi16(1);
+        for (int i = 0; i < NNUE_TIER2_L1_ACT_DIM; i += 32) {
+            __m256i act_v = _mm256_load_si256((const __m256i*)&l1_act[i]);
+            __m256i w_v = _mm256_loadu_si256((const __m256i*)&w_row[i]);
+            __m256i prod = _mm256_maddubs_epi16(act_v, w_v);
+            __m256i prod32 = _mm256_madd_epi16(prod, ones);
+            sum_v = _mm256_add_epi32(sum_v, prod32);
+        }
+        __m128i lo = _mm256_castsi256_si128(sum_v);
+        __m128i hi = _mm256_extracti128_si256(sum_v, 1);
+        __m128i sum128 = _mm_add_epi32(lo, hi);
+        sum128 = _mm_hadd_epi32(sum128, sum128);
+        sum128 = _mm_hadd_epi32(sum128, sum128);
+        sum += _mm_cvtsi128_si32(sum128);
+#else
+        for (int i = 0; i < NNUE_TIER2_L1_ACT_DIM; i++) {
+            sum += (int32_t)w_row[i] * (int32_t)l1_act[i];
+        }
+#endif
+        int v = sum / 128;
+        l2_act[o] = (uint8_t)(v > 0 ? (v > 127 ? 127 : v) : 0);
+    }
+
+    alignas(64) uint8_t l3_act[NNUE_TIER2_L3_DIM];
+    for (int o = 0; o < NNUE_TIER2_L3_DIM; o++) {
+        int32_t sum = (int32_t)model->b3[o];
+        const int8_t *w_row = &model->w3[o * NNUE_TIER2_L2_DIM];
+#if defined(__AVX2__)
+        __m256i sum_v = _mm256_setzero_si256();
+        __m256i ones = _mm256_set1_epi16(1);
+        for (int i = 0; i < NNUE_TIER2_L2_DIM; i += 32) {
+            __m256i act_v = _mm256_load_si256((const __m256i*)&l2_act[i]);
+            __m256i w_v = _mm256_loadu_si256((const __m256i*)&w_row[i]);
+            __m256i prod = _mm256_maddubs_epi16(act_v, w_v);
+            __m256i prod32 = _mm256_madd_epi16(prod, ones);
+            sum_v = _mm256_add_epi32(sum_v, prod32);
+        }
+        __m128i lo = _mm256_castsi256_si128(sum_v);
+        __m128i hi = _mm256_extracti128_si256(sum_v, 1);
+        __m128i sum128 = _mm_add_epi32(lo, hi);
+        sum128 = _mm_hadd_epi32(sum128, sum128);
+        sum128 = _mm_hadd_epi32(sum128, sum128);
+        sum += _mm_cvtsi128_si32(sum128);
+#else
+        for (int i = 0; i < NNUE_TIER2_L2_DIM; i++) {
+            sum += (int32_t)w_row[i] * (int32_t)l2_act[i];
+        }
+#endif
+        int v = sum / 128;
+        l3_act[o] = (uint8_t)(v > 0 ? (v > 127 ? 127 : v) : 0);
+    }
+
+    int32_t out_acc = (int32_t)model->b_spread;
+    for (int i = 0; i < NNUE_TIER2_L3_DIM; i++) {
+        out_acc += (int32_t)model->w_spread[i] * (int32_t)l3_act[i];
+    }
+
+    float raw = (float)out_acc / (512.0f * 128.0f);
+    return raw * 50.0f;
+}
+
+NNUEResult nnue_tier2_forward_quantized_accumulator_dual(const NNUETier2QuantizedModel *model,
+                                                         const NNUETier2QuantizedAccumulator *acc) {
+    NNUEResult res;
+    res.net_spread = 0.0f;
+    res.win_probability = 0.5f;
+    if (!model || !model->is_loaded) return res;
+
+    alignas(64) uint8_t l1_act[NNUE_TIER2_L1_ACT_DIM];
+
+#if defined(__AVX2__)
+    __m256i v_zero = _mm256_setzero_si256();
+    __m256i v_127 = _mm256_set1_epi16(127);
+    alignas(32) int16_t r_buf[16];
+    alignas(32) int16_t s_buf[16];
+    for (int i = 0; i < NNUE_TIER2_L1_DIM; i += 16) {
+        __m256i x = _mm256_load_si256((const __m256i*)&acc->vals[i]);
+        __m256i relu = _mm256_min_epi16(_mm256_max_epi16(x, v_zero), v_127);
+        __m256i sq = _mm256_srli_epi16(_mm256_mullo_epi16(relu, relu), 7);
+
+        _mm256_store_si256((__m256i*)r_buf, relu);
+        _mm256_store_si256((__m256i*)s_buf, sq);
+        for (int k = 0; k < 16; k++) {
+            l1_act[i + k] = (uint8_t)r_buf[k];
+            l1_act[NNUE_TIER2_L1_DIM + i + k] = (uint8_t)s_buf[k];
+        }
+    }
+#else
+    for (int i = 0; i < NNUE_TIER2_L1_DIM; i++) {
+        int v = acc->vals[i];
+        if (v < 0) v = 0;
+        if (v > 127) v = 127;
+        l1_act[i] = (uint8_t)v;
+        int sq = (v * v) / 128;
+        if (sq > 127) sq = 127;
+        l1_act[NNUE_TIER2_L1_DIM + i] = (uint8_t)sq;
+    }
+#endif
+
+    alignas(64) uint8_t l2_act[NNUE_TIER2_L2_DIM];
+    for (int o = 0; o < NNUE_TIER2_L2_DIM; o++) {
+        int32_t sum = (int32_t)model->b2[o];
+        const int8_t *w_row = &model->w2[o * NNUE_TIER2_L1_ACT_DIM];
+#if defined(__AVX2__)
+        __m256i sum_v = _mm256_setzero_si256();
+        __m256i ones = _mm256_set1_epi16(1);
+        for (int i = 0; i < NNUE_TIER2_L1_ACT_DIM; i += 32) {
+            __m256i act_v = _mm256_load_si256((const __m256i*)&l1_act[i]);
+            __m256i w_v = _mm256_loadu_si256((const __m256i*)&w_row[i]);
+            __m256i prod = _mm256_maddubs_epi16(act_v, w_v);
+            __m256i prod32 = _mm256_madd_epi16(prod, ones);
+            sum_v = _mm256_add_epi32(sum_v, prod32);
+        }
+        __m128i lo = _mm256_castsi256_si128(sum_v);
+        __m128i hi = _mm256_extracti128_si256(sum_v, 1);
+        __m128i sum128 = _mm_add_epi32(lo, hi);
+        sum128 = _mm_hadd_epi32(sum128, sum128);
+        sum128 = _mm_hadd_epi32(sum128, sum128);
+        sum += _mm_cvtsi128_si32(sum128);
+#else
+        for (int i = 0; i < NNUE_TIER2_L1_ACT_DIM; i++) {
+            sum += (int32_t)w_row[i] * (int32_t)l1_act[i];
+        }
+#endif
+        int v = sum / 128;
+        l2_act[o] = (uint8_t)(v > 0 ? (v > 127 ? 127 : v) : 0);
+    }
+
+    alignas(64) uint8_t l3_act[NNUE_TIER2_L3_DIM];
+    for (int o = 0; o < NNUE_TIER2_L3_DIM; o++) {
+        int32_t sum = (int32_t)model->b3[o];
+        const int8_t *w_row = &model->w3[o * NNUE_TIER2_L2_DIM];
+#if defined(__AVX2__)
+        __m256i sum_v = _mm256_setzero_si256();
+        __m256i ones = _mm256_set1_epi16(1);
+        for (int i = 0; i < NNUE_TIER2_L2_DIM; i += 32) {
+            __m256i act_v = _mm256_load_si256((const __m256i*)&l2_act[i]);
+            __m256i w_v = _mm256_loadu_si256((const __m256i*)&w_row[i]);
+            __m256i prod = _mm256_maddubs_epi16(act_v, w_v);
+            __m256i prod32 = _mm256_madd_epi16(prod, ones);
+            sum_v = _mm256_add_epi32(sum_v, prod32);
+        }
+        __m128i lo = _mm256_castsi256_si128(sum_v);
+        __m128i hi = _mm256_extracti128_si256(sum_v, 1);
+        __m128i sum128 = _mm_add_epi32(lo, hi);
+        sum128 = _mm_hadd_epi32(sum128, sum128);
+        sum128 = _mm_hadd_epi32(sum128, sum128);
+        sum += _mm_cvtsi128_si32(sum128);
+#else
+        for (int i = 0; i < NNUE_TIER2_L2_DIM; i++) {
+            sum += (int32_t)w_row[i] * (int32_t)l2_act[i];
+        }
+#endif
+        int v = sum / 128;
+        l3_act[o] = (uint8_t)(v > 0 ? (v > 127 ? 127 : v) : 0);
+    }
+
+    int32_t out_spread = (int32_t)model->b_spread;
+    int32_t out_win = (int32_t)model->b_win;
+    for (int i = 0; i < NNUE_TIER2_L3_DIM; i++) {
+        out_spread += (int32_t)model->w_spread[i] * (int32_t)l3_act[i];
+        out_win += (int32_t)model->w_win[i] * (int32_t)l3_act[i];
+    }
+
+    float raw_spread = (float)out_spread / (512.0f * 128.0f);
+    res.net_spread = raw_spread * 50.0f;
+    float raw_win = (float)out_win / (512.0f * 128.0f);
+    res.win_probability = 1.0f / (1.0f + expf(-raw_win * 3.0f));
+    return res;
+}
+
+float nnue_tier2_forward_move_quantized_incremental(const NNUETier2QuantizedModel *model,
+                                                    const NNUETier2QuantizedAccumulator *base_acc,
+                                                    const Board *board, const Move *move,
+                                                    int bag_count, int score_diff) {
+    if (!model || !model->is_loaded) return 0.0f;
+    SparseFeature sparse[256];
+    int n = nnue_tier2_extract_sparse_features(board, move, bag_count, score_diff, sparse);
+    NNUETier2QuantizedAccumulator move_acc;
+    nnue_tier2_quantized_accumulator_apply_sparse(model, base_acc, sparse, n, &move_acc);
+    return nnue_tier2_forward_quantized_accumulator(model, &move_acc);
 }

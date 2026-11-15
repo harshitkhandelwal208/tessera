@@ -153,6 +153,44 @@ int main(void) {
     printf("  Quantized Incremental Pipeline:        %.2f ms (%.0f evals/sec, sum=%.1f)\n",
            q_raw_ms, q_raw_eps, q_raw_sum);
 
+    /* 5. Tier 2 Master Net (16,384 -> 512 -> SCReLU(1024) -> 128 -> 64 -> Dual Heads, ~8.5 MB INT8) Benchmark */
+    nnue_tier2_init_random(&g_nnue_tier2);
+    NNUETier2QuantizedAccumulator t2_base_acc;
+    nnue_tier2_quantized_accumulator_build_base(&g_nnue_tier2_quantized, &board, &rack, 86, 0, &t2_base_acc);
+
+    SparseFeature t2_sparse[256];
+    int t2_n = nnue_tier2_extract_sparse_features(&board, &moves.moves[0], 86, 0, t2_sparse);
+
+    clock_t t_t2_acc_start = clock();
+    int t2_acc_iters = 500000;
+    NNUETier2QuantizedAccumulator t2_bench_acc;
+    int32_t t2_sink = 0;
+    for (int it = 0; it < t2_acc_iters; it++) {
+        nnue_tier2_quantized_accumulator_apply_sparse(&g_nnue_tier2_quantized, &t2_base_acc, t2_sparse, t2_n, &t2_bench_acc);
+        t2_sink += t2_bench_acc.vals[it & 511];
+    }
+    clock_t t_t2_acc_end = clock();
+    double t2_acc_ms = ((double)(t_t2_acc_end - t_t2_acc_start) / CLOCKS_PER_SEC) * 1000.0;
+    double t2_acc_eps = (double)t2_acc_iters / (t2_acc_ms / 1000.0);
+
+    clock_t t_t2_raw_start = clock();
+    int t2_raw_iters = 200000;
+    float t2_raw_sum = 0.0f;
+    for (int it = 0; it < t2_raw_iters; it++) {
+        NNUETier2QuantizedAccumulator t2_test_acc;
+        nnue_tier2_quantized_accumulator_apply_sparse(&g_nnue_tier2_quantized, &t2_base_acc, t2_sparse, t2_n, &t2_test_acc);
+        t2_raw_sum += nnue_tier2_forward_quantized_accumulator(&g_nnue_tier2_quantized, &t2_test_acc);
+    }
+    clock_t t_t2_raw_end = clock();
+    double t2_raw_ms = ((double)(t_t2_raw_end - t_t2_raw_start) / CLOCKS_PER_SEC) * 1000.0;
+    double t2_raw_eps = (double)t2_raw_iters / (t2_raw_ms / 1000.0);
+
+    printf("[BENCHMARK] Tier 2 Deep Master Net (16,384 -> 512 -> SCReLU -> 128 -> 64 -> Dual Heads, ~8.5 MB):\n");
+    printf("  Tier 2 Sparse Accumulator Update:      %.2f ms (%.0f updates/sec, sink=%d)\n",
+           t2_acc_ms, t2_acc_eps, (int)t2_sink);
+    printf("  Tier 2 Incremental Pipeline:           %.2f ms (%.0f evals/sec, sum=%.1f)\n",
+           t2_raw_ms, t2_raw_eps, t2_raw_sum);
+
     move_list_destroy(&moves);
     dawg_free(dawg);
     printf("[TEST] Incremental Accumulator test PASSED flawlessly!\n");

@@ -44,7 +44,33 @@ typedef struct {
     alignas(64) float vals[NNUE_TIER2_L1_DIM];
 } NNUETier2Accumulator;
 
+/*
+ * Tier 2 Master Net Quantized Model & Accumulator
+ * (16384 -> 512 -> SCReLU(1024) -> 128 -> 64 -> Dual Heads, ~8.5 MB, 100% L3 Cache Resident)
+ */
+typedef struct {
+    alignas(64) int8_t  w1_by_feature[NNUE_TIER2_INPUT_DIM][NNUE_TIER2_L1_DIM]; /* 8.38 MB */
+    alignas(64) int16_t b1[NNUE_TIER2_L1_DIM];                                  /* 1024 B */
+    alignas(64) int8_t  w2[NNUE_TIER2_L2_DIM * NNUE_TIER2_L1_ACT_DIM];         /* 128 KB */
+    alignas(64) int16_t b2[NNUE_TIER2_L2_DIM];                                  /* 256 B */
+    alignas(64) int8_t  w3[NNUE_TIER2_L3_DIM * NNUE_TIER2_L2_DIM];             /* 8 KB */
+    alignas(64) int16_t b3[NNUE_TIER2_L3_DIM];                                  /* 128 B */
+    alignas(64) int16_t w_spread[NNUE_TIER2_L3_DIM];                            /* 128 B */
+    int16_t b_spread;
+    alignas(64) int16_t w_win[NNUE_TIER2_L3_DIM];                               /* 128 B */
+    int16_t b_win;
+    float scale1;
+    float scale2;
+    float scale3;
+    bool is_loaded;
+} NNUETier2QuantizedModel;
+
+typedef struct {
+    alignas(64) int16_t vals[NNUE_TIER2_L1_DIM]; /* 1,024 bytes = 16 CPU cachelines (100% L1d cache resident) */
+} NNUETier2QuantizedAccumulator;
+
 extern NNUETier2Model g_nnue_tier2;
+extern NNUETier2QuantizedModel g_nnue_tier2_quantized;
 
 /*
  * Supercharged Two-Tier In-Cache NNUE Architecture (Stockfish / Viridithas / Berserk pattern):
@@ -210,5 +236,28 @@ float nnue_forward_move_quantized_incremental(const NNUEQuantizedModel *model,
                                               const NNUEQuantizedAccumulator *base_acc,
                                               const Board *board, const Move *move,
                                               int bag_count, int score_diff);
+
+/*
+ * Tier 2 Master Net Evaluation & Accumulator Pipeline
+ * (16,384 -> 512 -> SCReLU(1024) -> 128 -> 64 -> Dual Heads, ~8.5 MB INT8, 100% L3 Cache Resident)
+ */
+void nnue_tier2_init_random(NNUETier2Model *model);
+void nnue_tier2_quantize(const NNUETier2Model *src, NNUETier2QuantizedModel *dst);
+int nnue_tier2_extract_sparse_features(const Board *board, const Move *move, int bag_count, int score_diff, SparseFeature *sparse);
+void nnue_tier2_quantized_accumulator_build_base(const NNUETier2QuantizedModel *model, const Board *board,
+                                                 const Rack *rack, int bag_count, int score_diff,
+                                                 NNUETier2QuantizedAccumulator *base_acc);
+void nnue_tier2_quantized_accumulator_apply_sparse(const NNUETier2QuantizedModel *model,
+                                                   const NNUETier2QuantizedAccumulator *base,
+                                                   const SparseFeature *features, int num_features,
+                                                   NNUETier2QuantizedAccumulator *out_acc);
+float nnue_tier2_forward_quantized_accumulator(const NNUETier2QuantizedModel *model,
+                                               const NNUETier2QuantizedAccumulator *acc);
+NNUEResult nnue_tier2_forward_quantized_accumulator_dual(const NNUETier2QuantizedModel *model,
+                                                         const NNUETier2QuantizedAccumulator *acc);
+float nnue_tier2_forward_move_quantized_incremental(const NNUETier2QuantizedModel *model,
+                                                    const NNUETier2QuantizedAccumulator *base_acc,
+                                                    const Board *board, const Move *move,
+                                                    int bag_count, int score_diff);
 
 #endif /* NNUE_H */
